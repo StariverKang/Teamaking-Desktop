@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Award, Check, FileText, Handshake, Image as ImageIcon, Link as LinkIcon, MailCheck, Music, Plus, Search, Send, Settings, Trash2, UserRound } from "lucide-react";
+import { ArrowRight, Award, Check, FileText, Handshake, Image as ImageIcon, KeyRound, Link as LinkIcon, MailCheck, Music, Plus, Search, Send, Settings, Trash2, UserRound } from "lucide-react";
 import { Card, EmptyState, LoadingState, PageShell, SkillBadge, StatusPill } from "@/components/app-shell";
 import { CourseCard, ProfileCard, TeamakingPostCard, TeamUpRequestCard } from "@/components/cards";
 import { contributionTypes, strengths } from "@/lib/constants";
@@ -342,20 +342,51 @@ export function LandingPage() {
 
 export function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("media.student@mail.bnbu.edu.cn");
+  const [mode, setMode] = useState<"login" | "register" | "reset">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [devCode, setDevCode] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSendingCode, setIsSendingCode] = useState(false);
-  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
+
+  function resetState(nextMode: "login" | "register" | "reset") {
+    setMode(nextMode);
+    setCode("");
+    setDevCode("");
+    setMessage("");
+    setError("");
+  }
+
+  async function passwordLogin(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    setIsLoggingIn(true);
+    const result = await api("/api/auth/password-login", {
+      method: "POST",
+      body: JSON.stringify({ email, password })
+    }).catch((err: Error) => {
+      setError(err.message);
+      return null;
+    }).finally(() => {
+      setIsLoggingIn(false);
+    });
+
+    if (result?.user?.onboardingCompleted) router.push("/dashboard");
+    else if (result?.user) router.push("/onboarding");
+  }
 
   async function sendCode(event: FormEvent) {
     event.preventDefault();
     setError("");
     setMessage("");
     setIsSendingCode(true);
-    const result = await api("/api/auth/send-code", {
+    const endpoint = mode === "reset" ? "/api/auth/password-reset/send-code" : "/api/auth/register/send-code";
+    const result = await api(endpoint, {
       method: "POST",
       body: JSON.stringify({ email })
     }).catch((err: Error) => {
@@ -369,22 +400,23 @@ export function LoginPage() {
       const debugCode = typeof result.code === "string" ? result.code : "";
       setDevCode(debugCode);
       if (debugCode) setCode(debugCode);
-      setMessage(debugCode ? `验证码已生成。开发环境验证码：${debugCode}` : "验证码已发送，请查看你的学校邮箱。");
+      setMessage(debugCode ? `验证码已生成。开发环境验证码：${debugCode}` : result.message ?? "验证码已发送，请查看你的学校邮箱。");
     }
   }
 
-  async function verifyCode(event: FormEvent) {
+  async function completeWithCode(event: FormEvent) {
     event.preventDefault();
     setError("");
-    setIsVerifyingCode(true);
-    const result = await api("/api/auth/verify-code", {
+    setIsCompleting(true);
+    const endpoint = mode === "reset" ? "/api/auth/password-reset/complete" : "/api/auth/register/complete";
+    const result = await api(endpoint, {
       method: "POST",
-      body: JSON.stringify({ email, code })
+      body: JSON.stringify({ email, code, password })
     }).catch((err: Error) => {
       setError(err.message);
       return null;
     }).finally(() => {
-      setIsVerifyingCode(false);
+      setIsCompleting(false);
     });
 
     if (result?.user?.onboardingCompleted) router.push("/dashboard");
@@ -392,36 +424,137 @@ export function LoginPage() {
   }
 
   return (
-    <PageShell title="学校邮箱验证登录" eyebrow="Authentication" description="使用学校邮箱接收验证码，完成登录或注册。" aside="none">
-      <div className="grid gap-5 lg:grid-cols-2">
+    <PageShell title="测试环境入口" eyebrow="Authentication" description="测试环境账号会被保存，便于你重复登录、编辑资料、上传作品和继续测试；正式上线前可能统一清理测试数据。" aside="none">
+      <div className="mb-5 inline-flex flex-wrap gap-2 border border-ink/20 bg-chalk p-1">
+        {[
+          ["login", "账号密码登录"],
+          ["register", "邮箱注册"],
+          ["reset", "找回密码"]
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => resetState(key as "login" | "register" | "reset")}
+            className={`rounded-sm px-4 py-2 text-sm font-semibold ${mode === key ? "bg-ink text-paper" : "text-ink/68 hover:bg-mist"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <Card>
-          <form onSubmit={sendCode} className="grid gap-4">
-            <Field label="学校邮箱">
-              <input className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="your.name@mail.bnbu.edu.cn" />
-            </Field>
-            <button type="submit" disabled={isSendingCode} className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-ink px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
-              <Send size={16} aria-hidden />
-              {isSendingCode ? "发送中..." : "发送验证码"}
-            </button>
-          </form>
-          {message ? <p className="mt-4 rounded-lg bg-mist px-4 py-3 text-sm font-medium text-moss">{message}</p> : null}
-          {devCode ? <p className="mt-2 text-xs text-ink/58">本地调试提示：验证码已经自动填入下方输入框。</p> : null}
+          <div className="mb-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-coral">{mode === "login" ? "Login" : mode === "register" ? "Register" : "Password Reset"}</p>
+            <h2 className="mt-2 text-2xl font-semibold text-ink">{mode === "login" ? "已注册用户登录" : mode === "register" ? "学校邮箱注册" : "找回密码"}</h2>
+            <p className="mt-2 text-sm leading-6 text-ink/64">
+              {mode === "login"
+                ? "已注册用户使用学校邮箱和密码登录。"
+                : mode === "register"
+                  ? "未注册用户先接收学校邮箱验证码，再设置密码完成注册。"
+                  : "忘记密码时，用学校邮箱接收验证码后设置新密码。"}
+            </p>
+          </div>
+
+          {mode === "login" ? (
+            <form onSubmit={passwordLogin} className="grid gap-4">
+              <Field label="学校邮箱">
+                <input className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="your.name@mail.bnbu.edu.cn" />
+              </Field>
+              <Field label="密码">
+                <input className={inputClass} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="输入密码" />
+              </Field>
+              <button type="submit" disabled={isLoggingIn} className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-ink px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                <KeyRound size={16} aria-hidden />
+                {isLoggingIn ? "登录中..." : "登录"}
+              </button>
+            </form>
+          ) : (
+            <div className="grid gap-6">
+              <form onSubmit={sendCode} className="grid gap-4">
+                <Field label="学校邮箱">
+                  <input className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="your.name@mail.bnbu.edu.cn" />
+                </Field>
+                <button type="submit" disabled={isSendingCode} className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-ink px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                  <Send size={16} aria-hidden />
+                  {isSendingCode ? "发送中..." : "发送验证码"}
+                </button>
+              </form>
+              {message ? <p className="rounded-lg bg-mist px-4 py-3 text-sm font-medium text-moss">{message}</p> : null}
+              {devCode ? <p className="text-xs text-ink/58">本地调试提示：验证码已经自动填入下方输入框。</p> : null}
+              <form onSubmit={completeWithCode} className="grid gap-4">
+                <Field label="验证码">
+                  <input className={inputClass} value={code} onChange={(event) => setCode(event.target.value)} placeholder="6 位验证码" />
+                </Field>
+                <Field label={mode === "register" ? "设置密码" : "设置新密码"}>
+                  <input className={inputClass} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 8 位" />
+                </Field>
+                <button type="submit" disabled={isCompleting} className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-coral px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                  <Check size={16} aria-hidden />
+                  {isCompleting ? "处理中..." : mode === "register" ? "完成注册" : "重设密码并登录"}
+                </button>
+              </form>
+            </div>
+          )}
         </Card>
+
         <Card>
-          <form onSubmit={verifyCode} className="grid gap-4">
-            <Field label="验证码">
-              <input className={inputClass} value={code} onChange={(event) => setCode(event.target.value)} placeholder="6 位验证码" />
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-coral">Test Notice</p>
+          <h2 className="mt-2 text-xl font-semibold text-ink">测试用户说明</h2>
+          <p className="mt-3 text-sm leading-6 text-ink/64">这个版本用于正式域名上的功能测试。测试账号、资料、作品上传和重复登录会暂时保留，方便继续验证流程。</p>
+          <p className="mt-3 text-sm leading-6 text-ink/64">这些数据仍属于测试环境数据，不作为正式上线后的长期生产数据承诺。</p>
+        </Card>
+      </div>
+      <div className="mt-5">
+        <ErrorBox message={error} />
+      </div>
+    </PageShell>
+  );
+}
+
+export function AdminLoginPage() {
+  const router = useRouter();
+  const [developerEmail, setDeveloperEmail] = useState("");
+  const [developerPassword, setDeveloperPassword] = useState("");
+  const [error, setError] = useState("");
+  const [isDeveloperLoggingIn, setIsDeveloperLoggingIn] = useState(false);
+
+  async function developerLogin(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    setIsDeveloperLoggingIn(true);
+    const result = await api("/api/auth/developer-login", {
+      method: "POST",
+      body: JSON.stringify({ email: developerEmail, password: developerPassword })
+    }).catch((err: Error) => {
+      setError(err.message);
+      return null;
+    }).finally(() => {
+      setIsDeveloperLoggingIn(false);
+    });
+
+    if (result?.user) router.push("/admin");
+  }
+
+  return (
+    <PageShell title="管理入口" eyebrow="Admin Access" description="这个入口只给维护者和管理员使用，不从主系统导航跳转。" aside="none">
+      <div className="max-w-xl">
+        <Card>
+          <form onSubmit={developerLogin} className="grid gap-4">
+            <Field label="管理员账号">
+              <input className={inputClass} value={developerEmail} onChange={(event) => setDeveloperEmail(event.target.value)} placeholder="admin@teamingapp.org" />
             </Field>
-            <button type="submit" disabled={isVerifyingCode} className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-coral px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
-              <Check size={16} aria-hidden />
-              {isVerifyingCode ? "验证中..." : "验证并登录"}
+            <Field label="管理员密码">
+              <input className={inputClass} type="password" value={developerPassword} onChange={(event) => setDeveloperPassword(event.target.value)} placeholder="输入维护密码" />
+            </Field>
+            <button type="submit" disabled={isDeveloperLoggingIn} className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-ink px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+              <KeyRound size={16} aria-hidden />
+              {isDeveloperLoggingIn ? "登录中..." : "进入管理后台"}
             </button>
           </form>
-          <ErrorBox message={error} />
-          <Link href="/demo-access" className="focus-ring mt-5 inline-flex items-center gap-2 rounded-sm border border-ink/40 px-4 py-2 text-sm font-semibold">
-            跳过邮箱，进入演示验收模式
-            <ArrowRight size={15} aria-hidden />
-          </Link>
+          <div className="mt-5">
+            <ErrorBox message={error} />
+          </div>
         </Card>
       </div>
     </PageShell>
@@ -743,7 +876,7 @@ export function ProfileEditorPage() {
     try {
       const upload = await uploadProfileFile(file, purpose);
       apply(upload);
-      setSaved("文件已上传到本地 public/uploads，点击保存后会写入 Profile 数据。");
+      setSaved("文件已上传，点击保存后会写入 Profile 数据。");
     } catch (err) {
       setSaved(err instanceof Error ? err.message : "上传失败。");
     } finally {
@@ -1888,13 +2021,53 @@ export function AdminHomePage() {
   return (
     <PageShell title="Admin Dashboard" eyebrow="Admin" description="管理用户、学校、课程、课程提交、Course Boards、Teamaking Posts、Team Up Requests 和站点配置。" aside="admin">
       <div className="grid gap-4 md:grid-cols-3">
-        {["Users & Roles", "Schools & Domains", "Course Boards", "Support Tickets", "Site Configs", "Audit Logs"].map((item) => (
+        {["Users & Roles", "Schools & Domains", "Course Boards", "Support Tickets", "Metrics", "Site Configs", "Audit Logs"].map((item) => (
           <Card key={item}>
             <Settings size={20} aria-hidden className="text-coral" />
             <h2 className="mt-3 font-semibold text-ink">{item}</h2>
             <p className="mt-2 text-sm leading-6 text-ink/62">所有管理端变更都会写入 AdminAuditLog。</p>
           </Card>
         ))}
+      </div>
+    </PageShell>
+  );
+}
+
+export function AdminMetricsPage() {
+  const today = new Date().toISOString().slice(0, 10);
+  const thirtyDaysAgo = new Date(Date.now() - 1000 * 60 * 60 * 24 * 30).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(thirtyDaysAgo);
+  const [to, setTo] = useState(today);
+  const query = `/api/admin/metrics?from=${from}&to=${to}`;
+  const { data, error, loading } = useApi(query, [from, to]);
+  const metrics = data?.metrics ?? [];
+
+  return (
+    <PageShell title="Metrics" eyebrow="Admin" description="查看并下载一段时间内的用户动态统计数据。" aside="admin">
+      <div className="grid gap-5">
+        <Card>
+          <div className="grid gap-3 md:grid-cols-[180px_180px_auto]">
+            <Field label="开始日期">
+              <input className={inputClass} type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
+            </Field>
+            <Field label="结束日期">
+              <input className={inputClass} type="date" value={to} onChange={(event) => setTo(event.target.value)} />
+            </Field>
+            <a className="mt-auto inline-flex w-fit items-center gap-2 rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper" href={`${query}&format=csv`}>
+              <FileText size={16} aria-hidden />
+              下载 CSV
+            </a>
+          </div>
+        </Card>
+        {loading ? <LoadingState /> : <ErrorBox message={error} />}
+        <div className="grid gap-4 md:grid-cols-3">
+          {metrics.map((item: any) => (
+            <Card key={item.metric}>
+              <p className="text-sm font-semibold text-coral">{item.label}</p>
+              <p className="mt-2 text-3xl font-semibold text-ink">{item.value}</p>
+            </Card>
+          ))}
+        </div>
       </div>
     </PageShell>
   );
@@ -1973,10 +2146,10 @@ export function AdminResourcePage({
     if (resource === "users") {
       return (
         <form
-          className="grid gap-3 md:grid-cols-3"
+          className="grid gap-3 md:grid-cols-6"
           onSubmit={(event) => {
             event.preventDefault();
-            runAction(`/api/admin/users/${selectedId}`, "PATCH", { role, onboardingCompleted: true });
+            runAction(`/api/admin/users/${selectedId}`, "PATCH", { role, status, suspendedUntil: textFields.suspendedUntil, adminNote, onboardingCompleted: true });
           }}
         >
           <select className={inputClass} value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
@@ -1985,7 +2158,12 @@ export function AdminResourcePage({
           <select className={inputClass} value={role} onChange={(event) => setRole(event.target.value)}>
             {["verified_user", "profile_completed_user", "course_moderator", "school_admin", "super_admin"].map((item) => <option key={item}>{item}</option>)}
           </select>
-          <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">保存用户角色</button>
+          <select className={inputClass} value={status} onChange={(event) => setStatus(event.target.value)}>
+            {["active", "suspended", "banned"].map((item) => <option key={item}>{item}</option>)}
+          </select>
+          <input className={inputClass} type="datetime-local" value={textFields.suspendedUntil ?? ""} onChange={(event) => setTextFields({ ...textFields, suspendedUntil: event.target.value })} />
+          <input className={inputClass} placeholder="管理员备注" value={adminNote} onChange={(event) => setAdminNote(event.target.value)} />
+          <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">保存用户</button>
         </form>
       );
     }
@@ -2036,7 +2214,7 @@ export function AdminResourcePage({
     if (resource === "courses") {
       return (
         <form
-          className="grid gap-3 md:grid-cols-4"
+          className="grid gap-3 md:grid-cols-6"
           onSubmit={(event) => {
             event.preventDefault();
             runAction("/api/admin/courses", "POST", textFields);
@@ -2045,20 +2223,62 @@ export function AdminResourcePage({
           <input className={inputClass} placeholder="schoolId" value={textFields.schoolId ?? ""} onChange={(event) => setTextFields({ ...textFields, schoolId: event.target.value })} />
           <input className={inputClass} placeholder="课程代码" value={textFields.code ?? ""} onChange={(event) => setTextFields({ ...textFields, code: event.target.value })} />
           <input className={inputClass} placeholder="课程名称" value={textFields.title ?? ""} onChange={(event) => setTextFields({ ...textFields, title: event.target.value })} />
+          <input className={inputClass} placeholder="semesterId（可选）" value={textFields.semesterId ?? ""} onChange={(event) => setTextFields({ ...textFields, semesterId: event.target.value })} />
+          <input className={inputClass} placeholder="老师 / section（可选）" value={textFields.teacherName ?? ""} onChange={(event) => setTextFields({ ...textFields, teacherName: event.target.value })} />
           <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">新增课程</button>
         </form>
       );
     }
 
-    if (resource === "boards" || resource === "teamaking-posts" || resource === "team-up-requests") {
-      const statusOptions = resource === "teamaking-posts" ? ["open", "paused", "closed", "expired"] : resource === "team-up-requests" ? ["reported", "archived"] : ["active", "paused", "closed"];
-      const path = resource === "boards" ? `/api/admin/boards/${selectedId}` : resource === "teamaking-posts" ? `/api/admin/teamaking-posts/${selectedId}` : `/api/admin/team-up-requests/${selectedId}`;
+    if (resource === "boards") {
+      return (
+        <div className="grid gap-5">
+          <form
+            className="grid gap-3 md:grid-cols-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAction("/api/admin/boards", "POST", {
+                courseOfferingId: textFields.courseOfferingId,
+                title: textFields.title,
+                rules: textFields.rules,
+                status
+              });
+            }}
+          >
+            <input className={inputClass} placeholder="courseOfferingId" value={textFields.courseOfferingId ?? ""} onChange={(event) => setTextFields({ ...textFields, courseOfferingId: event.target.value })} />
+            <input className={inputClass} placeholder="Course Board 标题" value={textFields.title ?? ""} onChange={(event) => setTextFields({ ...textFields, title: event.target.value })} />
+            <input className={inputClass} placeholder="规则文案（可选）" value={textFields.rules ?? ""} onChange={(event) => setTextFields({ ...textFields, rules: event.target.value })} />
+            <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">新增 Course Board</button>
+          </form>
+          <form
+            className="grid gap-3 md:grid-cols-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAction(`/api/admin/boards/${selectedId}`, "PATCH", { status, title: textFields.title, rules: textFields.rules });
+            }}
+          >
+            <select className={inputClass} value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
+              {primaryRows.map((row) => <option key={row.id} value={row.id}>{selectedLabel(row)}</option>)}
+            </select>
+            <select className={inputClass} value={status} onChange={(event) => setStatus(event.target.value)}>
+              {["active", "paused", "closed"].map((item) => <option key={item}>{item}</option>)}
+            </select>
+            <input className={inputClass} placeholder="规则文案（可选）" value={textFields.rules ?? ""} onChange={(event) => setTextFields({ ...textFields, rules: event.target.value })} />
+            <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">保存 Course Board</button>
+          </form>
+        </div>
+      );
+    }
+
+    if (resource === "teamaking-posts" || resource === "team-up-requests") {
+      const statusOptions = resource === "teamaking-posts" ? ["open", "paused", "closed", "expired"] : ["reported", "archived"];
+      const path = resource === "teamaking-posts" ? `/api/admin/teamaking-posts/${selectedId}` : `/api/admin/team-up-requests/${selectedId}`;
       return (
         <form
-          className="grid gap-3 md:grid-cols-4"
+          className="grid gap-3 md:grid-cols-3"
           onSubmit={(event) => {
             event.preventDefault();
-            runAction(path, "PATCH", { status, title: textFields.title, rules: textFields.rules });
+            runAction(path, "PATCH", { status });
           }}
         >
           <select className={inputClass} value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
@@ -2067,7 +2287,6 @@ export function AdminResourcePage({
           <select className={inputClass} value={status} onChange={(event) => setStatus(event.target.value)}>
             {statusOptions.map((item) => <option key={item}>{item}</option>)}
           </select>
-          {resource === "boards" ? <input className={inputClass} placeholder="规则文案（可选）" value={textFields.rules ?? ""} onChange={(event) => setTextFields({ ...textFields, rules: event.target.value })} /> : <span />}
           <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">保存状态</button>
         </form>
       );
@@ -2076,10 +2295,10 @@ export function AdminResourcePage({
     if (resource === "support-tickets") {
       return (
         <form
-          className="grid gap-3 md:grid-cols-[1fr_180px_1fr_auto]"
+          className="grid gap-3 md:grid-cols-[1fr_160px_1fr_1fr_auto]"
           onSubmit={(event) => {
             event.preventDefault();
-            runAction(`/api/admin/support-tickets/${selectedId}`, "PATCH", { status, adminNote });
+            runAction(`/api/admin/support-tickets/${selectedId}`, "PATCH", { status, adminNote, adminReply: textFields.adminReply });
           }}
         >
           <select className={inputClass} value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
@@ -2089,24 +2308,30 @@ export function AdminResourcePage({
             {["open", "in_progress", "resolved", "closed"].map((item) => <option key={item}>{item}</option>)}
           </select>
           <input className={inputClass} placeholder="管理员备注" value={adminNote} onChange={(event) => setAdminNote(event.target.value)} />
+          <input className={inputClass} placeholder="给用户的回复" value={textFields.adminReply ?? ""} onChange={(event) => setTextFields({ ...textFields, adminReply: event.target.value })} />
           <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">更新工单</button>
         </form>
       );
     }
 
     if (resource === "configs") {
+      const key = textFields.key ?? "developer_contact";
+      const value = key === "system_status" ? { status: textFields.systemStatus ?? "active", message: textFields.value ?? "" } : { text: textFields.value ?? "" };
       return (
         <form
-          className="grid gap-3 md:grid-cols-[220px_1fr_auto]"
+          className="grid gap-3 md:grid-cols-[220px_180px_1fr_auto]"
           onSubmit={(event) => {
             event.preventDefault();
-            runAction(`/api/admin/configs/${textFields.key ?? "developer_contact"}`, "PATCH", { value: { text: textFields.value ?? "" } });
+            runAction(`/api/admin/configs/${key}`, "PATCH", { value });
           }}
         >
-          <select className={inputClass} value={textFields.key ?? "developer_contact"} onChange={(event) => setTextFields({ ...textFields, key: event.target.value })}>
-            {["developer_contact", "landing_page", "onboarding_guide", "course_board_rules"].map((item) => <option key={item}>{item}</option>)}
+          <select className={inputClass} value={key} onChange={(event) => setTextFields({ ...textFields, key: event.target.value })}>
+            {["developer_contact", "landing_page", "onboarding_guide", "course_board_rules", "system_status"].map((item) => <option key={item}>{item}</option>)}
           </select>
-          <input className={inputClass} placeholder="配置内容" value={textFields.value ?? ""} onChange={(event) => setTextFields({ ...textFields, value: event.target.value })} />
+          <select className={inputClass} value={textFields.systemStatus ?? "active"} onChange={(event) => setTextFields({ ...textFields, systemStatus: event.target.value })} disabled={key !== "system_status"}>
+            {["active", "paused"].map((item) => <option key={item}>{item}</option>)}
+          </select>
+          <input className={inputClass} placeholder={key === "system_status" ? "暂停提示文案" : "配置内容"} value={textFields.value ?? ""} onChange={(event) => setTextFields({ ...textFields, value: event.target.value })} />
           <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">保存配置</button>
         </form>
       );

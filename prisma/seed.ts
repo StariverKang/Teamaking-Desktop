@@ -599,6 +599,14 @@ async function main() {
           note: "bug、报错、缺失课程、后台问题都可以通过 /support 提交工单。"
         },
         updatedByUserId: businessUser.id
+      },
+      {
+        key: "system_status",
+        value: {
+          status: "active",
+          message: ""
+        },
+        updatedByUserId: businessUser.id
       }
     ]
   });

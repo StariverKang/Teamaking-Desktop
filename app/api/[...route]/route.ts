@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { ApiError, assertString, created, handleApi, ok, optionalString, readBody, stringArray } from "@/lib/http";
 import { getCurrentUser, isAdminRole, requireAdmin, requireUser, setDemoSessionCookie, setSessionCookie } from "@/lib/session";
 import { sendVerificationEmail, shouldExposeVerificationCode } from "@/lib/email";
+import { hashPassword, verifyPassword } from "@/lib/password";
 import { allowedRequestTransitions } from "@/lib/constants";
 import { contactSnapshot, defaultContactVisibility } from "@/lib/contact";
 import {
@@ -67,6 +68,17 @@ const userInclude = {
   profile: { include: profileInclude },
   contactInfo: true,
   skills: { include: { skill: true } }
+};
+
+const adminUserInclude = {
+  ...userInclude,
+  memberships: { include: { board: { include: { courseOffering: { include: { course: true, semester: true } } } } } },
+  submittedCourses: true,
+  teamakingPosts: true,
+  sentTeamUpRequests: true,
+  receivedRequests: true,
+  portfolioItems: true,
+  supportTickets: true
 };
 
 const courseInclude = {
@@ -267,123 +279,328 @@ async function enrichPostForViewer(post: any, viewer: any) {
   };
 }
 
-async function handleAuth(method: string, path: string[], request: NextRequest) {
-  if (method === "POST" && path[1] === "send-code") {
-    const body = await readBody(request);
-    const email = assertString(body.email, "email").toLowerCase();
-    const domain = emailDomain(email);
+async function schoolDomainForEmail(email: string) {
+  const domain = emailDomain(email);
+  if (!domain) return null;
 
-    if (!domain) {
-      throw new ApiError(400, "请输入有效的学校邮箱。");
+  const existing = await prisma.schoolEmailDomain.findFirst({
+    where: { domain, status: "active" },
+    include: { school: true }
+  });
+
+  if (existing) return existing;
+
+  const school = await prisma.school.upsert({
+    where: { shortName: "TEAMAKING" },
+    update: { name: "TEAMAKING", status: "active" },
+    create: { name: "TEAMAKING", shortName: "TEAMAKING", status: "active" }
+  });
+
+  return prisma.schoolEmailDomain.upsert({
+    where: { domain },
+    update: { schoolId: school.id, status: "active" },
+    create: { schoolId: school.id, domain, status: "active" },
+    include: { school: true }
+  });
+}
+
+async function upsertVerifiedUser(input: {
+  email: string;
+  schoolId: string;
+  role?: string;
+  onboardingCompleted?: boolean;
+  displayName?: string;
+  passwordHash?: string;
+}) {
+  const user = await prisma.user.upsert({
+    where: { email: input.email },
+    update: {
+      schoolId: input.schoolId,
+      ...(input.role ? { role: input.role } : {}),
+      ...(input.passwordHash ? { passwordHash: input.passwordHash } : {}),
+      status: "active",
+      suspendedUntil: null,
+      isEmailVerified: true,
+      ...(input.onboardingCompleted !== undefined ? { onboardingCompleted: input.onboardingCompleted } : {})
+    },
+    create: {
+      email: input.email,
+      schoolId: input.schoolId,
+      passwordHash: input.passwordHash,
+      isEmailVerified: true,
+      onboardingCompleted: input.onboardingCompleted ?? false,
+      role: input.role ?? "verified_user"
+    }
+  });
+
+  await prisma.userProfile.upsert({
+    where: { userId: user.id },
+    update: input.displayName ? { displayName: input.displayName } : {},
+    create: {
+      userId: user.id,
+      displayName: input.displayName ?? input.email.split("@")[0],
+      visibilitySettings: {
+        profile: "same_school",
+        portfolio: "same_school"
+      }
+    }
+  });
+
+  await prisma.contactInfo.upsert({
+    where: { userId: user.id },
+    update: { schoolEmail: user.email },
+    create: {
+      userId: user.id,
+      schoolEmail: user.email,
+      visibilitySettings: defaultContactVisibility
+    }
+  });
+
+  return prisma.user.findUniqueOrThrow({
+    where: { id: user.id },
+    include: userInclude
+  });
+}
+
+type VerificationPurpose = "register" | "reset_password" | "login";
+
+async function supportedSchoolDomainForEmail(email: string) {
+  const domain = emailDomain(email);
+  if (!domain) return null;
+  return prisma.schoolEmailDomain.findFirst({
+    where: { domain, status: "active" },
+    include: { school: true }
+  });
+}
+
+function generateVerificationCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+async function createVerification(email: string, purpose: VerificationPurpose, schoolName?: string) {
+  const code = generateVerificationCode();
+  await prisma.emailVerification.create({
+    data: {
+      email,
+      code,
+      purpose,
+      expiresAt: new Date(Date.now() + 1000 * 60 * 10)
+    }
+  });
+
+  await sendVerificationEmail({
+    email,
+    code,
+    purpose,
+    schoolName
+  });
+
+  return code;
+}
+
+async function consumeVerification(email: string, code: string, purpose: VerificationPurpose) {
+  const verification = await prisma.emailVerification.findFirst({
+    where: {
+      email,
+      code,
+      purpose,
+      usedAt: null,
+      expiresAt: { gt: new Date() }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+
+  if (!verification) {
+    throw new ApiError(400, "验证码无效或已过期。");
+  }
+
+  await prisma.emailVerification.update({
+    where: { id: verification.id },
+    data: { usedAt: new Date() }
+  });
+}
+
+function passwordHashFor(password: string) {
+  try {
+    return hashPassword(password);
+  } catch (error) {
+    throw new ApiError(400, error instanceof Error ? error.message : "密码不符合要求。");
+  }
+}
+
+function assertAccountCanLogin(user: any) {
+  if (user.status === "banned") {
+    throw new ApiError(403, "这个账号已被封禁，请联系管理员。");
+  }
+
+  if (user.suspendedUntil && new Date(user.suspendedUntil).getTime() > Date.now()) {
+    throw new ApiError(403, "这个账号当前处于限时禁止操作状态，请稍后再试。");
+  }
+}
+
+async function ensureSystemIsActive(root?: string) {
+  if (!root || ["auth", "admin", "demo"].includes(root)) return;
+
+  const config = await prisma.siteConfig.findUnique({ where: { key: "system_status" } });
+  const value = config?.value && typeof config.value === "object" && !Array.isArray(config.value) ? (config.value as Record<string, unknown>) : null;
+
+  if (value?.status === "paused") {
+    throw new ApiError(503, typeof value.message === "string" && value.message ? value.message : "系统当前处于维护暂停状态，请稍后再试。");
+  }
+}
+
+async function handleAuth(method: string, path: string[], request: NextRequest) {
+  if (method === "POST" && path[1] === "developer-login") {
+    const configuredEmail = process.env.DEVELOPER_LOGIN_EMAIL?.trim().toLowerCase();
+    const configuredPassword = process.env.DEVELOPER_LOGIN_PASSWORD;
+
+    if (!configuredEmail || !configuredPassword) {
+      throw new ApiError(503, "开发者登录尚未配置。");
     }
 
-    const schoolDomain = await prisma.schoolEmailDomain.findFirst({
-      where: { domain, status: "active" },
-      include: { school: true }
+    const body = await readBody(request);
+    const email = assertString(body.email, "email").toLowerCase();
+    const password = assertString(body.password, "password");
+
+    if (email !== configuredEmail || password !== configuredPassword) {
+      throw new ApiError(401, "开发者账号或密码不正确。");
+    }
+
+    const schoolDomain = await schoolDomainForEmail(email);
+    if (!schoolDomain) {
+      throw new ApiError(400, "请输入有效的开发者邮箱。");
+    }
+
+    const fullUser = await upsertVerifiedUser({
+      email,
+      schoolId: schoolDomain.schoolId,
+      role: process.env.DEVELOPER_LOGIN_ROLE || "school_admin",
+      onboardingCompleted: true,
+      displayName: process.env.DEVELOPER_LOGIN_DISPLAY_NAME || "TEAMAKING Developer"
     });
+
+    const response = ok({ user: publicUser(fullUser) });
+    setSessionCookie(response, fullUser.id);
+    return response;
+  }
+
+  if (method === "POST" && path[1] === "register" && path[2] === "send-code") {
+    const body = await readBody(request);
+    const email = assertString(body.email, "email").toLowerCase();
+    const schoolDomain = await supportedSchoolDomainForEmail(email);
 
     if (!schoolDomain) {
       throw new ApiError(400, "当前学校邮箱域名还没有被 TEAMAKING 支持。");
     }
 
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    await prisma.emailVerification.create({
-      data: {
-        email,
-        code,
-        expiresAt: new Date(Date.now() + 1000 * 60 * 10)
-      }
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true, passwordHash: true }
     });
 
-    await sendVerificationEmail({
-      email,
-      code,
-      schoolName: schoolDomain.school.name
-    });
+    if (existingUser?.passwordHash) {
+      throw new ApiError(409, "这个邮箱已经注册，请直接使用账号密码登录，或通过找回密码重设密码。");
+    }
+
+    const code = await createVerification(email, "register", schoolDomain.school.name);
 
     return ok({
-      message: "验证码已发送，请查看你的学校邮箱。",
+      message: "注册验证码已发送，请查看你的学校邮箱。",
       code: shouldExposeVerificationCode() ? code : undefined,
       school: schoolDomain.school
     });
   }
 
-  if (method === "POST" && path[1] === "verify-code") {
+  if (method === "POST" && path[1] === "register" && path[2] === "complete") {
     const body = await readBody(request);
     const email = assertString(body.email, "email").toLowerCase();
     const code = assertString(body.code, "code");
-    const domain = emailDomain(email);
-
-    const schoolDomain = await prisma.schoolEmailDomain.findFirst({
-      where: { domain, status: "active" },
-      include: { school: true }
-    });
+    const password = assertString(body.password, "password");
+    const schoolDomain = await supportedSchoolDomainForEmail(email);
 
     if (!schoolDomain) {
       throw new ApiError(400, "当前学校邮箱域名还没有被 TEAMAKING 支持。");
     }
 
-    const verification = await prisma.emailVerification.findFirst({
-      where: {
-        email,
-        code,
-        usedAt: null,
-        expiresAt: { gt: new Date() }
-      },
-      orderBy: { createdAt: "desc" }
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true, passwordHash: true }
     });
 
-    if (!verification) {
-      throw new ApiError(400, "验证码无效或已过期。");
+    if (existingUser?.passwordHash) {
+      throw new ApiError(409, "这个邮箱已经注册，请直接登录。");
     }
 
-    await prisma.emailVerification.update({
-      where: { id: verification.id },
-      data: { usedAt: new Date() }
+    await consumeVerification(email, code, "register");
+
+    const fullUser = await upsertVerifiedUser({
+      email,
+      schoolId: schoolDomain.schoolId,
+      passwordHash: passwordHashFor(password)
     });
 
-    const user = await prisma.user.upsert({
+    const response = ok({ user: publicUser(fullUser) });
+    setSessionCookie(response, fullUser.id);
+    return response;
+  }
+
+  if (method === "POST" && path[1] === "password-login") {
+    const body = await readBody(request);
+    const email = assertString(body.email, "email").toLowerCase();
+    const password = assertString(body.password, "password");
+    const user = await prisma.user.findUnique({ where: { email }, include: userInclude });
+
+    if (!user || !verifyPassword(password, user.passwordHash)) {
+      throw new ApiError(401, "邮箱或密码不正确。");
+    }
+
+    assertAccountCanLogin(user);
+
+    const response = ok({ user: publicUser(user) });
+    setSessionCookie(response, user.id);
+    return response;
+  }
+
+  if (method === "POST" && path[1] === "password-reset" && path[2] === "send-code") {
+    const body = await readBody(request);
+    const email = assertString(body.email, "email").toLowerCase();
+    const user = await prisma.user.findUnique({
       where: { email },
-      update: {
-        schoolId: schoolDomain.schoolId,
-        isEmailVerified: true
-      },
-      create: {
-        email,
-        schoolId: schoolDomain.schoolId,
-        isEmailVerified: true,
-        role: "verified_user"
-      }
+      include: { school: true }
     });
 
-    await prisma.userProfile.upsert({
-      where: { userId: user.id },
-      update: {},
-      create: {
-        userId: user.id,
-        displayName: email.split("@")[0],
-        visibilitySettings: {
-          profile: "same_school",
-          portfolio: "same_school"
-        }
-      }
-    });
+    if (!user || !user.passwordHash) {
+      throw new ApiError(404, "找不到已注册账号，请先注册。");
+    }
 
-    await prisma.contactInfo.upsert({
-      where: { userId: user.id },
-      update: { schoolEmail: user.email },
-      create: {
-        userId: user.id,
-        schoolEmail: user.email,
-        visibilitySettings: defaultContactVisibility
-      }
+    const code = await createVerification(email, "reset_password", user.school?.name);
+    return ok({
+      message: "密码重置验证码已发送，请查看你的学校邮箱。",
+      code: shouldExposeVerificationCode() ? code : undefined
     });
+  }
 
-    const fullUser = await prisma.user.findUniqueOrThrow({
-      where: { id: user.id },
+  if (method === "POST" && path[1] === "password-reset" && path[2] === "complete") {
+    const body = await readBody(request);
+    const email = assertString(body.email, "email").toLowerCase();
+    const code = assertString(body.code, "code");
+    const password = assertString(body.password, "password");
+    const before = await prisma.user.findUnique({ where: { email }, include: userInclude });
+
+    if (!before || !before.passwordHash) {
+      throw new ApiError(404, "找不到已注册账号，请先注册。");
+    }
+
+    await consumeVerification(email, code, "reset_password");
+
+    const user = await prisma.user.update({
+      where: { email },
+      data: { passwordHash: passwordHashFor(password) },
       include: userInclude
     });
-    const response = ok({ user: publicUser(fullUser) });
+    assertAccountCanLogin(user);
+
+    const response = ok({ user: publicUser(user) });
     setSessionCookie(response, user.id);
     return response;
   }
@@ -1648,6 +1865,32 @@ async function handleUploads(method: string, request: NextRequest) {
 
   const buffer = Buffer.from(await file.arrayBuffer());
   const safeName = safeUploadName(file.name);
+  const parsedText = await extractReadableText(file.name, buffer);
+  const resumeParsedData = purpose === "resume" ? parseResumeText(parsedText, file.name) : undefined;
+  const shouldUseInlineStorage = process.env.VERCEL === "1" || process.env.UPLOAD_STORAGE_MODE === "inline";
+
+  if (shouldUseInlineStorage) {
+    if (file.size > 4 * 1024 * 1024) {
+      throw new ApiError(400, "线上测试环境暂时只支持 4MB 以内的文件上传；较大文件后续会接入对象存储。");
+    }
+
+    return created({
+      upload: {
+        fileUrl: `data:${file.type || "application/octet-stream"};base64,${buffer.toString("base64")}`,
+        storageKey: `inline/${user.id}/${safeName}`,
+        fileName: file.name,
+        fileMimeType: file.type || "application/octet-stream",
+        fileSize: file.size,
+        fileExtension: fileExtensionOf(file.name),
+        previewKind: previewKindForFile(file.name),
+        parsedText,
+        resumeParsedData,
+        purpose,
+        storageMode: "inline_data_url"
+      }
+    });
+  }
+
   const relativeDir = `/uploads/${user.id}`;
   const storageKey = `${relativeDir}/${safeName}`;
   const targetDir = `${process.cwd()}/public${relativeDir}`;
@@ -1657,8 +1900,6 @@ async function handleUploads(method: string, request: NextRequest) {
   await fs.mkdir(targetDir, { recursive: true });
   await fs.writeFile(targetPath, buffer);
 
-  const parsedText = await extractReadableText(file.name, buffer);
-  const resumeParsedData = purpose === "resume" ? parseResumeText(parsedText, file.name) : undefined;
   const upload = {
     fileUrl: storageKey,
     storageKey,
@@ -1674,6 +1915,32 @@ async function handleUploads(method: string, request: NextRequest) {
   };
 
   return created({ upload });
+}
+
+function dateRangeFromRequest(request: NextRequest) {
+  const url = new URL(request.url);
+  const toParam = optionalString(url.searchParams.get("to"));
+  const fromParam = optionalString(url.searchParams.get("from"));
+  const to = toParam ? new Date(`${toParam}T23:59:59.999Z`) : new Date();
+  const from = fromParam ? new Date(`${fromParam}T00:00:00.000Z`) : new Date(to.getTime() - 1000 * 60 * 60 * 24 * 30);
+
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    throw new ApiError(400, "日期格式不正确，请使用 YYYY-MM-DD。");
+  }
+
+  return { from, to, format: url.searchParams.get("format") };
+}
+
+function csvResponse(rows: Record<string, unknown>[], filename: string) {
+  const headers = Object.keys(rows[0] ?? {});
+  const escapeCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const csv = [headers.join(","), ...rows.map((row) => headers.map((header) => escapeCell(row[header])).join(","))].join("\n");
+  return new NextResponse(csv, {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`
+    }
+  });
 }
 
 async function handleAdmin(method: string, path: string[], request: NextRequest) {
@@ -1702,7 +1969,7 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
 
   if (method === "GET" && resource === "users") {
     const users = await prisma.user.findMany({
-      include: userInclude,
+      include: adminUserInclude,
       orderBy: { createdAt: "desc" },
       take: 100
     });
@@ -1712,12 +1979,18 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
   if (method === "PATCH" && resource === "users" && id) {
     const body = await readBody(request);
     const before = await prisma.user.findUnique({ where: { id } });
+    const requestedStatus = optionalString(body.status);
+    const suspendedUntilText = optionalString(body.suspendedUntil);
     const user = await prisma.user.update({
       where: { id },
       data: {
         role: optionalString(body.role) ?? before?.role,
+        status: requestedStatus ?? before?.status,
+        suspendedUntil: suspendedUntilText ? new Date(suspendedUntilText) : requestedStatus === "active" ? null : before?.suspendedUntil,
+        adminNote: optionalString(body.adminNote) ?? before?.adminNote,
         onboardingCompleted: typeof body.onboardingCompleted === "boolean" ? body.onboardingCompleted : before?.onboardingCompleted
-      }
+      },
+      include: adminUserInclude
     });
     await writeAudit(admin.id, "admin.users.patch", "User", id, before, user);
     return ok({ user });
@@ -1823,8 +2096,29 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
         source: "admin"
       }
     });
-    await writeAudit(admin.id, "admin.courses.create", "Course", course.id, null, course);
-    return created({ course });
+    const semesterId = optionalString(body.semesterId);
+    const offering = semesterId
+      ? await prisma.courseOffering.create({
+          data: {
+            courseId: course.id,
+            semesterId,
+            teacherName: optionalString(body.teacherName),
+            section: optionalString(body.section)
+          }
+        })
+      : null;
+    const board =
+      offering && body.createBoard !== false
+        ? await prisma.courseBoard.create({
+            data: {
+              courseOfferingId: offering.id,
+              title: optionalString(body.boardTitle) ?? `${course.code} ${course.title}`,
+              rules: optionalString(body.boardRules) ?? undefined
+            }
+          })
+        : null;
+    await writeAudit(admin.id, "admin.courses.create", "Course", course.id, null, { course, offering, board });
+    return created({ course, offering, board });
   }
 
   if (method === "PATCH" && resource === "courses" && id) {
@@ -1876,7 +2170,9 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
       where: { id },
       data: {
         status: requestedStatus && allowedStatuses.includes(requestedStatus) ? requestedStatus : before.status,
-        adminNote: optionalString(body.adminNote) ?? before.adminNote
+        adminNote: optionalString(body.adminNote) ?? before.adminNote,
+        adminReply: optionalString(body.adminReply) ?? before.adminReply,
+        adminRepliedAt: optionalString(body.adminReply) ? new Date() : before.adminRepliedAt
       }
     });
     await writeAudit(admin.id, "admin.support_tickets.patch", "SupportTicket", id, before, ticket);
@@ -1956,6 +2252,21 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
     return ok({ boards });
   }
 
+  if (method === "POST" && resource === "boards") {
+    const body = await readBody(request);
+    const board = await prisma.courseBoard.create({
+      data: {
+        courseOfferingId: assertString(body.courseOfferingId, "courseOfferingId"),
+        title: assertString(body.title, "title"),
+        status: optionalString(body.status) ?? "active",
+        rules: optionalString(body.rules) ?? undefined
+      },
+      include: { courseOffering: { include: { course: true, semester: true } } }
+    });
+    await writeAudit(admin.id, "admin.boards.create", "CourseBoard", board.id, null, board);
+    return created({ board });
+  }
+
   if (method === "PATCH" && resource === "boards" && id) {
     const body = await readBody(request);
     const before = await prisma.courseBoard.findUnique({ where: { id } });
@@ -2010,6 +2321,35 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
     return ok({ request: requestRow });
   }
 
+  if (method === "GET" && resource === "metrics") {
+    const { from, to, format } = dateRangeFromRequest(request);
+    const whereCreated = { createdAt: { gte: from, lte: to } };
+    const [users, verifiedUsers, posts, teamUpRequests, supportTickets, memberships, uploads] = await Promise.all([
+      prisma.user.count({ where: whereCreated }),
+      prisma.user.count({ where: { ...whereCreated, isEmailVerified: true } }),
+      prisma.teamakingPost.count({ where: whereCreated }),
+      prisma.teamUpRequest.count({ where: whereCreated }),
+      prisma.supportTicket.count({ where: whereCreated }),
+      prisma.courseBoardMembership.count({ where: { joinedAt: { gte: from, lte: to } } }),
+      prisma.portfolioItem.count({ where: whereCreated })
+    ]);
+    const rows = [
+      { metric: "new_users", label: "新增用户", value: users, from: from.toISOString(), to: to.toISOString() },
+      { metric: "verified_users", label: "已验证用户", value: verifiedUsers, from: from.toISOString(), to: to.toISOString() },
+      { metric: "teamaking_posts", label: "Teamaking Posts", value: posts, from: from.toISOString(), to: to.toISOString() },
+      { metric: "team_up_requests", label: "Team Up Requests", value: teamUpRequests, from: from.toISOString(), to: to.toISOString() },
+      { metric: "support_tickets", label: "Support Tickets", value: supportTickets, from: from.toISOString(), to: to.toISOString() },
+      { metric: "board_memberships", label: "Course Board Joins", value: memberships, from: from.toISOString(), to: to.toISOString() },
+      { metric: "portfolio_items", label: "Portfolio Uploads", value: uploads, from: from.toISOString(), to: to.toISOString() }
+    ];
+
+    if (format === "csv") {
+      return csvResponse(rows, `teamaking-metrics-${from.toISOString().slice(0, 10)}-${to.toISOString().slice(0, 10)}.csv`);
+    }
+
+    return ok({ metrics: rows, range: { from, to } });
+  }
+
   if (method === "GET" && resource === "configs") {
     const configs = await prisma.siteConfig.findMany({ orderBy: { key: "asc" } });
     return ok({ configs });
@@ -2049,6 +2389,8 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
 async function dispatch(method: string, context: RouteContext, request: NextRequest) {
   const path = routeOf(context);
   const root = path[0];
+
+  await ensureSystemIsActive(root);
 
   if (root === "auth") return handleAuth(method, path, request);
   if (root === "demo") return handleDemo(method, path, request);

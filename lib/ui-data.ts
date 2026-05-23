@@ -20,6 +20,7 @@ export const adminNav = [
   { href: "/admin/teamaking-posts", label: "Posts" },
   { href: "/admin/team-up-requests", label: "Requests" },
   { href: "/admin/support-tickets", label: "Support Tickets" },
+  { href: "/admin/metrics", label: "Metrics" },
   { href: "/admin/configs", label: "Configs" },
   { href: "/admin/logs", label: "Logs" }
 ];

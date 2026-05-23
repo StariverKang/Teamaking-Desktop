@@ -35,7 +35,7 @@ Agent 开发原则：
 - Backend/API：Next.js Route Handlers
 - Database：PostgreSQL
 - ORM：Prisma
-- Auth：学校邮箱验证码登录；本地验收可使用 `/demo-access` 绕过验证码
+- Auth：学校邮箱注册 + 密码登录；注册和找回密码使用学校邮箱验证码；本地验收可使用 `/demo-access` 绕过验证码
 - File upload：本地验收写入 `public/uploads`，数据库记录 `fileUrl/storageKey/mime/extension/metadata`；后续可替换为对象存储
 
 ## 本地启动
@@ -51,9 +51,20 @@ npm install
 ```bash
 DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/teamaking?schema=public"
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
-RESEND_API_KEY="re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-RESEND_FROM_EMAIL="TEAMAKING <verify@your-domain.com>"
-RESEND_TEST_RECIPIENT_EMAIL=""
+ADMIN_HOSTS="admin.teamingapp.org"
+DEVELOPER_LOGIN_EMAIL="developer@teamingapp.org"
+DEVELOPER_LOGIN_PASSWORD="change-me"
+DEVELOPER_LOGIN_ROLE="school_admin"
+DEVELOPER_LOGIN_DISPLAY_NAME="TEAMAKING Developer"
+TENCENTCLOUD_SECRET_ID=""
+TENCENTCLOUD_SECRET_KEY=""
+TENCENTCLOUD_SES_REGION="ap-guangzhou"
+TENCENTCLOUD_SES_FROM_EMAIL="TEAMAKING <verify@notify.teamingapp.org>"
+TENCENTCLOUD_SES_REGISTER_TEMPLATE_ID=""
+TENCENTCLOUD_SES_RESET_TEMPLATE_ID=""
+TENCENTCLOUD_SES_REPLY_TO_EMAIL=""
+TENCENTCLOUD_SES_TEST_RECIPIENT_EMAIL=""
+UPLOAD_STORAGE_MODE=""
 EMAIL_DEBUG_CODE_RESPONSE="false"
 ```
 
@@ -117,9 +128,19 @@ ENABLE_DEMO_ACCESS=true
 http://localhost:3000/login
 ```
 
-正式邮箱路径会通过 Resend 发送验证码。开发环境没有配置 `RESEND_API_KEY` 时，接口会把验证码返回给前端并自动填入，方便本地调试；生产环境必须配置 `RESEND_API_KEY` 和 `RESEND_FROM_EMAIL`。
+`/login` 会展示三个普通用户入口：
 
-没有自有域名时，可以在开发环境使用 Resend 测试发件地址 `TEAMAKING <onboarding@resend.dev>`。如果测试域名只能投递到 Resend 账号邮箱，可设置 `RESEND_TEST_RECIPIENT_EMAIL`：用户仍在登录页输入学校邮箱，验证码仍绑定这个学校邮箱，但邮件会投递到测试收件箱。
+- 邮箱注册：未注册用户先接收验证码，再设置密码。
+- 账号密码登录：已注册用户用学校邮箱和密码登录。
+- 找回密码：通过学校邮箱验证码重设密码。
+
+管理员入口不从主系统导航展示。生产环境建议把 `admin.teamingapp.org` 绑定到同一个 Vercel 项目，并设置 `ADMIN_HOSTS="admin.teamingapp.org"`；管理员通过 `/admin-login` 使用 `DEVELOPER_LOGIN_EMAIL` 和 `DEVELOPER_LOGIN_PASSWORD` 登录后台。
+
+正式邮箱路径会通过腾讯云邮件推送 SES 发送验证码。开发环境没有配置 `TENCENTCLOUD_SECRET_ID` 时，接口会把验证码返回给前端并自动填入，方便本地调试；生产环境必须配置腾讯云 SES 相关环境变量。
+
+腾讯云 SES 使用两套模板：注册模板写入 `TENCENTCLOUD_SES_REGISTER_TEMPLATE_ID`，找回密码模板写入 `TENCENTCLOUD_SES_RESET_TEMPLATE_ID`。模板变量建议包含 `{{code}}`、`{{email}}`、`{{schoolName}}`、`{{title}}`、`{{action}}`。
+
+Vercel 线上测试环境会自动把 4MB 内的上传文件以内联 data URL 方式保存到数据库字段里，方便测试账号重复登录后继续查看头像、背景、简历和作品链接。正式长期版本建议再接入对象存储。
 
 ## Demo 账号
 
@@ -134,16 +155,17 @@ http://localhost:3000/login
 ## 核心流程
 
 1. 用户进入 `/`。
-2. 在 `/login` 输入学校邮箱。
+2. 未注册用户在 `/login` 选择邮箱注册，输入学校邮箱。
 3. 系统检查邮箱域名是否存在于 `SchoolEmailDomain`。
-4. 系统创建验证码，并通过 Resend 发送到学校邮箱。
-5. 用户输入验证码后登录，系统通过邮箱域名识别学校。
-6. 首次用户进入 `/onboarding`，填写年级、Faculty、Major。
-7. 用户在 `/courses` 查看推荐课程或搜索课程；未登录时只显示示例，不读取真实课程板或用户数据。
-8. 用户加入 Course Board 后，会出现在该课程板的 Course People 中。
-9. 用户可以在 `/boards/[boardId]` 创建 Teamaking Post。
-10. 其他用户可以在 Teamaking Post 详情页点击 Team Up。
-11. Team Up Request 状态可以按正向流程 `sent → viewed → mutual` 变化，也可以进入 `archived` 或 `reported`。
+4. 系统创建注册验证码，并通过腾讯云 SES 发送到学校邮箱。
+5. 用户输入验证码并设置密码后完成注册，系统通过邮箱域名识别学校。
+6. 已注册用户之后使用学校邮箱和密码登录；忘记密码时走找回密码验证码模板。
+7. 首次用户进入 `/onboarding`，填写年级、Faculty、Major。
+8. 用户在 `/courses` 查看推荐课程或搜索课程；未登录时只显示示例，不读取真实课程板或用户数据。
+9. 用户加入 Course Board 后，会出现在该课程板的 Course People 中。
+10. 用户可以在 `/boards/[boardId]` 创建 Teamaking Post。
+11. 其他用户可以在 Teamaking Post 详情页点击 Team Up。
+12. Team Up Request 状态可以按正向流程 `sent → viewed → mutual` 变化，也可以进入 `archived` 或 `reported`。
 
 ## 重要产品边界
 
@@ -208,8 +230,12 @@ prisma/
 
 认证：
 
-- `POST /api/auth/send-code`
-- `POST /api/auth/verify-code`
+- `POST /api/auth/register/send-code`
+- `POST /api/auth/register/complete`
+- `POST /api/auth/password-login`
+- `POST /api/auth/password-reset/send-code`
+- `POST /api/auth/password-reset/complete`
+- `POST /api/auth/developer-login`
 - `GET /api/auth/me`
 - `POST /api/demo/login`
 
@@ -269,6 +295,7 @@ prisma/
 - `POST /api/admin/course-submissions/:id/reject`
 - `POST /api/admin/course-submissions/:id/merge`
 - `GET /api/admin/boards`
+- `POST /api/admin/boards`
 - `PATCH /api/admin/boards/:boardId`
 - `GET /api/admin/teamaking-posts`
 - `PATCH /api/admin/teamaking-posts/:postId`
@@ -276,6 +303,7 @@ prisma/
 - `PATCH /api/admin/team-up-requests/:requestId`
 - `GET /api/admin/support-tickets`
 - `PATCH /api/admin/support-tickets/:id`
+- `GET /api/admin/metrics`
 - `GET /api/admin/configs`
 - `PATCH /api/admin/configs/:key`
 - `GET /api/admin/logs`
@@ -284,14 +312,16 @@ prisma/
 
 ### 邮箱验证
 
-`/api/auth/send-code` 会从邮箱中取出域名，例如 `media.student@mail.bnbu.edu.cn` 的域名是 `mail.bnbu.edu.cn`。系统只允许存在于 `SchoolEmailDomain` 且状态为 `active` 的域名登录。
+`/api/auth/register/send-code` 会从邮箱中取出域名，例如 `media.student@mail.bnbu.edu.cn` 的域名是 `mail.bnbu.edu.cn`。系统只允许存在于 `SchoolEmailDomain` 且状态为 `active` 的域名注册。
 
-`/api/auth/verify-code` 校验验证码后，会创建或更新 `User`，并自动创建：
+`/api/auth/register/complete` 校验注册验证码后，会创建或更新 `User`，保存密码哈希，并自动创建：
 
 - `UserProfile`
 - `ContactInfo`
 
 其中 `ContactInfo.schoolEmail` 一定复制自 `User.email`，前端接口不会允许用户修改。
+
+已注册用户通过 `/api/auth/password-login` 登录；忘记密码通过 `/api/auth/password-reset/send-code` 和 `/api/auth/password-reset/complete` 重设。注册和找回密码各自使用独立的腾讯云 SES 模板。
 
 ### Course Board
 

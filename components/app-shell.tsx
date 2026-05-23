@@ -18,14 +18,13 @@ export function Navbar() {
           <NavItem href="/courses" label="Courses" />
           <NavItem href="/matches" label="Matches" />
           <NavItem href="/support" label="Support" />
-          <NavItem href="/admin" label="Admin" />
         </nav>
         <Link
           href="/login"
           className="focus-ring inline-flex items-center gap-2 rounded-sm border border-ink bg-rust px-4 py-2 text-sm font-semibold text-paper shadow-soft"
         >
           <MailCheck size={16} aria-hidden />
-          学校邮箱登录
+          登录 / 注册
         </Link>
       </div>
     </header>

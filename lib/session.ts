@@ -49,6 +49,12 @@ export async function requireUser() {
   if (!user) {
     throw new ApiError(401, "请先完成学校邮箱登录。");
   }
+  if ("status" in user && user.status === "banned") {
+    throw new ApiError(403, "这个账号已被封禁，请联系管理员。");
+  }
+  if ("suspendedUntil" in user && user.suspendedUntil && new Date(user.suspendedUntil).getTime() > Date.now()) {
+    throw new ApiError(403, "这个账号当前处于限时禁止操作状态，请稍后再试。");
+  }
 
   return user;
 }
