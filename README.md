@@ -293,6 +293,11 @@ prisma/
 - `POST /api/admin/courses`
 - `PATCH /api/admin/courses/:courseId`
 - `POST /api/admin/courses/:courseId/merge`
+- `POST /api/admin/course-imports/validate`
+- `GET /api/admin/course-imports`
+- `POST /api/admin/course-imports`
+- `POST /api/admin/course-imports/:importBatchId/approve`
+- `POST /api/admin/course-imports/:importBatchId/reject`
 - `GET /api/admin/course-submissions`
 - `POST /api/admin/course-submissions/:id/approve`
 - `POST /api/admin/course-submissions/:id/reject`
@@ -335,6 +340,48 @@ prisma/
 ### 课程搜索
 
 课程搜索同时匹配课程代码和课程名称。接口会返回 `score` 和 `matchReason`，前端推荐栏按匹配度从高到低展示。
+
+### BNBU Course Import
+
+真实课程数据由外部爬虫采集和清洗。TEAMAKING 不负责爬虫，只接收最终 cleaned JSON：`schemaVersion` 必须为 `teamaking.bnbu_course_import.v1`，`school.shortName` 必须为 `BNBU`。管理员在 `/admin/course-imports` 粘贴 JSON，先校验并创建待审批批次，批准后才会写入课程配置。
+
+JSON 顶层结构：
+
+```json
+{
+  "schemaVersion": "teamaking.bnbu_course_import.v1",
+  "generatedAt": "2026-05-24T10:30:00+08:00",
+  "school": {
+    "shortName": "BNBU",
+    "name": "Beijing Normal-Hong Kong Baptist University",
+    "emailDomain": "mail.bnbu.edu.cn"
+  },
+  "semester": {
+    "code": "2026-Fall",
+    "name": "2026 Fall",
+    "academicYear": 2026,
+    "term": "Fall",
+    "isCurrentCandidate": true
+  },
+  "sourceRefs": [],
+  "faculties": [],
+  "majors": [],
+  "courses": [],
+  "offerings": [],
+  "curriculumRules": []
+}
+```
+
+`curriculumRules[].classification` 使用 BNBU 官方课程分类枚举：`major_required`、`major_elective`、`bba_core`、`faculty_required`、`college_core`、`common_core`、`required_core`、`elective_core`、`concentration_required`、`concentration_elective`、`university_core`、`university_core_chinese`、`university_core_english`、`university_core_ai_literacy`、`university_core_ppe`、`university_core_military_training`、`university_core_wpex`、`university_core_healthy_lifestyle`、`general_education`、`ge_level_1_foundational`、`ge_level_2_interdisciplinary_thematic`、`ge_level_3_capstone`、`free_elective`、`supporting_course`、`interdisciplinary_course`、`final_year_project`、`internship`、`unknown`。
+
+`curriculumRules[].studentAction` 决定学生端行为：
+
+- `default_join`：匹配学校、专业/院系、年级的学生会默认加入 Course Board。
+- `searchable_add`：课程可搜索，学生手动加入；适用于自由选修、通识、专业选修等。
+- `recommend_only`：只展示推荐，不自动加入。
+- `hidden`：后台保留，不展示给学生。
+
+如果某课程对 MCOM Year 2 是 `major_required/default_join`，同时对其他专业是 `free_elective/searchable_add`，MCOM Year 2 学生登录后会默认进入对应 Course Board；其他专业学生需要搜索课程代码或名称后手动加入。学生退出默认加入的课程板时，系统保留 `opted_out` 记录，避免下次导入又自动加回，并提示可提交 `course_config_error` 工单。
 
 ### 工单系统
 

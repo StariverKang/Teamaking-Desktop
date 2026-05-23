@@ -126,13 +126,14 @@ model School {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users       User[]
-  domains     SchoolEmailDomain[]
-  faculties   Faculty[]
-  majors      Major[]
-  semesters   Semester[]
-  courses     Course[]
-  submissions UserSubmittedCourse[]
+  users         User[]
+  domains       SchoolEmailDomain[]
+  faculties     Faculty[]
+  majors        Major[]
+  semesters     Semester[]
+  courses       Course[]
+  submissions   UserSubmittedCourse[]
+  importBatches CourseImportBatch[]
 
   @@unique([shortName])
 }
@@ -147,8 +148,9 @@ model SchoolEmailDomain {
 }
 
 model Faculty {
-  id       String @id @default(cuid())
+  id       String  @id @default(cuid())
   schoolId String
+  code     String?
   name     String
 
   school   School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
@@ -156,14 +158,16 @@ model Faculty {
   profiles UserProfile[]
 
   @@unique([schoolId, name])
+  @@unique([schoolId, code])
 }
 
 model Major {
-  id         String @id @default(cuid())
+  id         String  @id @default(cuid())
   schoolId   String
   facultyId  String
+  code       String?
   name       String
-  degreeType String @default("undergraduate")
+  degreeType String  @default("undergraduate")
 
   school   School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   faculty  Faculty              @relation(fields: [facultyId], references: [id], onDelete: Cascade)
@@ -171,57 +175,70 @@ model Major {
   mappings CourseMajorMapping[]
 
   @@unique([schoolId, name])
+  @@unique([schoolId, code])
 }
 
 model Semester {
   id        String  @id @default(cuid())
   schoolId  String
+  code      String?
   name      String
   year      Int
   term      String
   isCurrent Boolean @default(false)
 
-  school    School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  offerings CourseOffering[]
+  school          School                 @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  offerings       CourseOffering[]
+  curriculumRules CourseCurriculumRule[]
 
   @@unique([schoolId, name])
+  @@unique([schoolId, code])
 }
 
 model Course {
-  id          String   @id @default(cuid())
-  schoolId    String
-  code        String
-  title       String
-  description String   @default("")
-  courseType  String   @default("coursework")
-  status      String   @default("active")
-  source      String   @default("admin_seed")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  schoolId     String
+  code         String
+  title        String
+  description  String   @default("")
+  credits      Float?
+  ownerUnit    Json     @default("{}")
+  categoryTags Json     @default("[]")
+  sourceRefIds Json     @default("[]")
+  courseType   String   @default("coursework")
+  status       String   @default("active")
+  source       String   @default("admin_seed")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  school     School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  offerings  CourseOffering[]
-  mappings   CourseMajorMapping[]
-  portfolios PortfolioItem[]
+  school          School                 @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  offerings       CourseOffering[]
+  mappings        CourseMajorMapping[]
+  curriculumRules CourseCurriculumRule[]
+  portfolios      PortfolioItem[]
 
   @@unique([schoolId, code])
   @@index([title])
 }
 
 model CourseOffering {
-  id          String   @id @default(cuid())
-  courseId    String
-  semesterId  String
-  teacherName String?
-  section     String?
-  status      String   @default("active")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  courseId     String
+  semesterId   String
+  teacherName  String?
+  section      String?
+  sourceRefIds Json     @default("[]")
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  course   Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  semester Semester        @relation(fields: [semesterId], references: [id], onDelete: Cascade)
-  boards   CourseBoard[]
-  posts    TeamakingPost[]
+  course           Course                  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  semester         Semester                @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+  boards           CourseBoard[]
+  posts            TeamakingPost[]
+  syllabusMetadata CourseSyllabusMetadata?
+
+  @@index([courseId, semesterId])
 }
 
 model CourseMajorMapping {
@@ -257,15 +274,90 @@ model CourseBoard {
 }
 
 model CourseBoardMembership {
-  id       String   @id @default(cuid())
-  userId   String
-  boardId  String
-  joinedAt DateTime @default(now())
+  id           String    @id @default(cuid())
+  userId       String
+  boardId      String
+  source       String    @default("manual")
+  status       String    @default("active")
+  originRuleId String?
+  joinedAt     DateTime  @default(now())
+  leftAt       DateTime?
 
   user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   board CourseBoard @relation(fields: [boardId], references: [id], onDelete: Cascade)
 
   @@unique([userId, boardId])
+  @@index([status])
+  @@index([originRuleId])
+}
+
+model CourseImportBatch {
+  id                String    @id @default(cuid())
+  schoolId          String?
+  schemaVersion     String
+  semesterCode      String?
+  status            String    @default("pending")
+  payload           Json
+  validationSummary Json      @default("{}")
+  approvedByUserId  String?
+  approvedAt        DateTime?
+  rejectedByUserId  String?
+  rejectedAt        DateTime?
+  adminNote         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  school          School?                @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+  curriculumRules CourseCurriculumRule[]
+
+  @@index([schoolId])
+  @@index([status])
+  @@index([semesterCode])
+}
+
+model CourseCurriculumRule {
+  id                  String   @id @default(cuid())
+  importBatchId       String?
+  externalId          String
+  courseId            String
+  semesterId          String
+  classification      String
+  classificationLabel String?
+  studentAction       String
+  audience            Json     @default("{}")
+  ownerUnit           Json     @default("{}")
+  sourceRefIds        Json     @default("[]")
+  confidence          String   @default("unknown")
+  status              String   @default("active")
+  raw                 Json     @default("{}")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  importBatch CourseImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  course      Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  semester    Semester           @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+
+  @@unique([semesterId, externalId])
+  @@index([courseId])
+  @@index([classification])
+  @@index([studentAction])
+  @@index([status])
+}
+
+model CourseSyllabusMetadata {
+  id                   String   @id @default(cuid())
+  courseOfferingId     String   @unique
+  teamworkRequirement  String   @default("unknown")
+  teamworkSummary      String?
+  evidenceSourceRefIds Json     @default("[]")
+  confidence           String   @default("unknown")
+  raw                  Json     @default("{}")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  courseOffering CourseOffering @relation(fields: [courseOfferingId], references: [id], onDelete: Cascade)
+
+  @@index([teamworkRequirement])
 }
 
 model UserSubmittedCourse {

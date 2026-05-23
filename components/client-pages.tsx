@@ -686,6 +686,9 @@ export function DashboardPage() {
   const { data: recommended } = useApi("/api/courses/recommended", [me?.user?.id]);
   const { data: matches } = useApi("/api/matches", [me?.user?.id]);
   const { data: interests } = useApi("/api/team-up-interests/received", [me?.user?.id]);
+  const activeMemberships = (me?.user?.memberships ?? []).filter((membership: any) => membership.status !== "opted_out");
+  const currentMemberships = activeMemberships.filter((membership: any) => membership.board?.courseOffering?.semester?.isCurrent);
+  const historyMemberships = activeMemberships.filter((membership: any) => !membership.board?.courseOffering?.semester?.isCurrent);
 
   return (
     <PageShell title="Dashboard" eyebrow="Student App" description="这里集中显示推荐课程、近期 Open to Team 信号、资料完整度和 Team Up 请求。">
@@ -721,9 +724,38 @@ export function DashboardPage() {
             </Card>
           </div>
           <section>
+            <h2 className="mb-3 text-xl font-semibold text-ink">My current Course Boards</h2>
+            <div className="grid gap-3 md:grid-cols-2">
+              {currentMemberships.map((membership: any) => {
+                const board = membership.board;
+                const course = board?.courseOffering?.course;
+                return (
+                  <Link key={membership.id} href={`/boards/${board.id}`} className="border-2 border-ink bg-paper p-4 transition hover:-translate-y-0.5 hover:shadow-hard">
+                    <p className="text-sm font-semibold text-coral">{course?.code}</p>
+                    <h3 className="mt-1 text-lg font-semibold text-ink">{course?.title ?? board.title}</h3>
+                    <p className="mt-2 text-xs text-ink/58">{membership.source?.startsWith("auto_") ? "BNBU 课程配置默认加入" : "手动加入"} · {board?.courseOffering?.semester?.name}</p>
+                  </Link>
+                );
+              })}
+              {currentMemberships.length === 0 ? <p className="text-sm text-ink/58">当前还没有加入的 Course Board。</p> : null}
+            </div>
+          </section>
+          <section>
             <h2 className="mb-3 text-xl font-semibold text-ink">Recommended courses</h2>
             <PaginatedGrid items={recommended?.courses ?? []} render={(course) => <CourseCard key={course.id} course={course} />} />
           </section>
+          {historyMemberships.length ? (
+            <section>
+              <h2 className="mb-3 text-xl font-semibold text-ink">Historical Course Boards</h2>
+              <div className="grid gap-2">
+                {historyMemberships.slice(0, 6).map((membership: any) => (
+                  <Link key={membership.id} href={`/boards/${membership.board.id}`} className="border border-ink/15 bg-paper px-3 py-2 text-sm font-semibold text-ink">
+                    {membership.board.courseOffering.course.code} · {membership.board.courseOffering.course.title} · {membership.board.courseOffering.semester.name}
+                  </Link>
+                ))}
+              </div>
+            </section>
+          ) : null}
           <section>
             <h2 className="mb-3 text-xl font-semibold text-ink">Recent Open to Team posts</h2>
             <PaginatedGrid items={matches?.posts ?? []} render={(post) => <TeamakingPostCard key={post.id} post={post} />} />
@@ -1677,6 +1709,7 @@ export function BoardPage({ boardId }: { boardId: string }) {
   const { data: boardData, error, loading } = useApi(isAuthed ? `/api/boards/${boardId}` : null, [refresh, isAuthed]);
   const { data: posts } = useApi(isAuthed ? `/api/boards/${boardId}/open-to-team` : null, [refresh, isAuthed]);
   const { data: people } = useApi(isAuthed ? `/api/boards/${boardId}/people` : null, [refresh, isAuthed]);
+  const [boardMessage, setBoardMessage] = useState("");
   const [postForm, setPostForm] = useState({
     title: "",
     strengths: [] as string[],
@@ -1696,10 +1729,13 @@ export function BoardPage({ boardId }: { boardId: string }) {
   }, [course, postForm.title]);
 
   async function joinOrLeave() {
+    setBoardMessage("");
     if (boardData?.isJoined) {
-      await api(`/api/boards/${boardId}/leave`, { method: "DELETE" });
+      const result = await api(`/api/boards/${boardId}/leave`, { method: "DELETE" });
+      setBoardMessage(result?.message ?? "已离开这个 Course Board。");
     } else {
-      await api(`/api/boards/${boardId}/join`, { method: "POST" });
+      const result = await api(`/api/boards/${boardId}/join`, { method: "POST" });
+      setBoardMessage(result?.message ?? "已加入这个 Course Board。");
     }
     setRefresh((value) => value + 1);
   }
@@ -1765,6 +1801,14 @@ export function BoardPage({ boardId }: { boardId: string }) {
                 {boardData.isJoined ? "Leave Course Board" : "Join Course Board"}
               </button>
             </div>
+            {boardMessage ? (
+              <div className="mt-4 border border-ink/20 bg-paper px-3 py-2 text-sm text-ink/68">
+                <span>{boardMessage}</span>
+                {boardMessage.includes("course_config_error") ? (
+                  <Link href="/support" className="ml-2 font-semibold text-coral">提交配置错误工单</Link>
+                ) : null}
+              </div>
+            ) : null}
           </Card>
           {boardData.isJoined ? (
             <Card>
@@ -2139,6 +2183,49 @@ export function AdminResourcePage({
           <Link href="/admin/support-tickets" className="w-fit rounded-sm border border-ink/40 px-4 py-2 text-sm font-semibold">
             去处理工单
           </Link>
+        </div>
+      );
+    }
+
+    if (resource === "course-imports") {
+      return (
+        <div className="grid gap-4">
+          <form
+            className="grid gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAction("/api/admin/course-imports", "POST", { payload: textFields.payload });
+            }}
+          >
+            <textarea
+              className={`${inputClass} min-h-[220px] font-mono text-xs`}
+              placeholder='粘贴 BNBU cleaned JSON，例如 {"schemaVersion":"teamaking.bnbu_course_import.v1", ...}'
+              value={textFields.payload ?? ""}
+              onChange={(event) => setTextFields({ ...textFields, payload: event.target.value })}
+            />
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => runAction("/api/admin/course-imports/validate", "POST", { payload: textFields.payload })} className="rounded-sm border border-ink/40 px-4 py-2 text-sm font-semibold">
+                校验 JSON
+              </button>
+              <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">创建待审批批次</button>
+            </div>
+          </form>
+          <form
+            className="grid gap-3 md:grid-cols-[1fr_1fr_auto_auto]"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAction(`/api/admin/course-imports/${selectedId}/approve`, "POST", {});
+            }}
+          >
+            <select className={inputClass} value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
+              {primaryRows.map((row) => <option key={row.id} value={row.id}>{row.semesterCode ?? row.id} · {row.status}</option>)}
+            </select>
+            <input className={inputClass} placeholder="拒绝原因 / 管理备注" value={adminNote} onChange={(event) => setAdminNote(event.target.value)} />
+            <button className="rounded-sm bg-forest px-4 py-2 text-sm font-semibold text-white">批准导入</button>
+            <button type="button" onClick={() => runAction(`/api/admin/course-imports/${selectedId}/reject`, "POST", { adminNote })} className="rounded-sm border border-rust px-4 py-2 text-sm font-semibold text-rust">
+              拒绝
+            </button>
+          </form>
         </div>
       );
     }

@@ -258,6 +258,42 @@
     - `TENCENTCLOUD_SES_FROM_EMAIL=Developer_Teamaking <verify@notify.teamingapp.org>`
   - 腾讯云模板已创建，等待审核：
     - `179674`：`TEAMAKING 注册验证码`
+
+### BNBU 课程导入规范与默认 Course Board 配置
+
+- 背景：
+  - 用户明确课程数据由外部爬虫采集，TEAMAKING 只接收清洗后的业务 JSON。
+  - “BNBU 官方课程分类补充”是之前“Teamaking 课程数据导入规范”的分类维度补充，总体任务仍包括导入、审核、自动对接用户基础数据、默认加入、手动退出和历史课程。
+- 改动：
+  - 新增 BNBU cleaned JSON 校验模块 `lib/bnbu-course-import.ts`，支持 `teamaking.bnbu_course_import.v1`。
+  - 扩展 Prisma schema：
+    - `Faculty/Major/Semester` 新增可选 `code`，用于 BNBU 稳定代码匹配。
+    - `Course` 新增 `credits/ownerUnit/categoryTags/sourceRefIds`。
+    - `CourseOffering` 新增 `sourceRefIds`。
+    - 新增 `CourseImportBatch`、`CourseCurriculumRule`、`CourseSyllabusMetadata`。
+    - `CourseBoardMembership` 新增 `source/status/originRuleId/leftAt`，支持默认加入与 opt-out。
+  - 新增 migration `20260524120000_bnbu_course_import`。
+  - 新增管理员 API：
+    - `POST /api/admin/course-imports/validate`
+    - `GET /api/admin/course-imports`
+    - `POST /api/admin/course-imports`
+    - `POST /api/admin/course-imports/:id/approve`
+    - `POST /api/admin/course-imports/:id/reject`
+  - 新增 `/admin/course-imports` 页面和后台导航入口，可粘贴 JSON 校验、创建待审批批次、批准或拒绝。
+  - 批准导入后会 upsert BNBU school/domain、Faculty、Major、Semester、Course、Offering、Course Board、Curriculum Rule 和 syllabus teamwork metadata。
+  - `default_join` 规则会根据学生 onboarding 的学校、专业/院系、年级默认创建 Course Board membership；`searchable_add` 不自动加入。
+  - 学生退出自动加入的 Course Board 时保留 `opted_out`，后续同一规则导入不会自动加回，并提示通过工单反馈 `course_config_error`。
+  - Dashboard 增加当前/历史 Course Boards 展示，旧学期 Course Board 会进入历史区。
+- BNBU 分类覆盖：
+  - `major_required`、`major_elective`、`bba_core`、`faculty_required`、`college_core`、`common_core`、`required_core`、`elective_core`、`concentration_required`、`concentration_elective`、`university_core` 及 University Core 子类、GE Level 1/2/3、`free_elective`、`supporting_course`、`interdisciplinary_course`、`final_year_project`、`internship`、`unknown`。
+
+### BNBU 爬虫与清洗程序需求文档
+
+- 背景：用户需要一份可交给外部开发者的 Markdown 文档，说明如何实现 `Crawler -> JSONL -> Python 清洗 -> JSON -> Frontend/API` 的完整数据管线。
+- 改动：
+  - 新增 `docs/BNBU_COURSE_CRAWLER_REQUIREMENTS.md`。
+  - 文档覆盖 raw JSONL schema、cleaned JSON schema、各节点功能、卡点、校验要求、正式数据库字段映射、课程分类和 studentAction 规则。
+  - 明确 crawler 不输出 memberships；默认加入由 TEAMAKING 在管理员批准导入后根据 `default_join` curriculum rules 生成。
     - `179675`：`TEAMAKING 找回密码验证码`
   - Vercel 已添加：
     - `TENCENTCLOUD_SES_REGION=ap-hongkong`

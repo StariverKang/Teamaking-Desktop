@@ -7,6 +7,12 @@ import { hashPassword, verifyPassword } from "@/lib/password";
 import { allowedRequestTransitions } from "@/lib/constants";
 import { contactSnapshot, defaultContactVisibility } from "@/lib/contact";
 import {
+  bnbuClassificationLabels,
+  membershipSourceForClassification,
+  normalizedRuleStudentAction,
+  validateBnbuCourseImportPayload
+} from "@/lib/bnbu-course-import";
+import {
   demoAccounts,
   demoAdminData,
   demoBoardById,
@@ -196,7 +202,7 @@ async function ensureBoardMember(userId: string, boardId: string) {
     where: { userId_boardId: { userId, boardId } }
   });
 
-  if (!membership) {
+  if (!membership || membership.status !== "active") {
     throw new ApiError(403, "请先加入这个 Course Board，再创建 Teamaking Post。");
   }
 }
@@ -1139,6 +1145,44 @@ async function handleCourses(method: string, path: string[], request: NextReques
 
     const majorId = user.profile?.majorId;
     const grade = user.profile?.grade;
+    const currentSemester = user.schoolId
+      ? await prisma.semester.findFirst({ where: { schoolId: user.schoolId, isCurrent: true } })
+      : null;
+
+    if (currentSemester) {
+      const rules = await prisma.courseCurriculumRule.findMany({
+        where: {
+          semesterId: currentSemester.id,
+          status: "active",
+          studentAction: { in: ["default_join", "recommend_only"] }
+        },
+        include: { course: { include: courseInclude } },
+        orderBy: [{ studentAction: "asc" }, { classification: "asc" }]
+      });
+      const matchedRules = rules.filter((rule) => curriculumRuleMatchesUser(rule, user));
+      if (matchedRules.length) {
+        const seenCourseIds = new Set<string>();
+        return ok({
+          courses: matchedRules
+            .filter((rule) => {
+              if (seenCourseIds.has(rule.courseId)) return false;
+              seenCourseIds.add(rule.courseId);
+              return true;
+            })
+            .map((rule) => ({
+              ...rule.course,
+              recommendation: {
+                recommendedGrade: grade ?? "未填写年级",
+                isRequired: rule.studentAction === "default_join",
+                classification: rule.classification,
+                classificationLabel: rule.classificationLabel,
+                studentAction: rule.studentAction,
+                reason: rule.studentAction === "default_join" ? "根据 BNBU 课程配置默认加入" : "根据 BNBU 课程配置推荐"
+              }
+            }))
+        });
+      }
+    }
 
     const mappings = majorId
       ? await prisma.courseMajorMapping.findMany({
@@ -1261,10 +1305,11 @@ async function handleBoards(method: string, path: string[], request: NextRequest
 
     const board = await getBoardForUser(boardId);
     assertSameSchool(user, board.courseOffering.course.schoolId);
+    const activeMemberships = board.memberships.filter((membership) => membership.status === "active");
     const isJoined = user
-      ? board.memberships.some((membership) => membership.userId === user.id)
+      ? activeMemberships.some((membership) => membership.userId === user.id)
       : false;
-    return ok({ board, isJoined, memberCount: board.memberships.length });
+    return ok({ board, isJoined, memberCount: activeMemberships.length });
   }
 
   if (method === "POST" && path[2] === "join") {
@@ -1279,10 +1324,12 @@ async function handleBoards(method: string, path: string[], request: NextRequest
     const board = await getBoardForUser(boardId);
     const membership = await prisma.courseBoardMembership.upsert({
       where: { userId_boardId: { userId: user.id, boardId } },
-      update: {},
+      update: { status: "active", source: "manual", leftAt: null },
       create: {
         userId: user.id,
-        boardId
+        boardId,
+        source: "manual",
+        status: "active"
       }
     });
 
@@ -1296,6 +1343,20 @@ async function handleBoards(method: string, path: string[], request: NextRequest
     const user = await requireUser();
     if (isDemoUser(user)) {
       return ok({ message: "本地视觉演示模式已模拟离开这个 Course Board。" });
+    }
+
+    const membership = await prisma.courseBoardMembership.findUnique({
+      where: { userId_boardId: { userId: user.id, boardId } }
+    });
+
+    if (membership?.source.startsWith("auto_")) {
+      await prisma.courseBoardMembership.update({
+        where: { userId_boardId: { userId: user.id, boardId } },
+        data: { status: "opted_out", leftAt: new Date() }
+      });
+      return ok({
+        message: "已退出这个默认加入的 Course Board。若这是课程配置错误，可在 Support Tickets 提交 course_config_error 工单反馈。"
+      });
     }
 
     await prisma.courseBoardMembership.deleteMany({
@@ -1341,7 +1402,7 @@ async function handleBoards(method: string, path: string[], request: NextRequest
     const board = await getBoardForUser(boardId);
     assertSameSchool(user, board.courseOffering.course.schoolId);
     const members = await prisma.courseBoardMembership.findMany({
-      where: { boardId },
+      where: { boardId, status: "active" },
       include: {
         user: {
           include: {
@@ -1736,7 +1797,7 @@ async function handleMatches() {
     });
   }
 
-  const memberships = await prisma.courseBoardMembership.findMany({ where: { userId: user.id } });
+  const memberships = await prisma.courseBoardMembership.findMany({ where: { userId: user.id, status: "active" } });
   const boardIds = memberships.map((membership) => membership.boardId);
 
   const posts = await prisma.teamakingPost.findMany({
@@ -1917,6 +1978,434 @@ async function handleUploads(method: string, request: NextRequest) {
   return created({ upload });
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function records(value: unknown) {
+  return Array.isArray(value) ? value.filter(isPlainRecord) : [];
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function textValues(value: unknown) {
+  return Array.isArray(value) ? value.map(textValue).filter(Boolean) : [];
+}
+
+function curriculumRuleMatchesUser(rule: any, user: any) {
+  const audience = isPlainRecord(rule.audience) ? rule.audience : {};
+  const profile = user.profile;
+  if (!profile) return false;
+
+  const grades = textValues(audience.grades);
+  if (grades.length && !grades.includes(profile.grade)) return false;
+  if (audience.allMajors === true) return true;
+
+  const majorCodes = textValues(audience.majorCodes);
+  const facultyCodes = textValues(audience.facultyCodes);
+  const userMajorCode = textValue(profile.major?.code);
+  const userFacultyCode = textValue(profile.faculty?.code);
+
+  return (
+    (majorCodes.length > 0 && userMajorCode && majorCodes.includes(userMajorCode)) ||
+    (facultyCodes.length > 0 && userFacultyCode && facultyCodes.includes(userFacultyCode))
+  );
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function courseImportPayloadFromBody(body: Record<string, unknown>) {
+  const candidate = body.payload ?? body;
+  if (typeof candidate === "string") {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (isPlainRecord(parsed)) return parsed;
+    } catch {
+      throw new ApiError(400, "payload 不是合法 JSON。");
+    }
+  }
+  if (isPlainRecord(candidate)) return candidate;
+  throw new ApiError(400, "payload must be a JSON object.");
+}
+
+async function findOrCreateBoard(tx: any, courseOfferingId: string, title: string) {
+  const existing = await tx.courseBoard.findFirst({ where: { courseOfferingId } });
+  if (existing) {
+    return tx.courseBoard.update({
+      where: { id: existing.id },
+      data: { status: existing.status === "closed" ? existing.status : "active" }
+    });
+  }
+  return tx.courseBoard.create({
+    data: {
+      courseOfferingId,
+      title,
+      rules: "请尊重同学，清楚表达自己的贡献方式。必修/核心课程可能由 BNBU 课程配置默认加入；你可以自行退出，Course People 不代表官方选课名单。"
+    }
+  });
+}
+
+async function applyDefaultJoinRule(tx: any, input: {
+  ruleId: string;
+  courseId: string;
+  semesterId: string;
+  classification: string;
+  audience: Record<string, unknown>;
+}) {
+  const majorCodes = textValues(input.audience.majorCodes);
+  const facultyCodes = textValues(input.audience.facultyCodes);
+  const grades = textValues(input.audience.grades);
+  const allMajors = input.audience.allMajors === true;
+
+  const [majors, faculties, boards] = await Promise.all([
+    majorCodes.length
+      ? tx.major.findMany({ where: { code: { in: majorCodes } }, select: { id: true } })
+      : Promise.resolve([]),
+    facultyCodes.length
+      ? tx.faculty.findMany({ where: { code: { in: facultyCodes } }, select: { id: true } })
+      : Promise.resolve([]),
+    tx.courseBoard.findMany({
+      where: {
+        courseOffering: {
+          courseId: input.courseId,
+          semesterId: input.semesterId
+        }
+      },
+      select: { id: true }
+    })
+  ]);
+
+  if (!boards.length) return { matchedUsers: 0, membershipsCreated: 0, membershipsSkipped: 0 };
+
+  const majorIds = majors.map((major: { id: string }) => major.id);
+  const facultyIds = faculties.map((faculty: { id: string }) => faculty.id);
+  const profileWhere: Record<string, unknown> = {};
+  if (grades.length) profileWhere.grade = { in: grades };
+
+  const audienceOr = [];
+  if (allMajors) audienceOr.push({});
+  if (majorIds.length) audienceOr.push({ majorId: { in: majorIds } });
+  if (facultyIds.length) audienceOr.push({ facultyId: { in: facultyIds } });
+  if (!audienceOr.length) return { matchedUsers: 0, membershipsCreated: 0, membershipsSkipped: 0 };
+
+  const users = await tx.user.findMany({
+    where: {
+      schoolId: {
+        equals: await tx.semester.findUnique({ where: { id: input.semesterId }, select: { schoolId: true } }).then((semester: { schoolId: string } | null) => semester?.schoolId ?? "")
+      },
+      onboardingCompleted: true,
+      profile: {
+        is: {
+          ...profileWhere,
+          OR: audienceOr
+        }
+      }
+    },
+    select: { id: true }
+  });
+
+  let membershipsCreated = 0;
+  let membershipsSkipped = 0;
+  const source = membershipSourceForClassification(input.classification);
+
+  for (const user of users) {
+    for (const board of boards) {
+      const existing = await tx.courseBoardMembership.findUnique({
+        where: { userId_boardId: { userId: user.id, boardId: board.id } }
+      });
+
+      if (existing?.status === "opted_out") {
+        membershipsSkipped += 1;
+        continue;
+      }
+
+      if (existing) {
+        if (existing.source.startsWith("auto_")) {
+          await tx.courseBoardMembership.update({
+            where: { userId_boardId: { userId: user.id, boardId: board.id } },
+            data: { status: "active", source, originRuleId: input.ruleId, leftAt: null }
+          });
+        }
+        membershipsSkipped += 1;
+        continue;
+      }
+
+      await tx.courseBoardMembership.create({
+        data: {
+          userId: user.id,
+          boardId: board.id,
+          source,
+          status: "active",
+          originRuleId: input.ruleId
+        }
+      });
+      membershipsCreated += 1;
+    }
+  }
+
+  return { matchedUsers: users.length, membershipsCreated, membershipsSkipped };
+}
+
+async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: string) {
+  const summary = validateBnbuCourseImportPayload(payload);
+  if (!summary.ok) throw new ApiError(400, `导入文件校验失败：${summary.errors.join("; ")}`);
+
+  return prisma.$transaction(async (tx) => {
+    const schoolInput = isPlainRecord(payload.school) ? payload.school : {};
+    const semesterInput = isPlainRecord(payload.semester) ? payload.semester : {};
+    const school = await tx.school.upsert({
+      where: { shortName: "BNBU" },
+      update: {
+        name: textValue(schoolInput.name) || "Beijing Normal-Hong Kong Baptist University",
+        status: "active"
+      },
+      create: {
+        shortName: "BNBU",
+        name: textValue(schoolInput.name) || "Beijing Normal-Hong Kong Baptist University",
+        status: "active"
+      }
+    });
+
+    const emailDomain = textValue(schoolInput.emailDomain) || "mail.bnbu.edu.cn";
+    await tx.schoolEmailDomain.upsert({
+      where: { domain: emailDomain },
+      update: { schoolId: school.id, status: "active" },
+      create: { schoolId: school.id, domain: emailDomain, status: "active" }
+    });
+
+    if (semesterInput.isCurrentCandidate === true) {
+      await tx.semester.updateMany({ where: { schoolId: school.id }, data: { isCurrent: false } });
+    }
+
+    const semesterCode = textValue(semesterInput.code);
+    const existingSemester = await tx.semester.findFirst({
+      where: { schoolId: school.id, OR: [{ code: semesterCode }, { name: textValue(semesterInput.name) }] }
+    });
+    const semester = existingSemester
+      ? await tx.semester.update({
+          where: { id: existingSemester.id },
+          data: {
+            code: semesterCode,
+            name: textValue(semesterInput.name),
+            year: Number(semesterInput.academicYear),
+            term: textValue(semesterInput.term),
+            isCurrent: semesterInput.isCurrentCandidate === true ? true : existingSemester.isCurrent
+          }
+        })
+      : await tx.semester.create({
+          data: {
+            schoolId: school.id,
+            code: semesterCode,
+            name: textValue(semesterInput.name),
+            year: Number(semesterInput.academicYear),
+            term: textValue(semesterInput.term),
+            isCurrent: semesterInput.isCurrentCandidate === true
+          }
+        });
+
+    const facultyByCode = new Map<string, any>();
+    for (const facultyInput of records(payload.faculties)) {
+      const code = textValue(facultyInput.code);
+      const existing = await tx.faculty.findFirst({
+        where: { schoolId: school.id, OR: [{ code }, { name: textValue(facultyInput.name) }] }
+      });
+      const faculty = existing
+        ? await tx.faculty.update({ where: { id: existing.id }, data: { code, name: textValue(facultyInput.name) } })
+        : await tx.faculty.create({ data: { schoolId: school.id, code, name: textValue(facultyInput.name) } });
+      facultyByCode.set(code, faculty);
+    }
+
+    const majorByCode = new Map<string, any>();
+    for (const majorInput of records(payload.majors)) {
+      const code = textValue(majorInput.code);
+      const faculty = facultyByCode.get(textValue(majorInput.facultyCode));
+      if (!faculty) continue;
+      const existing = await tx.major.findFirst({
+        where: { schoolId: school.id, OR: [{ code }, { name: textValue(majorInput.name) }] }
+      });
+      const major = existing
+        ? await tx.major.update({
+            where: { id: existing.id },
+            data: {
+              code,
+              facultyId: faculty.id,
+              name: textValue(majorInput.name),
+              degreeType: textValue(majorInput.degreeType) || "undergraduate"
+            }
+          })
+        : await tx.major.create({
+            data: {
+              schoolId: school.id,
+              facultyId: faculty.id,
+              code,
+              name: textValue(majorInput.name),
+              degreeType: textValue(majorInput.degreeType) || "undergraduate"
+            }
+          });
+      majorByCode.set(code, major);
+    }
+
+    const courseByCode = new Map<string, any>();
+    for (const courseInput of records(payload.courses)) {
+      const code = textValue(courseInput.code);
+      const course = await tx.course.upsert({
+        where: { schoolId_code: { schoolId: school.id, code } },
+        update: {
+          title: textValue(courseInput.title),
+          description: textValue(courseInput.description),
+          credits: numberValue(courseInput.credits),
+          ownerUnit: toJson(isPlainRecord(courseInput.ownerUnit) ? courseInput.ownerUnit : {}),
+          categoryTags: textValues(courseInput.categoryTags),
+          sourceRefIds: textValues(courseInput.sourceRefIds),
+          courseType: "coursework",
+          status: "active",
+          source: "bnbu_import"
+        },
+        create: {
+          schoolId: school.id,
+          code,
+          title: textValue(courseInput.title),
+          description: textValue(courseInput.description),
+          credits: numberValue(courseInput.credits),
+          ownerUnit: toJson(isPlainRecord(courseInput.ownerUnit) ? courseInput.ownerUnit : {}),
+          categoryTags: textValues(courseInput.categoryTags),
+          sourceRefIds: textValues(courseInput.sourceRefIds),
+          courseType: "coursework",
+          status: "active",
+          source: "bnbu_import"
+        }
+      });
+      courseByCode.set(code, course);
+    }
+
+    for (const offeringInput of records(payload.offerings)) {
+      const course = courseByCode.get(textValue(offeringInput.courseCode));
+      if (!course) continue;
+      const sections = textValues(offeringInput.sections);
+      const teacherNames = textValues(offeringInput.teacherNames).join(", ") || textValue(offeringInput.teacherName) || null;
+      const sectionValues = sections.length ? sections : [textValue(offeringInput.section) || "Default"];
+      for (const section of sectionValues) {
+        const existing = await tx.courseOffering.findFirst({ where: { courseId: course.id, semesterId: semester.id, section } });
+        const offering = existing
+          ? await tx.courseOffering.update({
+              where: { id: existing.id },
+              data: {
+                teacherName: teacherNames,
+                section,
+                sourceRefIds: textValues(offeringInput.sourceRefIds),
+                status: textValue(offeringInput.status) || "active"
+              }
+            })
+          : await tx.courseOffering.create({
+              data: {
+                courseId: course.id,
+                semesterId: semester.id,
+                teacherName: teacherNames,
+                section,
+                sourceRefIds: textValues(offeringInput.sourceRefIds),
+                status: textValue(offeringInput.status) || "active"
+              }
+            });
+
+        const syllabus = isPlainRecord(offeringInput.syllabus) ? offeringInput.syllabus : null;
+        if (syllabus) {
+          await tx.courseSyllabusMetadata.upsert({
+            where: { courseOfferingId: offering.id },
+            update: {
+              teamworkRequirement: textValue(syllabus.teamworkRequirement) || "unknown",
+              teamworkSummary: textValue(syllabus.teamworkSummary) || null,
+              evidenceSourceRefIds: textValues(syllabus.evidenceSourceRefIds),
+              confidence: textValue(syllabus.confidence) || "unknown",
+              raw: toJson(syllabus)
+            },
+            create: {
+              courseOfferingId: offering.id,
+              teamworkRequirement: textValue(syllabus.teamworkRequirement) || "unknown",
+              teamworkSummary: textValue(syllabus.teamworkSummary) || null,
+              evidenceSourceRefIds: textValues(syllabus.evidenceSourceRefIds),
+              confidence: textValue(syllabus.confidence) || "unknown",
+              raw: toJson(syllabus)
+            }
+          });
+        }
+
+        await findOrCreateBoard(tx, offering.id, `${course.code} ${course.title}`);
+      }
+    }
+
+    const incomingRuleIds = records(payload.curriculumRules).map((rule) => textValue(rule.id)).filter(Boolean);
+    if (incomingRuleIds.length) {
+      await tx.courseCurriculumRule.updateMany({
+        where: { semesterId: semester.id, externalId: { notIn: incomingRuleIds } },
+        data: { status: "inactive" }
+      });
+    }
+
+    const autoJoinResults = [];
+    for (const ruleInput of records(payload.curriculumRules)) {
+      const course = courseByCode.get(textValue(ruleInput.courseCode));
+      if (!course) continue;
+      const classification = textValue(ruleInput.classification);
+      const studentAction = normalizedRuleStudentAction(ruleInput);
+      const audience = isPlainRecord(ruleInput.audience) ? ruleInput.audience : {};
+      const externalId = textValue(ruleInput.id);
+      const rule = await tx.courseCurriculumRule.upsert({
+        where: { semesterId_externalId: { semesterId: semester.id, externalId } },
+        update: {
+          importBatchId: batchId,
+          courseId: course.id,
+          classification,
+          classificationLabel: textValue(ruleInput.classificationLabel) || bnbuClassificationLabels[classification as keyof typeof bnbuClassificationLabels] || classification,
+          studentAction,
+          audience: toJson(audience),
+          ownerUnit: toJson(isPlainRecord(ruleInput.ownerUnit) ? ruleInput.ownerUnit : {}),
+          sourceRefIds: textValues(ruleInput.sourceRefIds),
+          confidence: textValue(ruleInput.confidence) || "unknown",
+          status: "active",
+          raw: toJson(ruleInput)
+        },
+        create: {
+          importBatchId: batchId,
+          externalId,
+          courseId: course.id,
+          semesterId: semester.id,
+          classification,
+          classificationLabel: textValue(ruleInput.classificationLabel) || bnbuClassificationLabels[classification as keyof typeof bnbuClassificationLabels] || classification,
+          studentAction,
+          audience: toJson(audience),
+          ownerUnit: toJson(isPlainRecord(ruleInput.ownerUnit) ? ruleInput.ownerUnit : {}),
+          sourceRefIds: textValues(ruleInput.sourceRefIds),
+          confidence: textValue(ruleInput.confidence) || "unknown",
+          status: "active",
+          raw: toJson(ruleInput)
+        }
+      });
+
+      if (studentAction === "default_join") {
+        const result = await applyDefaultJoinRule(tx, {
+          ruleId: rule.id,
+          courseId: course.id,
+          semesterId: semester.id,
+          classification,
+          audience
+        });
+        autoJoinResults.push({ ruleId: externalId, ...result });
+      }
+    }
+
+    return {
+      school,
+      semester,
+      validationSummary: summary,
+      autoJoinResults
+    };
+  });
+}
+
 function dateRangeFromRequest(request: NextRequest) {
   const url = new URL(request.url);
   const toParam = optionalString(url.searchParams.get("to"));
@@ -1965,6 +2454,84 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
         message: `本地视觉演示模式已模拟创建/处理 ${resource}。`
       });
     }
+  }
+
+  if (method === "POST" && resource === "course-imports" && id === "validate") {
+    const body = await readBody(request);
+    const payload = courseImportPayloadFromBody(body);
+    const validation = validateBnbuCourseImportPayload(payload);
+    return ok({ validation });
+  }
+
+  if (method === "GET" && resource === "course-imports") {
+    const importBatches = await prisma.courseImportBatch.findMany({
+      include: { school: true },
+      orderBy: { createdAt: "desc" },
+      take: 50
+    });
+    return ok({ importBatches });
+  }
+
+  if (method === "POST" && resource === "course-imports" && !id) {
+    const body = await readBody(request);
+    const payload = courseImportPayloadFromBody(body);
+    const validation = validateBnbuCourseImportPayload(payload);
+    if (!validation.ok) {
+      throw new ApiError(400, `导入文件校验失败：${validation.errors.join("; ")}`);
+    }
+
+    const school = await prisma.school.findUnique({ where: { shortName: "BNBU" } });
+    const batch = await prisma.courseImportBatch.create({
+      data: {
+        schoolId: school?.id,
+        schemaVersion: validation.schemaVersion ?? "teamaking.bnbu_course_import.v1",
+        semesterCode: validation.semesterCode,
+        status: "pending",
+        payload: toJson(payload),
+        validationSummary: toJson(validation)
+      }
+    });
+    await writeAudit(admin.id, "admin.course_imports.create", "CourseImportBatch", batch.id, null, { batch, validation });
+    return created({ importBatch: batch, validation });
+  }
+
+  if (method === "POST" && resource === "course-imports" && id && action === "approve") {
+    const batch = await prisma.courseImportBatch.findUnique({ where: { id } });
+    if (!batch) throw new ApiError(404, "找不到这个课程导入批次。");
+    if (batch.status === "approved") throw new ApiError(400, "这个导入批次已经批准过。");
+    if (!isPlainRecord(batch.payload)) throw new ApiError(400, "导入批次 payload 无法解析。");
+
+    const before = await prisma.courseImportBatch.findUnique({ where: { id } });
+    const result = await applyBnbuCourseImport(batch.payload, batch.id);
+    const updated = await prisma.courseImportBatch.update({
+      where: { id },
+      data: {
+        schoolId: result.school.id,
+        status: "approved",
+        validationSummary: result.validationSummary,
+        approvedByUserId: admin.id,
+        approvedAt: new Date()
+      }
+    });
+    await writeAudit(admin.id, "admin.course_imports.approve", "CourseImportBatch", id, before, { updated, result });
+    return ok({ importBatch: updated, result });
+  }
+
+  if (method === "POST" && resource === "course-imports" && id && action === "reject") {
+    const body = await readBody(request);
+    const before = await prisma.courseImportBatch.findUnique({ where: { id } });
+    if (!before) throw new ApiError(404, "找不到这个课程导入批次。");
+    const updated = await prisma.courseImportBatch.update({
+      where: { id },
+      data: {
+        status: "rejected",
+        rejectedByUserId: admin.id,
+        rejectedAt: new Date(),
+        adminNote: optionalString(body.adminNote)
+      }
+    });
+    await writeAudit(admin.id, "admin.course_imports.reject", "CourseImportBatch", id, before, updated);
+    return ok({ importBatch: updated });
   }
 
   if (method === "GET" && resource === "users") {

@@ -15,6 +15,7 @@ export const adminNav = [
   { href: "/admin/schools", label: "Schools" },
   { href: "/admin/majors", label: "Majors" },
   { href: "/admin/courses", label: "Courses" },
+  { href: "/admin/course-imports", label: "Course Imports" },
   { href: "/admin/course-submissions", label: "Course Submissions" },
   { href: "/admin/boards", label: "Boards" },
   { href: "/admin/teamaking-posts", label: "Posts" },
