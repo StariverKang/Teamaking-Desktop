@@ -1,0 +1,434 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String                  @id @default(cuid())
+  email               String                  @unique
+  schoolId            String?
+  role                String                  @default("verified_user")
+  isEmailVerified     Boolean                 @default(false)
+  onboardingCompleted Boolean                 @default(false)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  school              School?                 @relation(fields: [schoolId], references: [id])
+  profile             UserProfile?
+  contactInfo         ContactInfo?
+  skills              UserSkill[]
+  memberships         CourseBoardMembership[]
+  submittedCourses    UserSubmittedCourse[]
+  teamakingPosts      TeamakingPost[]
+  sentTeamUpRequests  TeamUpRequest[]         @relation("SentTeamUpRequests")
+  receivedRequests    TeamUpRequest[]         @relation("ReceivedTeamUpRequests")
+  sentFollowRequests   FollowRequest[]         @relation("SentFollowRequests")
+  receivedFollowRequests FollowRequest[]       @relation("ReceivedFollowRequests")
+  portfolioItems      PortfolioItem[]
+  endorsementsGiven   Endorsement[]           @relation("EndorsementsGiven")
+  endorsementsGot     Endorsement[]           @relation("EndorsementsGot")
+  auditLogs           AdminAuditLog[]
+  supportTickets      SupportTicket[]
+
+  @@index([schoolId])
+}
+
+model EmailVerification {
+  id        String    @id @default(cuid())
+  email     String
+  code      String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email])
+}
+
+model UserProfile {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  displayName         String
+  nickname            String?
+  avatarUrl           String?
+  backgroundImageUrl  String?
+  headline            String?
+  bio                 String   @default("")
+  grade               String?
+  facultyId           String?
+  majorId             String?
+  outputTags          Json     @default("[]")
+  resumeUrl           String?
+  resumeFileName      String?
+  resumeParsedData    Json     @default("{}")
+  openToBeDiscovered  Boolean  @default(true)
+  visibilitySettings  Json     @default("{}")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  faculty             Faculty? @relation(fields: [facultyId], references: [id])
+  major               Major?   @relation(fields: [majorId], references: [id])
+
+  @@index([majorId])
+}
+
+model ContactInfo {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  schoolEmail        String
+  wechatId           String?
+  wechatQrImageUrl   String?
+  linkedinUrl        String?
+  personalEmail      String?
+  visibilitySettings Json     @default("{}")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Skill {
+  id        String      @id @default(cuid())
+  name      String      @unique
+  category  String
+  userLinks UserSkill[]
+  endorsements Endorsement[]
+}
+
+model UserSkill {
+  id           String @id @default(cuid())
+  userId       String
+  skillId      String
+  level        String @default("beginner")
+  evidenceNote String @default("")
+
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill        Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, skillId])
+}
+
+model School {
+  id          String              @id @default(cuid())
+  name        String
+  shortName   String
+  status      String              @default("active")
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  users       User[]
+  domains     SchoolEmailDomain[]
+  faculties   Faculty[]
+  majors      Major[]
+  semesters   Semester[]
+  courses     Course[]
+  submissions UserSubmittedCourse[]
+
+  @@unique([shortName])
+}
+
+model SchoolEmailDomain {
+  id        String @id @default(cuid())
+  schoolId  String
+  domain    String @unique
+  status    String @default("active")
+
+  school    School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+}
+
+model Faculty {
+  id        String        @id @default(cuid())
+  schoolId  String
+  name      String
+
+  school    School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  majors    Major[]
+  profiles  UserProfile[]
+
+  @@unique([schoolId, name])
+}
+
+model Major {
+  id          String               @id @default(cuid())
+  schoolId    String
+  facultyId   String
+  name        String
+  degreeType  String               @default("undergraduate")
+
+  school      School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  faculty     Faculty              @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  profiles    UserProfile[]
+  mappings    CourseMajorMapping[]
+
+  @@unique([schoolId, name])
+}
+
+model Semester {
+  id        String           @id @default(cuid())
+  schoolId  String
+  name      String
+  year      Int
+  term      String
+  isCurrent Boolean          @default(false)
+
+  school    School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  offerings CourseOffering[]
+
+  @@unique([schoolId, name])
+}
+
+model Course {
+  id          String               @id @default(cuid())
+  schoolId    String
+  code        String
+  title       String
+  description String               @default("")
+  courseType  String               @default("coursework")
+  status      String               @default("active")
+  source      String               @default("admin_seed")
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  school      School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  offerings   CourseOffering[]
+  mappings    CourseMajorMapping[]
+  portfolios  PortfolioItem[]
+
+  @@unique([schoolId, code])
+  @@index([title])
+}
+
+model CourseOffering {
+  id          String        @id @default(cuid())
+  courseId    String
+  semesterId  String
+  teacherName String?
+  section     String?
+  status      String        @default("active")
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  course      Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  semester    Semester      @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+  boards      CourseBoard[]
+  posts       TeamakingPost[]
+}
+
+model CourseMajorMapping {
+  id                   String  @id @default(cuid())
+  courseId             String
+  majorId              String
+  recommendedGrade     String
+  isRequired           Boolean @default(false)
+  isDefaultRecommended Boolean @default(true)
+
+  course               Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  major                Major   @relation(fields: [majorId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, majorId, recommendedGrade])
+}
+
+model CourseBoard {
+  id               String                  @id @default(cuid())
+  courseOfferingId String
+  title            String
+  status           String                  @default("active")
+  rules            String                  @default("请尊重同学，清楚表达自己的贡献方式，不要把 Course People 误认为官方选课名单。")
+  openFrom         DateTime?
+  openUntil        DateTime?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  courseOffering   CourseOffering          @relation(fields: [courseOfferingId], references: [id], onDelete: Cascade)
+  memberships      CourseBoardMembership[]
+  posts            TeamakingPost[]
+
+  @@index([courseOfferingId])
+}
+
+model CourseBoardMembership {
+  id       String      @id @default(cuid())
+  userId   String
+  boardId  String
+  joinedAt DateTime    @default(now())
+
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  board    CourseBoard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, boardId])
+}
+
+model UserSubmittedCourse {
+  id                String   @id @default(cuid())
+  submittedByUserId String
+  schoolId          String
+  code              String
+  title             String
+  teacherName       String?
+  semesterText      String?
+  status            String   @default("pending")
+  adminNote         String?
+  matchedCourseId   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  submittedBy       User     @relation(fields: [submittedByUserId], references: [id], onDelete: Cascade)
+  school            School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+}
+
+model SupportTicket {
+  id                String   @id @default(cuid())
+  submittedByUserId String?
+  email             String?
+  category          String   @default("other")
+  title             String
+  description       String
+  relatedUrl        String?
+  status            String   @default("open")
+  adminNote         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  submittedBy       User?    @relation(fields: [submittedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([category])
+  @@index([submittedByUserId])
+}
+
+model TeamakingPost {
+  id                  String          @id @default(cuid())
+  boardId             String
+  userId              String
+  courseOfferingId    String
+  title               String
+  status              String          @default("open")
+  strengths           Json            @default("[]")
+  contributionTypes   Json            @default("[]")
+  expectedOutcome     String
+  portfolioItemIds    Json            @default("[]")
+  showWechatId        Boolean         @default(false)
+  showWechatQr        Boolean         @default(false)
+  showLinkedin        Boolean         @default(false)
+  showPersonalEmail   Boolean         @default(false)
+  visibility          String          @default("same_course_board")
+  expiresAt           DateTime?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  board               CourseBoard     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseOffering      CourseOffering  @relation(fields: [courseOfferingId], references: [id], onDelete: Cascade)
+  requests            TeamUpRequest[]
+
+  @@index([boardId, status])
+  @@index([userId])
+}
+
+model TeamUpRequest {
+  id                      String        @id @default(cuid())
+  postId                  String
+  senderId                String
+  receiverId              String
+  message                 String
+  senderContribution      String
+  senderContactSnapshot   Json          @default("{}")
+  receiverContactSnapshot Json          @default("{}")
+  status                  String        @default("sent")
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  post                    TeamakingPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  sender                  User          @relation("SentTeamUpRequests", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver                User          @relation("ReceivedTeamUpRequests", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([senderId])
+  @@index([receiverId])
+  @@unique([postId, senderId])
+}
+
+model FollowRequest {
+  id         String   @id @default(cuid())
+  senderId   String
+  receiverId String
+  status     String   @default("pending")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  sender     User     @relation("SentFollowRequests", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver   User     @relation("ReceivedFollowRequests", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([senderId])
+  @@index([receiverId])
+  @@unique([senderId, receiverId])
+}
+
+model PortfolioItem {
+  id                       String   @id @default(cuid())
+  userId                   String
+  title                    String
+  type                     String
+  relatedCourseId          String?
+  semesterText             String?
+  myRole                   String?
+  contributionDescription  String
+  isGroupWork              Boolean  @default(false)
+  fileName                 String?
+  fileMimeType             String?
+  fileSize                 Int?
+  fileExtension            String?
+  storageKey               String?
+  fileUrl                  String?
+  externalUrl              String?
+  previewKind              String   @default("link")
+  outcome                  String?
+  reflection               String?
+  parsedText               String?
+  metadata                 Json     @default("{}")
+  visibility               String   @default("same_school")
+  isPinned                 Boolean  @default(false)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  user                     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  relatedCourse            Course?  @relation(fields: [relatedCourseId], references: [id])
+}
+
+model Endorsement {
+  id                         String   @id @default(cuid())
+  fromUserId                 String
+  toUserId                   String
+  skillId                    String
+  comment                    String
+  willingToCollaborateAgain  Boolean  @default(true)
+  createdAt                  DateTime @default(now())
+
+  fromUser                   User     @relation("EndorsementsGiven", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser                     User     @relation("EndorsementsGot", fields: [toUserId], references: [id], onDelete: Cascade)
+  skill                      Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+}
+
+model SiteConfig {
+  id              String   @id @default(cuid())
+  key             String   @unique
+  value           Json
+  updatedByUserId String?
+  updatedAt       DateTime @updatedAt
+}
+
+model AdminAuditLog {
+  id          String   @id @default(cuid())
+  adminUserId String
+  action      String
+  targetType  String
+  targetId    String?
+  beforeValue Json?
+  afterValue  Json?
+  createdAt   DateTime @default(now())
+
+  adminUser   User     @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+}

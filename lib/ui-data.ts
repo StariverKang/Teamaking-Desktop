@@ -1,0 +1,25 @@
+export const studentNav = [
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/courses", label: "Course Boards" },
+  { href: "/matches", label: "Matches" },
+  { href: "/team-up-requests", label: "TeamUp Menu" },
+  { href: "/inbox", label: "Inbox" },
+  { href: "/profile/me", label: "Proof-of-Work Profile" },
+  { href: "/contact-info", label: "Contact Info" },
+  { href: "/support", label: "Support Tickets" }
+];
+
+export const adminNav = [
+  { href: "/admin", label: "Admin Home" },
+  { href: "/admin/users", label: "Users" },
+  { href: "/admin/schools", label: "Schools" },
+  { href: "/admin/majors", label: "Majors" },
+  { href: "/admin/courses", label: "Courses" },
+  { href: "/admin/course-submissions", label: "Course Submissions" },
+  { href: "/admin/boards", label: "Boards" },
+  { href: "/admin/teamaking-posts", label: "Posts" },
+  { href: "/admin/team-up-requests", label: "Requests" },
+  { href: "/admin/support-tickets", label: "Support Tickets" },
+  { href: "/admin/configs", label: "Configs" },
+  { href: "/admin/logs", label: "Logs" }
+];
