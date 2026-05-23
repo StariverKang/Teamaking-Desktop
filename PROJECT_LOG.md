@@ -150,3 +150,138 @@
   - `npm run prisma:validate` 通过。
   - `npm run build` 通过。
   - 本地使用 `DATABASE_URL` 指向不可用端口强制进入 `local_visual_demo`，完成双账号 smoke test：Media/CS/Admin 登录、自己不能给自己 TeamUp、TeamUp Interest `sent -> viewed -> mutual`、发送后联系方式可见、sender 撤回、Follow Request 进入 Inbox 并被接受、Admin 可查看共享 TeamUp/Follow 数据。
+
+## 2026-05-24
+
+### 线上密码登录、隐藏管理员入口与管理后台增强
+
+- 背景：
+  - 项目已上线到 Vercel，并绑定 `teamingapp.org`。
+  - 用户要求普通用户不再使用一次性验证码登录，而是“学校邮箱注册 + 设置密码 + 后续密码登录”。
+  - 管理员入口需要从主系统中移除，改为父域名下隐藏子域名访问。
+  - 测试用户数据需要暂时保留，支持重复登录、编辑资料、上传和继续测试。
+- 改动：
+  - 新增密码哈希工具 `lib/password.ts`，使用 PBKDF2 保存密码哈希。
+  - 扩展 `User`：新增 `passwordHash`、`status`、`suspendedUntil`、`adminNote`。
+  - 扩展 `EmailVerification`：新增 `purpose`，区分 `register` 和 `reset_password`。
+  - 扩展 `SupportTicket`：新增 `adminReply`、`adminRepliedAt`。
+  - 新增 migration：`prisma/migrations/20260523160000_auth_admin_upgrade/migration.sql`。
+  - 改造 `/api/auth/*`：
+    - `POST /api/auth/register/send-code`
+    - `POST /api/auth/register/complete`
+    - `POST /api/auth/password-login`
+    - `POST /api/auth/password-reset/send-code`
+    - `POST /api/auth/password-reset/complete`
+    - `POST /api/auth/developer-login`
+  - `/login` 改为普通用户入口：邮箱注册、账号密码登录、找回密码。
+  - 新增 `/admin-login`，管理员通过维护账号登录。
+  - 新增 `middleware.ts`，限制 `/admin`、`/admin-login`、`/api/admin/*` 和 `/api/auth/developer-login` 只能在本地或 `ADMIN_HOSTS` 指定域名访问。
+  - 主导航移除 `Admin`，避免从主系统直接跳转管理后台。
+  - 管理后台增强：
+    - Users：支持角色、账号状态、限时禁止操作和管理员备注。
+    - Support Tickets：支持管理员回复和备注。
+    - Boards：支持手动新增 Course Board，并编辑状态和规则。
+    - Courses：新增课程时可选创建 offering 和 Course Board。
+    - Metrics：新增 `/admin/metrics` 和 `GET /api/admin/metrics`，支持时间范围统计和 CSV 下载。
+    - Configs：支持 `system_status`，可把系统临时切到 `paused`。
+  - API dispatch 增加系统暂停检查，`auth/admin/demo` 之外的接口在暂停时返回维护提示。
+  - Vercel 上传环境下，4MB 内文件改为内联 data URL 保存到数据库字段，避免 serverless 文件系统不持久导致测试数据丢失。
+- 解决的问题：
+  - 普通用户可注册、设置密码、重复登录和继续编辑测试数据。
+  - 管理员入口与主系统隔离，主域名下不可直接访问管理后台。
+  - 管理员可以实际读写 Neon 数据库中的用户、工单、课程、Course Board 和站点配置。
+  - 测试版本的上传数据能够随用户数据暂存，不依赖 Vercel 临时文件系统。
+- 验证：
+  - `npx prisma format` 通过。
+  - `npx prisma generate` 通过。
+  - `npx prisma validate` 通过。
+  - `npx prisma migrate dev` 本地通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过。
+  - `npm run build` 通过。
+  - 本地 smoke test：`/login`、`/admin-login`、`/admin` 返回 `200 OK`。
+  - Git commit：`aca1ad7 Add password auth and hidden admin access`。
+
+### GitHub、Vercel、Neon 与管理员子域名上线
+
+- 背景：
+  - 用户需要把本地 commit 同步到 GitHub，并由 Vercel 自动部署。
+  - GitHub HTTPS push 需要 token，终端中直接输入 GitHub 密码会失败。
+- 操作结果：
+  - commit `aca1ad7` 已同步到 GitHub `main`。
+  - Vercel 最新 production deployment 使用 `aca1ad7`，状态为 `Ready / Current`。
+  - Vercel 环境变量已新增/更新：
+    - `ADMIN_HOSTS=admin.teamingapp.org`
+    - `DEVELOPER_LOGIN_EMAIL`
+    - `DEVELOPER_LOGIN_PASSWORD`
+    - `DEVELOPER_LOGIN_ROLE=school_admin`
+    - `DEVELOPER_LOGIN_DISPLAY_NAME`
+    - `NEXT_PUBLIC_APP_URL=https://teamingapp.org`
+    - `ENABLE_DEMO_ACCESS=false`
+    - `EMAIL_DEBUG_CODE_RESPONSE=false`
+  - Neon production branch 已使用 direct connection 执行：
+    - `DATABASE_URL="..." npx prisma migrate deploy`
+  - 线上迁移输出：`All migrations have been successfully applied.`
+  - Vercel 添加 `admin.teamingapp.org`，Cloudflare DNS 配置后管理员子域名可访问。
+- 注意事项：
+  - 生产数据库迁移必须使用 Neon direct connection，不使用 pooled connection。
+  - 生产环境不要运行 `npm run seed`。
+  - 业务数据存储在 Neon PostgreSQL；Vercel 不存业务数据，Cloudflare 只做 DNS，GitHub 只存代码和 migration。
+
+### 腾讯云 SES 接入进度
+
+- 背景：
+  - 项目需要把验证码邮件服务切换到腾讯云邮件推送 SES。
+  - 注册验证码与找回密码验证码需要使用两套独立模板。
+- 代码改动：
+  - 移除 Resend 依赖，安装 `tencentcloud-sdk-nodejs-ses`。
+  - 重写 `lib/email.ts`：
+    - 使用腾讯云 SES `SendEmail`。
+    - 支持 `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、`TENCENTCLOUD_SES_REGION`。
+    - 支持独立模板：
+      - `TENCENTCLOUD_SES_REGISTER_TEMPLATE_ID`
+      - `TENCENTCLOUD_SES_RESET_TEMPLATE_ID`
+    - 支持 `TENCENTCLOUD_SES_FROM_EMAIL` 和可选 `TENCENTCLOUD_SES_REPLY_TO_EMAIL`。
+    - 开发环境无腾讯云密钥时仍可通过 debug code 继续本地调试。
+- 腾讯云控制台配置进度：
+  - 发信域名：`notify.teamingapp.org`。
+  - 腾讯云 SES 地域：中国香港，对应环境变量 `TENCENTCLOUD_SES_REGION=ap-hongkong`。
+  - Cloudflare DNS 已完成并通过验证：
+    - `MX notify -> mxbiz1.qq.com`
+    - `TXT notify -> v=spf1 include:qcloudmail.com ~all`
+    - `TXT qcloud._domainkey.notify -> v=DKIM1; k=rsa; p=...`
+    - `TXT _dmarc.notify -> v=DMARC1; p=none`
+  - 发信地址已创建：
+    - `verify@notify.teamingapp.org`
+    - 发件人别名：`Developer_Teamaking`
+  - Vercel 发信地址变量应为：
+    - `TENCENTCLOUD_SES_FROM_EMAIL=Developer_Teamaking <verify@notify.teamingapp.org>`
+  - 腾讯云模板已创建，等待审核：
+    - `179674`：`TEAMAKING 注册验证码`
+    - `179675`：`TEAMAKING 找回密码验证码`
+  - Vercel 已添加：
+    - `TENCENTCLOUD_SES_REGION=ap-hongkong`
+    - `TENCENTCLOUD_SES_FROM_EMAIL=Developer_Teamaking <verify@notify.teamingapp.org>`
+    - `TENCENTCLOUD_SES_REGISTER_TEMPLATE_ID=179674`
+    - `TENCENTCLOUD_SES_RESET_TEMPLATE_ID=179675`
+- 待完成：
+  - 腾讯云模板审核通过。
+  - Vercel 添加 `TENCENTCLOUD_SECRET_ID` 和 `TENCENTCLOUD_SECRET_KEY`。
+  - Vercel Redeploy。
+  - 在线测试 `/login` 注册验证码和找回密码验证码真实投递。
+
+### 文档整理
+
+- 背景：
+  - 用户希望把特殊环境变量、上线、更新、测试和数据维护说明沉淀下来。
+  - 用户要求具体变更详情写入开发日志，而不是全部堆在 README。
+- 改动：
+  - 新增 `docs/ENVIRONMENT_VARIABLES.md`，集中记录：
+    - Vercel 环境变量填写位置和 redeploy 要求。
+    - `NEXT_PUBLIC_APP_URL`、`ADMIN_HOSTS`、管理员登录变量。
+    - Neon `DATABASE_URL` 与 direct connection migration 规则。
+    - 腾讯云 SES 地域、发信地址、模板 ID、DNS 记录和 API 密钥填写规则。
+    - 上传存储策略。
+    - 上线前检查清单。
+  - README 增加 `docs/ENVIRONMENT_VARIABLES.md` 为开发者必读文档。
+  - README 的 Vercel 环境变量部分改为引用专门指南，避免 README 成为密钥和值的混杂清单。
