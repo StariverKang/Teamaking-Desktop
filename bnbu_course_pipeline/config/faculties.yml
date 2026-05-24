@@ -1,0 +1,37 @@
+# BNBU Faculties / Schools
+# code: stable short code used in TEAMAKING
+# name: official English name
+# name_cn: official Chinese name
+# aliases: alternative names that may appear in PDFs or pages
+
+FBM:
+  name: Faculty of Business and Management
+  name_cn: 商管学院
+  aliases:
+    - Faculty of Business and Management
+    - FBM
+    - 商管学院
+
+SCC:
+  name: School of Culture and Creativity
+  name_cn: 文化与创意学院
+  aliases:
+    - School of Culture and Creativity
+    - SCC
+    - 文化与创意学院
+
+FHSS:
+  name: Faculty of Humanities and Social Sciences
+  name_cn: 人文社科学院
+  aliases:
+    - Faculty of Humanities and Social Sciences
+    - FHSS
+    - 人文社科学院
+
+FST:
+  name: Faculty of Science and Technology
+  name_cn: 理工科技学院
+  aliases:
+    - Faculty of Science and Technology
+    - FST
+    - 理工科技学院
