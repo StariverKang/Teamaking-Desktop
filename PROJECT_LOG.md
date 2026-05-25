@@ -533,3 +533,32 @@
   - `npm run test` 通过。
   - `npm run build` 通过。
   - `npm run test:e2e` 通过；smoke test 已兼容中文/英文标题。
+
+### Pre-Launch Issues 清单
+
+- 背景：
+  - Vercel production build 成功后出现 npm peer dependency 和 deprecated dependency warnings。
+  - 用户要求这类“不阻塞当前运行、但下次上线前需要统一调整”的问题进入固定 Markdown 清单，而不是只留在聊天记录。
+- 改动：
+  - 新增 `docs/PRE_LAUNCH_ISSUES.md`，记录 pre-launch issue 的状态、来源、影响判断、下次上线前动作和验证命令。
+  - 将 2026-05-25 Vercel build warning 记录为 `PLI-2026-05-25-001`：`@types/node@22.10.2` 不满足 Vite 8 peer range、`eslint@8.57.1` 和若干 transitive dependencies deprecated。
+  - README 的“开发者先读”和“测试与验收”新增规则：任何需要在下一次上线前调整的非阻塞 build/deploy warning 必须写入 `docs/PRE_LAUNCH_ISSUES.md`。
+- 验证：
+  - 文档变更，无代码行为变化；未运行代码测试。
+
+## 2026-05-26
+
+### 生产管理员 Bootstrap 登录
+
+- 背景：
+  - 线上管理员登录失败，原因是本地命令可能连接了本地 `.env` 数据库，而 Vercel 线上读取的是生产 `DATABASE_URL`。
+  - 用户要求能够在不清空已有数据的前提下，手动定义管理员账号密码；需要重新部署也可以。
+- 改动：
+  - `/api/auth/admin-login` 增加 `ADMIN_BOOTSTRAP_*` 环境变量 fallback。
+  - 当登录邮箱和密码匹配 `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD` 时，系统会在当前 active app version 下 upsert 管理员账号，更新密码、角色、显示名和 active 状态，并直接完成登录。
+  - 兼容旧 `DEVELOPER_LOGIN_*` 变量作为 fallback，但文档标记为不推荐长期使用。
+  - README、`.env.example`、`docs/ENVIRONMENT_VARIABLES.md` 同步新增生产管理员 bootstrap 操作说明。
+- 数据安全：
+  - 该机制只 upsert 一个管理员 `User` 和对应 `UserProfile`，不执行 seed，不删除或重建任何已有用户、课程、课程安排、导入批次、公告、上传文件或日志。
+- 验证：
+  - 待运行 `npm run typecheck` 和 `npm run build` 后部署。

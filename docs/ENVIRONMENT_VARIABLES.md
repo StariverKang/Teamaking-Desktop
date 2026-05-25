@@ -67,7 +67,26 @@ EMAIL_DEBUG_CODE_RESPONSE="true"
 
 管理员入口：`https://admin.teamingapp.org/admin-login`。
 
-管理员账号存储在数据库 `User` 表中，不再通过 `DEVELOPER_LOGIN_*` 环境变量维护。创建或重置账号：
+管理员账号最终存储在数据库 `User` 表中。生产环境推荐通过 Vercel 环境变量手动定义一个 bootstrap 管理员：
+
+```env
+ADMIN_BOOTSTRAP_EMAIL="admin@mail.bnbu.edu.cn"
+ADMIN_BOOTSTRAP_PASSWORD="change-this-password"
+ADMIN_BOOTSTRAP_ROLE="super_admin"
+ADMIN_BOOTSTRAP_DISPLAY_NAME="TEAMAKING Admin"
+```
+
+设置后必须 Redeploy。之后用 `ADMIN_BOOTSTRAP_EMAIL` 和 `ADMIN_BOOTSTRAP_PASSWORD` 登录 `/admin-login` 时，系统会自动在当前生产数据库中 upsert 这个管理员账号：
+
+- 如果账号不存在：创建管理员。
+- 如果账号已存在：更新密码、角色、显示名和 active 状态。
+- 不会清空数据库，不会删除已有用户、课程、课程安排、导入批次、公告或上传记录。
+
+`ADMIN_BOOTSTRAP_ROLE` 可选值：`course_moderator`、`school_admin`、`super_admin`。上线维护建议使用 `super_admin`。
+
+旧的 `DEVELOPER_LOGIN_*` 环境变量仍作为兼容 fallback，但不推荐继续作为长期管理员密码管理方式。登录成功后，管理员账号仍会写入数据库，后续可在后台 `Admin Users` 页面维护。
+
+也可以通过命令创建或重置账号：
 
 ```bash
 npm run admin:create -- --email maintainer@example.com --password "change-this-password" --role super_admin --record-local
@@ -171,7 +190,7 @@ UPLOAD_STORAGE_MODE="inline"
 3. 如启用线上爬虫入口，Vercel 中 `CRAWLER_HOSTS=crawler.teamingapp.org`。
 4. Vercel 中 `ENABLE_DEMO_ACCESS=false`。
 5. Vercel 中 `EMAIL_DEBUG_CODE_RESPONSE=false`。
-6. 管理员正式账号已在数据库创建或重置。
+6. 管理员正式账号已在数据库创建或重置，或已配置 `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD` 并完成一次管理员登录同步。
 7. 腾讯云 SES SecretId/SecretKey 已配置。
 8. 腾讯云 SES 发信地址和模板 ID 已配置。
 9. 腾讯云两套模板已审核通过，并完成注册/找回密码发信实测。

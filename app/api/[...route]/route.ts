@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
@@ -616,6 +616,71 @@ function passwordHashFor(password: string) {
   }
 }
 
+type BootstrapAdminConfig = {
+  email: string;
+  password: string;
+  role: string;
+  displayName: string;
+};
+
+function safeStringEqual(left: string, right: string) {
+  const leftHash = createHash("sha256").update(left).digest();
+  const rightHash = createHash("sha256").update(right).digest();
+  return timingSafeEqual(leftHash, rightHash);
+}
+
+function bootstrapAdminConfig(): BootstrapAdminConfig | null {
+  const email = (process.env.ADMIN_BOOTSTRAP_EMAIL || process.env.DEVELOPER_LOGIN_EMAIL || "").trim().toLowerCase();
+  const password = (process.env.ADMIN_BOOTSTRAP_PASSWORD || process.env.DEVELOPER_LOGIN_PASSWORD || "").trim();
+  if (!email || !password) return null;
+
+  const configuredRole = (process.env.ADMIN_BOOTSTRAP_ROLE || process.env.DEVELOPER_LOGIN_ROLE || "super_admin").trim();
+  const role = isAdminRole(configuredRole) ? configuredRole : "super_admin";
+  const displayName =
+    (process.env.ADMIN_BOOTSTRAP_DISPLAY_NAME || process.env.DEVELOPER_LOGIN_DISPLAY_NAME || "").trim() ||
+    email.split("@")[0] ||
+    "TEAMAKING Admin";
+
+  return { email, password, role, displayName };
+}
+
+async function upsertBootstrapAdmin(config: BootstrapAdminConfig) {
+  const appVersionId = await getActiveAppVersionId();
+  const user = await prisma.user.upsert({
+    where: { appVersionId_email: { appVersionId, email: config.email } },
+    update: {
+      role: config.role,
+      passwordHash: passwordHashFor(config.password),
+      status: "active",
+      suspendedUntil: null,
+      isEmailVerified: true,
+      onboardingCompleted: true,
+      adminNote: "Managed by ADMIN_BOOTSTRAP_* environment variables."
+    },
+    create: {
+      appVersionId,
+      email: config.email,
+      role: config.role,
+      passwordHash: passwordHashFor(config.password),
+      status: "active",
+      isEmailVerified: true,
+      onboardingCompleted: true,
+      adminNote: "Managed by ADMIN_BOOTSTRAP_* environment variables."
+    }
+  });
+
+  await prisma.userProfile.upsert({
+    where: { userId: user.id },
+    update: { displayName: config.displayName },
+    create: { userId: user.id, displayName: config.displayName }
+  });
+
+  return prisma.user.findUniqueOrThrow({
+    where: { id: user.id },
+    include: userInclude
+  });
+}
+
 function assertAccountCanLogin(user: any) {
   if (user.status === "banned") {
     throw new ApiError(403, "这个账号已被封禁，请联系管理员。", ERROR_CODES.AUTH_ACCOUNT_RESTRICTED);
@@ -678,6 +743,15 @@ async function handleAuth(method: string, path: string[], request: NextRequest) 
     });
 
     if (!user || !isAdminRole(user.role) || !verifyPassword(password, user.passwordHash)) {
+      const bootstrapConfig = bootstrapAdminConfig();
+      if (bootstrapConfig && email === bootstrapConfig.email && safeStringEqual(password, bootstrapConfig.password)) {
+        const bootstrappedUser = await upsertBootstrapAdmin(bootstrapConfig);
+        assertAccountCanLogin(bootstrappedUser);
+        await recordAuthEvent({ email, action: "password_login", purpose: "login", success: true, metadata: { route: "admin-bootstrap" } });
+        const response = ok({ user: publicUser(bootstrappedUser), message: "管理员账号已按环境变量同步。" });
+        setSessionCookie(response, bootstrappedUser.id);
+        return response;
+      }
       await recordAuthEvent({ email, action: "password_login", purpose: "login", success: false, metadata: { route: "admin-login" } });
       throw new ApiError(401, "管理员账号或密码不正确。", ERROR_CODES.AUTH_ADMIN_LOGIN_INVALID, { email });
     }
