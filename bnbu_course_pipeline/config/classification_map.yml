@@ -1,0 +1,91 @@
+# BNBU course classification mapping
+# Maps section headers found in programme PDFs to TEAMAKING classification enums.
+# Each entry:
+#   pattern: regex pattern to match the section header (case-insensitive)
+#   classification: TEAMAKING enum value
+#   studentAction: default student action for this classification
+
+# Major Required
+- pattern: "Major Required"
+  classification: major_required
+  studentAction: default_join
+
+# Major Elective
+- pattern: "Major Elective"
+  classification: major_elective
+  studentAction: searchable_add
+
+# University Core
+- pattern: "University Core"
+  classification: university_core
+  studentAction: default_join
+
+# General Education
+- pattern: "General Education"
+  classification: general_education
+  studentAction: searchable_add
+
+# Free Elective
+- pattern: "Free Elective"
+  classification: free_elective
+  studentAction: searchable_add
+
+# Faculty Required
+- pattern: "Faculty Required"
+  classification: faculty_required
+  studentAction: default_join
+
+# College Core
+- pattern: "College Core"
+  classification: college_core
+  studentAction: default_join
+
+# Common Core
+- pattern: "Common Core"
+  classification: common_core
+  studentAction: default_join
+
+# Required Core
+- pattern: "Required Core"
+  classification: required_core
+  studentAction: default_join
+
+# Elective Core
+- pattern: "Elective Core"
+  classification: elective_core
+  studentAction: searchable_add
+
+# Concentration Required
+- pattern: "Concentration Required"
+  classification: concentration_required
+  studentAction: default_join
+
+# Concentration Elective
+- pattern: "Concentration Elective"
+  classification: concentration_elective
+  studentAction: searchable_add
+
+# BBA Core
+- pattern: "BBA Core"
+  classification: bba_core
+  studentAction: default_join
+
+# Final Year Project
+- pattern: "Final Year Project"
+  classification: final_year_project
+  studentAction: default_join
+
+# Internship
+- pattern: "Internship"
+  classification: internship
+  studentAction: default_join
+
+# Supporting Course
+- pattern: "Supporting"
+  classification: supporting_course
+  studentAction: searchable_add
+
+# Interdisciplinary
+- pattern: "Interdisciplinary"
+  classification: interdisciplinary_course
+  studentAction: searchable_add

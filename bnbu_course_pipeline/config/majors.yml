@@ -1,0 +1,235 @@
+# BNBU Majors / Programmes
+# key: stable code used in TEAMAKING
+# name: official English programme name
+# name_cn: official Chinese name
+# facultyCode: must match a key in faculties.yml
+# degreeType: undergraduate / postgraduate / minor / certificate
+# aliases: alternative names
+
+# === Faculty of Business and Management (FBM) ===
+ACCT:
+  name: Accounting
+  name_cn: 会计学
+  facultyCode: FBM
+  degreeType: undergraduate
+  pdf_filename_hint: ACCT
+
+AE:
+  name: Applied Economics
+  name_cn: 应用经济学
+  facultyCode: FBM
+  degreeType: undergraduate
+  pdf_filename_hint: AE
+
+BUSA:
+  name: Business Administration
+  name_cn: 商业分析
+  facultyCode: FBM
+  degreeType: undergraduate
+  pdf_filename_hint: BUSA
+
+FIN:
+  name: Finance
+  name_cn: 金融学
+  facultyCode: FBM
+  degreeType: undergraduate
+  pdf_filename_hint: FIN
+
+DMM:
+  name: Digital Media Management
+  name_cn: 数字媒体管理
+  facultyCode: FBM
+  degreeType: undergraduate
+  pdf_filename_hint: DMM
+
+EBIS:
+  name: E-Business Management and Information Systems
+  name_cn: 电子商务管理与信息系统
+  facultyCode: FBM
+  degreeType: undergraduate
+  pdf_filename_hint: EBIS
+
+EPIN:
+  name: Entrepreneurship and Innovation
+  name_cn: 创业与创新
+  facultyCode: FBM
+  degreeType: undergraduate
+  pdf_filename_hint: EPIN
+
+MHR:
+  name: Management of Human Resources
+  name_cn: 人力资源管理
+  facultyCode: FBM
+  degreeType: undergraduate
+  pdf_filename_hint: MHR
+
+MKT:
+  name: Marketing Management
+  name_cn: 市场营销管理
+  facultyCode: FBM
+  degreeType: undergraduate
+  pdf_filename_hint: MKT
+
+# === School of Culture and Creativity (SCC) ===
+AIM:
+  name: Animation and Interactive Media
+  name_cn: 动画与互动媒体
+  facultyCode: SCC
+  degreeType: undergraduate
+  pdf_filename_hint: AIM
+
+CTV:
+  name: Cinema and Television
+  name_cn: 影视学
+  facultyCode: SCC
+  degreeType: undergraduate
+  pdf_filename_hint: CTV
+
+GD:
+  name: Game Design
+  name_cn: 游戏设计
+  facultyCode: SCC
+  degreeType: undergraduate
+  pdf_filename_hint: GD
+
+CCM:
+  name: Culture and Creativity Management
+  name_cn: 文化创意与管理
+  facultyCode: SCC
+  degreeType: undergraduate
+  pdf_filename_hint: CCM
+
+MAD:
+  name: Media Arts and Design
+  name_cn: 媒体艺术与设计
+  facultyCode: SCC
+  degreeType: undergraduate
+  pdf_filename_hint: MAD
+
+THEM:
+  name: Tourism, Hospitality and Event Management
+  name_cn: 旅游酒店与会展管理
+  facultyCode: SCC
+  degreeType: undergraduate
+  pdf_filename_hint: THEM
+
+MUS:
+  name: Music Arts
+  name_cn: 音乐艺术
+  facultyCode: SCC
+  degreeType: undergraduate
+  pdf_filename_hint: MUS
+
+# === Faculty of Humanities and Social Sciences (FHSS) ===
+CCGC:
+  name: Chinese Culture and Global Communication
+  name_cn: 中华文化与全球传播
+  facultyCode: FHSS
+  degreeType: undergraduate
+  pdf_filename_hint: CCGC
+
+MCOM:
+  name: Media and Communication
+  name_cn: 媒体与传播学
+  facultyCode: FHSS
+  degreeType: undergraduate
+  pdf_filename_hint: MCOM
+
+PRA:
+  name: Public Relations and Advertising
+  name_cn: 公共关系与广告学
+  facultyCode: FHSS
+  degreeType: undergraduate
+  pdf_filename_hint: PRA
+
+ATS:
+  name: Applied Translation Studies
+  name_cn: 应用翻译学
+  facultyCode: FHSS
+  degreeType: undergraduate
+  pdf_filename_hint: ATS
+
+ELLS:
+  name: English Language and Literary Studies
+  name_cn: 英语语言文学研究
+  facultyCode: FHSS
+  degreeType: undergraduate
+  pdf_filename_hint: ELLS
+
+DGS:
+  name: Digital and Global Studies
+  name_cn: 数字社会科学
+  facultyCode: FHSS
+  degreeType: undergraduate
+  pdf_filename_hint: DGS
+
+GAD:
+  name: Globalization and Development
+  name_cn: 全球化与发展
+  facultyCode: FHSS
+  degreeType: undergraduate
+  pdf_filename_hint: GAD
+
+# === Faculty of Science and Technology (FST) ===
+AM:
+  name: Applied Mathematics
+  name_cn: 应用数学
+  facultyCode: FST
+  degreeType: undergraduate
+  pdf_filename_hint: AM
+
+FM:
+  name: Financial Mathematics
+  name_cn: 金融数学
+  facultyCode: FST
+  degreeType: undergraduate
+  pdf_filename_hint: FM
+
+DS:
+  name: Data Science
+  name_cn: 数据科学
+  facultyCode: FST
+  degreeType: undergraduate
+  pdf_filename_hint: DS
+
+STAT:
+  name: Statistics
+  name_cn: 统计学
+  facultyCode: FST
+  degreeType: undergraduate
+  pdf_filename_hint: STAT
+
+AI:
+  name: Artificial Intelligence
+  name_cn: 人工智能
+  facultyCode: FST
+  degreeType: undergraduate
+  pdf_filename_hint: AI
+
+CST:
+  name: Computer Science and Technology
+  name_cn: 计算机科学与技术
+  facultyCode: FST
+  degreeType: undergraduate
+  pdf_filename_hint: CST
+
+APSY:
+  name: Applied Psychology
+  name_cn: 应用心理学
+  facultyCode: FST
+  degreeType: undergraduate
+  pdf_filename_hint: APSY
+
+ENVS:
+  name: Environmental Science
+  name_cn: 环境科学
+  facultyCode: FST
+  degreeType: undergraduate
+  pdf_filename_hint: ENVS
+
+FS:
+  name: Food Science and Technology
+  name_cn: 食品科学与技术
+  facultyCode: FST
+  degreeType: undergraduate
+  pdf_filename_hint: FS
