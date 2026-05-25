@@ -4143,6 +4143,7 @@ export function CrawlerPortalPage() {
     term: "Spring",
     limit: "all",
     outputMode: "download",
+    databaseAction: "download_only",
     instruction: "爬取 2025 和 2024 admission 的 programme handbook，输出 2026 Spring 的课程配置 JSON。"
   });
   const [result, setResult] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
@@ -4179,9 +4180,16 @@ export function CrawlerPortalPage() {
       title="BNBU Crawler Portal"
       eyebrow="Crawler"
       aside="none"
-      description="独立爬虫入口：输入范围、来源网页和自然语言说明，生成可下载 cleaned JSON。下载后再到主系统管理员端粘贴、命名、校验和审批导入。"
+      description="独立爬虫入口：输入范围、来源网页和自然语言说明，生成可下载 cleaned JSON；也可在管理员确认后创建导入批次或直接批准写入线上数据库。"
     >
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
+      {error && /请先完成|unauthorized|API_UNAUTHORIZED/i.test(error) ? (
+        <Card>
+          <h2 className="text-xl font-semibold text-ink">需要管理员登录</h2>
+          <p className="mt-2 text-sm leading-6 text-ink/62">爬虫入口使用同一套管理员账号密码。请先登录，再回到本页面启动任务。</p>
+          <Link href="/admin-login" className="mt-4 inline-flex rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">进入管理员登录</Link>
+        </Card>
+      ) : null}
       <div className="grid gap-5">
         <Card>
           <h2 className="text-xl font-semibold text-ink">Crawl request</h2>
@@ -4229,7 +4237,19 @@ export function CrawlerPortalPage() {
                   <option value="git_import_json">course_imports/bnbu</option>
                 </select>
               </Field>
+              <Field label="After crawl" help="默认只生成下载文件；如选择直接批准，会写入线上课程目录和 admission-year 课程安排。">
+                <select className={inputClass} value={form.databaseAction ?? "download_only"} onChange={(event) => setForm({ ...form, databaseAction: event.target.value })}>
+                  <option value="download_only">只生成并下载 JSON</option>
+                  <option value="create_pending">创建待审批导入批次</option>
+                  <option value="approve_import">直接批准并更新线上数据库</option>
+                </select>
+              </Field>
             </div>
+            {form.databaseAction === "approve_import" ? (
+              <div className="border border-rust/30 bg-rust/5 px-3 py-2 text-sm leading-6 text-rust">
+                这个选项会在爬虫成功后自动创建导入批次并批准写入数据库；同 admission year 的旧 pending 批次会被标记为 rejected，已有课程和用户数据不会被清空。
+              </div>
+            ) : null}
             <button disabled={busy} className="w-fit rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">
               {busy ? "启动中..." : "启动爬虫"}
             </button>
@@ -4243,7 +4263,7 @@ export function CrawlerPortalPage() {
           </div>
           <div className="mt-4 max-h-80 overflow-auto border border-ink/15">
             <table className="w-full min-w-[820px] border-collapse text-left text-sm">
-              <thead className="sticky top-0 bg-ink text-paper"><tr>{["Job", "Status", "Admission years", "Activation preview", "Started", "Result", "Log"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+              <thead className="sticky top-0 bg-ink text-paper"><tr>{["Job", "Status", "Admission years", "Activation preview", "Started", "Result", "Actions", "Log"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
               <tbody>
                 {jobs.length ? jobs.map((job: any) => (
                   <tr key={job.id} className="border-b border-ink/10">
@@ -4255,13 +4275,32 @@ export function CrawlerPortalPage() {
                     <td className="px-3 py-2">{job.input?.cohorts?.join?.(", ") ?? ""}</td>
                     <td className="px-3 py-2">{job.input?.semesterCode ?? "not set"}</td>
                     <td className="px-3 py-2">{job.startedAt ? new Date(job.startedAt).toLocaleString() : ""}</td>
-                    <td className="max-w-[260px] px-3 py-2 text-xs text-ink/64">
+                    <td className="max-w-[300px] px-3 py-2 text-xs text-ink/64">
                       {job.errorMessage ? <span className="text-rust">{job.errorMessage}</span> : job.status === "completed" ? "Completed" : "Waiting for output"}
+                      {job.imports?.length ? (
+                        <div className="mt-2 grid gap-1">
+                          {job.imports.map((item: any) => (
+                            <p key={`${item.outputName}-${item.batchId ?? item.error}`} className={item.status === "failed" ? "text-rust" : "text-forest"}>
+                              {item.outputName}: {item.status}{item.batchId ? ` · batch ${item.batchId}` : ""}{item.error ? ` · ${item.error}` : ""}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-2">
+                        {job.outputs?.length ? (
+                          <a className="rounded-sm border border-ink/30 px-2 py-1 text-xs font-semibold" href={`/api/crawler/jobs/${job.id}/download`}>下载本次爬取内容</a>
+                        ) : null}
+                        {job.outputs?.map((output: any) => (
+                          <a key={output.storageKey} className="rounded-sm border border-ink/20 px-2 py-1 text-xs font-semibold text-ink/70" href={output.downloadUrl}>{output.name}</a>
+                        ))}
+                      </div>
                     </td>
                     <td className="max-w-[360px] px-3 py-2"><pre className="max-h-32 overflow-auto whitespace-pre-wrap text-xs">{(job.logs ?? []).join("").slice(-4000)}</pre></td>
                   </tr>
                 )) : (
-                  <tr><td colSpan={7} className="px-3 py-4 text-ink/50">No crawler jobs yet.</td></tr>
+                  <tr><td colSpan={8} className="px-3 py-4 text-ink/50">No crawler jobs yet.</td></tr>
                 )}
               </tbody>
             </table>

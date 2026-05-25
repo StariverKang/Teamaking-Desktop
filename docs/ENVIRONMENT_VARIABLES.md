@@ -16,11 +16,13 @@ Vercel 中环境变量修改后，必须到 `Deployments` 对最新 production d
 NEXT_PUBLIC_APP_URL="https://teamingapp.org"
 ADMIN_HOSTS="admin.teamingapp.org"
 CRAWLER_HOSTS="crawler.teamingapp.org"
+SESSION_COOKIE_DOMAIN=".teamingapp.org"
 ```
 
 - `NEXT_PUBLIC_APP_URL`：公开主站域名。
 - `ADMIN_HOSTS`：允许访问 `/admin`、`/admin-login`、`/api/admin/*` 和 `/api/auth/admin-login` 的管理员域名。主系统不展示 Admin 入口。
 - `CRAWLER_HOSTS`：允许访问 `/crawler` 和 `/api/crawler/*` 的爬虫子域名。主站和管理员域名之外会返回 404。
+- `SESSION_COOKIE_DOMAIN`：可选。生产建议填 `.teamingapp.org`，让 `admin.teamingapp.org` 和 `crawler.teamingapp.org` 共用同一次管理员登录；本地 localhost 不要设置。
 - 多语言不需要额外环境变量。首次访问时 middleware 会根据 `x-vercel-ip-country` 或 `cf-ipcountry` 设置 `teamaking_locale` cookie；用户可在页面右上角手动切换。
 
 ## 数据库
@@ -85,6 +87,8 @@ ADMIN_BOOTSTRAP_DISPLAY_NAME="TEAMAKING Admin"
 `ADMIN_BOOTSTRAP_ROLE` 可选值：`course_moderator`、`school_admin`、`super_admin`。上线维护建议使用 `super_admin`。
 
 旧的 `DEVELOPER_LOGIN_*` 环境变量仍作为兼容 fallback，但不推荐继续作为长期管理员密码管理方式。登录成功后，管理员账号仍会写入数据库，后续可在后台 `Admin Users` 页面维护。
+
+爬虫入口不使用另一组账号密码。`crawler.teamingapp.org` 允许访问 `/admin-login` 和 `/api/auth/admin-login`，使用同一套 `ADMIN_BOOTSTRAP_*` 或数据库管理员账号登录。若设置 `SESSION_COOKIE_DOMAIN=.teamingapp.org`，管理员和爬虫子域可以共享登录 cookie。
 
 也可以通过命令创建或重置账号：
 
@@ -188,12 +192,13 @@ UPLOAD_STORAGE_MODE="inline"
 1. Vercel 中 `NEXT_PUBLIC_APP_URL=https://teamingapp.org`。
 2. Vercel 中 `ADMIN_HOSTS=admin.teamingapp.org`。
 3. 如启用线上爬虫入口，Vercel 中 `CRAWLER_HOSTS=crawler.teamingapp.org`。
-4. Vercel 中 `ENABLE_DEMO_ACCESS=false`。
-5. Vercel 中 `EMAIL_DEBUG_CODE_RESPONSE=false`。
-6. 管理员正式账号已在数据库创建或重置，或已配置 `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD` 并完成一次管理员登录同步。
-7. 腾讯云 SES SecretId/SecretKey 已配置。
-8. 腾讯云 SES 发信地址和模板 ID 已配置。
-9. 腾讯云两套模板已审核通过，并完成注册/找回密码发信实测。
-10. Neon production migration 已执行。
-11. Vercel 已 Redeploy。
-12. `/admin/announcements` 可发布公告，主站任意页面顶部显示公告弹窗，`/announcements` 可查看历史。
+4. 如需管理员/爬虫子域共享登录，Vercel 中 `SESSION_COOKIE_DOMAIN=.teamingapp.org`。
+5. Vercel 中 `ENABLE_DEMO_ACCESS=false`。
+6. Vercel 中 `EMAIL_DEBUG_CODE_RESPONSE=false`。
+7. 管理员正式账号已在数据库创建或重置，或已配置 `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD` 并完成一次管理员登录同步。
+8. 腾讯云 SES SecretId/SecretKey 已配置。
+9. 腾讯云 SES 发信地址和模板 ID 已配置。
+10. 腾讯云两套模板已审核通过，并完成注册/找回密码发信实测。
+11. Neon production migration 已执行。
+12. Vercel 已 Redeploy。
+13. `/admin/announcements` 可发布公告，主站任意页面顶部显示公告弹窗，`/announcements` 可查看历史。

@@ -7,11 +7,16 @@ import { DEMO_SESSION_PREFIX, demoUserForAccount, isDemoAccessEnabled } from "@/
 
 export const SESSION_COOKIE = "teamaking_session";
 
+function sessionCookieDomain() {
+  return (process.env.SESSION_COOKIE_DOMAIN ?? "").trim() || undefined;
+}
+
 export function setSessionCookie(response: NextResponse, userId: string) {
   response.cookies.set(SESSION_COOKIE, userId, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
+    ...(sessionCookieDomain() ? { domain: sessionCookieDomain(), secure: true } : {}),
     maxAge: 60 * 60 * 24 * 30
   });
 }
@@ -21,6 +26,7 @@ export function setDemoSessionCookie(response: NextResponse, account: string) {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
+    ...(sessionCookieDomain() ? { domain: sessionCookieDomain(), secure: true } : {}),
     maxAge: 60 * 60 * 24 * 7
   });
 }

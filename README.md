@@ -61,6 +61,7 @@ DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/teamaking?schema=public"
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
 ADMIN_HOSTS="admin.teamingapp.org"
 CRAWLER_HOSTS="crawler.teamingapp.org"
+SESSION_COOKIE_DOMAIN=".teamingapp.org"
 TENCENTCLOUD_SECRET_ID=""
 TENCENTCLOUD_SECRET_KEY=""
 TENCENTCLOUD_SES_REGION="ap-hongkong"
@@ -158,6 +159,8 @@ ADMIN_BOOTSTRAP_DISPLAY_NAME="TEAMAKING Admin"
 ```
 
 `ADMIN_BOOTSTRAP_*` 是推荐方式；旧的 `DEVELOPER_LOGIN_*` 变量仍作为兼容 fallback，但不要再作为长期管理员密码管理方式。
+
+爬虫入口使用同一套管理员账号密码。生产环境建议设置 `SESSION_COOKIE_DOMAIN=".teamingapp.org"`，这样在 `admin.teamingapp.org` 登录后，同一浏览器也能访问 `crawler.teamingapp.org`；也可以直接在 crawler 子域打开 `/admin-login` 使用同一组 `ADMIN_BOOTSTRAP_*` 账号密码登录。
 
 创建或重置管理员账号：
 
@@ -401,7 +404,7 @@ prisma/
 
 真实课程数据由 BNBU crawler/清洗工具采集和清洗。主系统仍只通过 cleaned JSON 入库：`schemaVersion` 建议为 `teamaking.bnbu_course_import.v2`（兼容 v1），`school.shortName` 必须为 `BNBU`。管理员在 `/admin/course-imports` 粘贴 JSON，填写本次配置名称，先校验并创建一条待审批配置操作，批准后才会写入课程目录和 admission-year 课程安排规则。
 
-爬虫入口已经拆成独立页面 `/crawler` 和 API `/api/crawler/*`。本地可直接访问；线上可通过 `CRAWLER_HOSTS` 配置独立 crawler 子域名。Crawler 生成的 JSON 默认写入 `storage/crawler_outputs/`，通过网页下载到本地后再手动粘贴到管理员导入页；如果要生成可提交的测试样本，可切换输出模式写入 `course_imports/bnbu/*.teamaking.json`。
+爬虫入口已经拆成独立页面 `/crawler` 和 API `/api/crawler/*`。本地可直接访问；线上可通过 `CRAWLER_HOSTS` 配置独立 crawler 子域名。Crawler 默认只生成可下载 JSON；管理员也可以在 `After crawl` 中选择创建 pending 导入批次，或直接批准并更新线上数据库。每个 Job 完成后都会提供“下载本次爬取内容”按钮。若要生成可提交的测试样本，可切换输出模式写入 `course_imports/bnbu/*.teamaking.json`。
 
 Crawler 页面字段解释、变量表、Job 状态、下载区和常见误用见 `docs/BNBU_CRAWLER_ADMIN_VARIABLES.md`。这份文档面向非开发管理员，可直接作为操作手册使用。
 

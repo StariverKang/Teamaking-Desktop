@@ -1,6 +1,6 @@
 # BNBU Crawler Admin Variables
 
-本文档面向管理员，解释 `/crawler` 页面上所有可交互项、变量含义、输出位置和常见操作方式。Crawler 只生成 cleaned JSON，不会直接写入 TEAMAKING 主数据库。正式入库仍需要到 `/admin/course-imports` 粘贴 JSON、填写配置名称、校验、创建待审批批次并人工批准。
+本文档面向管理员，解释 `/crawler` 页面上所有可交互项、变量含义、输出位置和常见操作方式。Crawler 默认只生成 cleaned JSON；如管理员明确选择 `创建待审批导入批次` 或 `直接批准并更新线上数据库`，任务完成后会把本次输出写入课程导入工作流。默认模式仍不改数据库。
 
 ## Recommended Flow
 
@@ -26,7 +26,8 @@
 | Activation preview year | `academicYear` | 年份数字 | 是 | `2026` | `2026` | 生成 JSON 中 `semester.academicYear` 和默认 `semester.code`。 | 这是 Course Board 激活预览上下文，用于判断当前 academic term 对应哪些 admission-year rules；不代表 admission year。 |
 | Activation preview term | `term` | `Spring` / `Fall` | 是 | `Spring` | `Fall` | 生成 JSON 中 `semester.term` 和默认 `semester.code`。 | 与 Activation preview year 一起形成 `2026-Fall`。课程安排本身仍按 admission year 存储。 |
 | Limit | `limit` | `all` 或整数 | 是 | `all` | `all`、`1`、`5` | 限制每个 admission year 最多解析多少个 programme PDF。 | 测试时用 `1`；正式全量用 `all`。如果全量失败，可按 faculty 或 programme 分批跑。 |
-| Output mode | `outputMode` | 枚举 | 是 | `download` | `download` | 决定 JSON 输出到哪里。 | 页面显示值见下表。无论选哪个，都不会直接写主数据库。 |
+| Output mode | `outputMode` | 枚举 | 是 | `download` | `download` | 决定 JSON 输出到哪里。 | 页面显示值见下表。 |
+| After crawl | `databaseAction` | 枚举 | 是 | `download_only` | `download_only` | 决定爬虫完成后的数据库动作。 | `approve_import` 会直接写入线上数据库，只给确认过范围的管理员使用。 |
 
 ## Target Options
 
@@ -44,6 +45,16 @@
 | `course_imports/bnbu` | `git_import_json` | `course_imports/bnbu/` | 是，限 `*.teamaking.json` | 本地开发/测试样本、需要提交 Git 的固定导入 JSON。 |
 
 生产或线上测试时，推荐使用 `download-only storage`，下载后立即保存到本地，再去 `/admin/course-imports` 粘贴。服务器本地文件系统不应被视为长期档案；长期审计以管理员导入后形成的 `CourseImportDataset`、artifact 和日志为准。
+
+## After Crawl 数据库动作
+
+| 页面选项 | API 值 | 数据库动作 | 适用场景 |
+|---|---|---|---|
+| 只生成并下载 JSON | `download_only` | 不创建批次，不写课程数据。Job 行会显示“下载本次爬取内容”。 | 默认安全模式、人工检查 JSON。 |
+| 创建待审批导入批次 | `create_pending` | 为本次每个 admission year 输出创建 pending `CourseImportBatch` 和线上数据集。 | 管理员还想去 `/admin/course-imports` 看 Diff 后再批准。 |
+| 直接批准并更新线上数据库 | `approve_import` | 创建导入批次后立即批准，写入 Course、CourseCurriculumRule 等配置数据，并创建版本 checkpoint。 | 现场确认范围无误后快速更新线上数据库。 |
+
+`approve_import` 不会清空已有用户、课程、公告或历史日志。若同 admission year 已有旧 pending 批次，系统会把旧 pending 标记为 rejected，避免重复待审批项。
 
 ## Derived Variables
 
@@ -124,7 +135,7 @@
 | `offerings[]` 为空 | 管理后台 warning 或 preview 显示 offerings empty。 | 对 programme handbook 来说正常。真实 offerings 需要未来 semester offerings parser。 |
 | Job 显示 `failed` 但 Download outputs 有文件 | 能下载某些 JSON。 | 可能前面 admission year / programme 已写出，后续步骤失败。必须看 Log 和 Result，不要当作全量完成。 |
 | `Limit = 1` 后以为数据少是 bug | 只生成一个 programme 的课程。 | `Limit` 是测试用限制。正式导入用 `all`。 |
-| 选 `course_imports/bnbu` 后以为已入库 | 文件出现在 download 列表或项目目录。 | 这只是生成 JSON 文件。仍需到 `/admin/course-imports` 粘贴和审批。 |
+| 选 `course_imports/bnbu` 后以为已入库 | 文件出现在 download 列表或项目目录。 | 这只是生成 JSON 文件。只有 After crawl 选择 `create_pending` 或 `approve_import` 才会进入导入工作流。 |
 | Programme codes 留空后耗时很长 | Job running 很久。 | 留空表示全专业。可按 faculty 或 programme 分批。 |
 | 看到随机 job id 以为任务不能命名 | 表格里仍有 `cm...` 或 `crawl...`。 | 这是内部 id，用于排查。管理员应填写并查看 `Job name`。 |
 | 看到多个 approved 记录以为同一 JSON 被拆批 | 导入历史里同一 admission year 有多条记录。 | 每次 JSON 输入是一条配置操作；approved 历史表示之前批准过的操作。新的 pending 会作为替换候选，批准后写入当前 active 课程目录和配置规则。 |
@@ -144,4 +155,4 @@
 
 ## Ownership Boundary
 
-Crawler 页面只负责“生成可审查 JSON”。主系统数据库的正式变化只发生在 `/admin/course-imports` 批准导入后。任何课程目录、admission-year curriculum rules、Course Board 激活、默认加入、操作日志和版本 checkpoint，都以管理员导入页和管理员版本页为准。
+Crawler 页面默认只负责“生成可审查 JSON”。如果管理员选择 `直接批准并更新线上数据库`，主系统数据库变化会在 crawler job 完成后立即发生；该动作仍会创建 `CourseImportBatch`、`CourseImportDataset`、操作日志和 version checkpoint，方便之后审计与回溯。任何课程目录、admission-year curriculum rules、Course Board 激活、默认加入、操作日志和版本 checkpoint，都以管理员导入页和管理员版本页为准。

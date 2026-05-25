@@ -562,3 +562,22 @@
   - 该机制只 upsert 一个管理员 `User` 和对应 `UserProfile`，不执行 seed，不删除或重建任何已有用户、课程、课程安排、导入批次、公告、上传文件或日志。
 - 验证：
   - 待运行 `npm run typecheck` 和 `npm run build` 后部署。
+
+### Crawler 现场导入与本次输出下载
+
+- 背景：
+  - 用户要求能够在网站上现场跑一次 BNBU crawler，并可选择把本次爬取结果更新到线上数据库。
+  - 用户要求每次跑爬虫后都有“下载本次爬取内容”的按钮。
+  - 用户希望 crawler 入口和管理员入口使用同一组账号密码，不要维护两套凭据。
+- 改动：
+  - Crawler 表单新增 `After crawl`：`download_only`、`create_pending`、`approve_import`。
+  - `download_only` 默认不写库；`create_pending` 创建导入数据集和 pending 批次；`approve_import` 创建批次后立即批准并写入课程目录和 admission-year 课程安排规则。
+  - Job 行新增“下载本次爬取内容”按钮，返回该 job 的输出 bundle；同时保留单个输出 JSON 下载链接。
+  - Crawler job 完成后只把本次新增/更新的输出挂到该 job，避免输出列表混淆。
+  - 生产写文件目录在 Vercel 下改用 `/tmp/teamaking`，避免 serverless 只读文件系统问题；长期审计仍以数据库 dataset rows、batch、operation log 和 checkpoint 为准。
+  - `/admin-login` 和 `/api/auth/admin-login` 允许在 crawler 子域使用；新增 `SESSION_COOKIE_DOMAIN=.teamingapp.org` 文档，使 admin/crawler 子域可共享登录 cookie。
+- 数据安全：
+  - 直接批准导入不会清空已有用户、课程、公告或上传记录。
+  - 对同 admission year 的旧 pending 批次，`approve_import` 会标记为 rejected，避免重复 pending 阻挡现场导入。
+- 验证：
+  - 待运行 `npm run typecheck` 和 `npm run build` 后部署。

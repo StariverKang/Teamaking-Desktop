@@ -2997,8 +2997,9 @@ function courseImportPayloadFromBody(body: Record<string, unknown>) {
   throw new ApiError(400, "payload must be a JSON object.", ERROR_CODES.COURSE_IMPORT_INVALID_JSON);
 }
 
-const importArtifactDir = path.join(process.cwd(), "storage", "course_import_artifacts");
-const crawlerOutputDir = path.join(process.cwd(), "storage", "crawler_outputs");
+const writableStorageRoot = process.env.VERCEL ? path.join("/tmp", "teamaking") : path.join(process.cwd(), "storage");
+const importArtifactDir = path.join(writableStorageRoot, "course_import_artifacts");
+const crawlerOutputDir = path.join(writableStorageRoot, "crawler_outputs");
 const crawlerScriptCandidates = [
   path.join(process.cwd(), "scripts", "bnbu-crawler", "run-handbook-preview.mjs"),
   path.join(process.cwd(), "local_bnbu_course_pipeline", "run_handbook_preview.mjs")
@@ -3021,8 +3022,8 @@ function safeFilePart(value: string) {
 async function writeImportArtifact(payload: Record<string, unknown>, name: string) {
   await mkdir(importArtifactDir, { recursive: true });
   const fileName = `${timestampFilePrefix()}_${safeFilePart(name)}.teamaking.json`;
-  const storageKey = path.join("storage", "course_import_artifacts", fileName);
-  const absolutePath = path.join(process.cwd(), storageKey);
+  const absolutePath = path.join(importArtifactDir, fileName);
+  const storageKey = path.relative(process.cwd(), absolutePath);
   const content = `${JSON.stringify(payload, null, 2)}\n`;
   await writeFile(absolutePath, content, "utf8");
   return { fileName, storageKey, size: Buffer.byteLength(content, "utf8") };
@@ -3115,6 +3116,7 @@ function normalizeCrawlerJobInput(body: Record<string, unknown>) {
   const term = textValue(body.term) || natural.term || "Spring";
   const cohorts = crawlerCsv(body.cohorts || natural.cohorts || "2025,2024");
   const outputMode = textValue(body.outputMode) || "download";
+  const databaseAction = textValue(body.databaseAction) || textValue(body.postCrawlAction) || "download_only";
   const requestedName = optionalString(body.name) ?? optionalString(body.jobName);
   return {
     name: requestedName,
@@ -3133,7 +3135,8 @@ function normalizeCrawlerJobInput(body: Record<string, unknown>) {
     term,
     semesterCode: textValue(body.semesterCode) || `${academicYear}-${term}`,
     semesterName: textValue(body.semesterName) || `${academicYear} ${term}`,
-    outputMode
+    outputMode,
+    databaseAction: ["download_only", "create_pending", "approve_import"].includes(databaseAction) ? databaseAction : "download_only"
   };
 }
 
@@ -3146,6 +3149,7 @@ function serializeCrawlerJob(job: any) {
   const input = isPlainRecord(job.input) ? job.input : {};
   const logs = Array.isArray(job.logs) ? job.logs.map(textValue) : [];
   const outputs = Array.isArray(job.outputs) ? job.outputs : [];
+  const imports = Array.isArray(job.imports) ? job.imports : outputs.map((output: any) => output.importResult).filter(Boolean);
   return {
     id: job.id,
     name: job.name,
@@ -3155,6 +3159,7 @@ function serializeCrawlerJob(job: any) {
     command: job.command,
     logs,
     outputs,
+    imports,
     errorMessage: job.errorMessage,
     exitCode: job.exitCode,
     startedAt: job.startedAt?.toISOString?.() ?? job.startedAt,
@@ -3206,6 +3211,217 @@ async function listCrawlerJobs(appVersionId: string) {
   return jobs.map(serializeCrawlerJob);
 }
 
+function crawlerOutputsChangedAfter(beforeOutputs: any[], afterOutputs: any[]) {
+  const beforeByKey = new Map(beforeOutputs.map((file) => [file.storageKey, file.modifiedAt]));
+  return afterOutputs.filter((file) => !beforeByKey.has(file.storageKey) || String(file.modifiedAt) > String(beforeByKey.get(file.storageKey)));
+}
+
+async function payloadFromStoredCrawlerOutput(output: any) {
+  const content = await readStoredJson(output.storageKey);
+  const parsed = JSON.parse(content);
+  if (!isPlainRecord(parsed)) throw new ApiError(400, `爬虫输出不是有效 JSON object：${output.name}`);
+  return parsed;
+}
+
+async function rejectOverlappingPendingImports(input: { appVersionId: string; schoolId?: string; cohortYears: number[]; admin: any; reason: string }) {
+  if (!input.cohortYears.length) return [];
+  const pendingBatches = await prisma.courseImportBatch.findMany({
+    where: {
+      appVersionId: input.appVersionId,
+      ...(input.schoolId ? { schoolId: input.schoolId } : {}),
+      status: "pending"
+    },
+    select: { id: true, cohortYears: true, payload: true, summary: true }
+  });
+  const overlapping = pendingBatches.filter((batch) => {
+    const existingYears: number[] = numberValues(batch.cohortYears).length
+      ? numberValues(batch.cohortYears)
+      : isPlainRecord(batch.payload)
+        ? importCohortYearsFromPayload(batch.payload)
+        : numberValues(isPlainRecord(batch.summary) ? batch.summary.cohortYears : undefined);
+    return hasOverlappingNumber(existingYears, input.cohortYears);
+  });
+  if (!overlapping.length) return [];
+  await prisma.courseImportBatch.updateMany({
+    where: { id: { in: overlapping.map((batch) => batch.id) } },
+    data: {
+      status: "rejected",
+      rejectedByUserId: input.admin.id,
+      rejectedAt: new Date(),
+      adminNote: input.reason
+    }
+  });
+  return overlapping.map((batch) => batch.id);
+}
+
+async function createCourseImportBatchFromPayload(input: {
+  payload: Record<string, unknown>;
+  name: string;
+  admin: any;
+  duplicateMode?: "block" | "reject_pending";
+}) {
+  const validation = validateBnbuCourseImportPayload(input.payload);
+  if (!validation.ok) {
+    throw new ApiError(400, `导入文件校验失败：${validation.errors.join("; ")}`);
+  }
+
+  const appVersionId = await getActiveAppVersionId();
+  const school = await getActiveSchool("BNBU");
+  const preview = await buildCourseImportPreview(input.payload);
+  const summary = buildCourseImportBatchSummary(input.payload, preview);
+  const cohortYears = importCohortYearsFromPayload(input.payload, preview);
+  const hash = payloadHash(input.payload);
+
+  if (input.duplicateMode === "reject_pending") {
+    await rejectOverlappingPendingImports({
+      appVersionId,
+      schoolId: school?.id,
+      cohortYears,
+      admin: input.admin,
+      reason: `Superseded by crawler import: ${input.name}`
+    });
+  } else {
+    const pendingBatches = await prisma.courseImportBatch.findMany({
+      where: {
+        appVersionId,
+        ...(school?.id ? { schoolId: school.id } : {}),
+        status: "pending"
+      },
+      select: { id: true, cohortYears: true, payload: true, summary: true, createdAt: true }
+    });
+    const duplicatePending = pendingBatches.find((batch) => {
+      const existingYears: number[] = numberValues(batch.cohortYears).length
+        ? numberValues(batch.cohortYears)
+        : isPlainRecord(batch.payload)
+          ? importCohortYearsFromPayload(batch.payload)
+          : numberValues(isPlainRecord(batch.summary) ? batch.summary.cohortYears : undefined);
+      return hasOverlappingNumber(existingYears, cohortYears);
+    });
+    if (duplicatePending) {
+      throw new ApiError(409, `已存在 ${cohortYears.join(", ")} admission 的 pending 配置，请先批准或拒绝旧配置后再创建。`, ERROR_CODES.COURSE_IMPORT_DUPLICATE_PENDING);
+    }
+  }
+
+  const dataset = await createCourseImportDataset({ payload: input.payload, name: input.name, adminUserId: input.admin.id, schoolId: school?.id, preview });
+  const batch = await prisma.courseImportBatch.create({
+    data: {
+      appVersionId,
+      schoolId: school?.id,
+      datasetId: dataset.id,
+      name: input.name,
+      schemaVersion: validation.schemaVersion ?? "teamaking.bnbu_course_import.v1",
+      semesterCode: validation.semesterCode,
+      cohortYears: toJson(cohortYears),
+      payloadHash: hash,
+      summary: toJson(summary),
+      sourceLabel: summary.sourceLabel,
+      status: "pending",
+      payload: toJson({}),
+      validationSummary: toJson({ ...validation, preview })
+    }
+  });
+  await writeAudit(input.admin.id, "admin.course_imports.create", "CourseImportBatch", batch.id, null, { batch, validation, preview, source: "crawler" });
+  return { batch, dataset, validation, preview, summary };
+}
+
+async function approveCourseImportBatch(batchId: string, admin: any) {
+  const batch = await prisma.courseImportBatch.findUnique({ where: { id: batchId } });
+  if (!batch) throw new ApiError(404, "找不到这个课程配置操作。");
+  if (batch.status === "approved") throw new ApiError(400, "这个课程配置操作已经批准过。");
+  const approvalPayload = batch.datasetId ? await payloadFromDataset(batch.datasetId) : isPlainRecord(batch.payload) ? batch.payload : null;
+  if (!approvalPayload) throw new ApiError(400, "课程配置操作的 JSON 无法解析。");
+
+  const before = await prisma.courseImportBatch.findUnique({ where: { id: batchId } });
+  const result = await applyBnbuCourseImport(approvalPayload, batch.id);
+  const approvalPreview = await buildCourseImportPreview(approvalPayload);
+  const approvalSummary = buildCourseImportBatchSummary(approvalPayload, approvalPreview);
+  const approvalCohortYears = importCohortYearsFromPayload(approvalPayload, approvalPreview);
+  const updated = await prisma.courseImportBatch.update({
+    where: { id: batchId },
+    data: {
+      schoolId: result.school.id,
+      status: "approved",
+      validationSummary: result.validationSummary,
+      summary: toJson(approvalSummary),
+      cohortYears: toJson(approvalCohortYears),
+      payloadHash: batch.payloadHash ?? payloadHash(approvalPayload),
+      sourceLabel: batch.sourceLabel ?? approvalSummary.sourceLabel,
+      approvedByUserId: admin.id,
+      approvedAt: new Date()
+    }
+  });
+  await createVersionCheckpoint({
+    appVersionId: batch.appVersionId,
+    label: `After import: ${batch.name ?? batch.id}`,
+    kind: "course_import",
+    reason: "Course import approved",
+    triggeredByUserId: admin.id
+  });
+  await writeAudit(admin.id, "admin.course_imports.approve", "CourseImportBatch", batchId, before, { updated, result });
+  return { importBatch: updated, result };
+}
+
+async function importCrawlerOutputsForJob(job: any, outputs: any[], admin: any) {
+  const action = job.input?.databaseAction ?? "download_only";
+  if (!["create_pending", "approve_import"].includes(action)) return [];
+  const imports = [];
+  for (const output of outputs) {
+    try {
+      const payload = await payloadFromStoredCrawlerOutput(output);
+      const name = `${job.name} · ${output.name}`;
+      const created = await createCourseImportBatchFromPayload({
+        payload,
+        name,
+        admin,
+        duplicateMode: action === "approve_import" ? "reject_pending" : "block"
+      });
+      let approved = null;
+      if (action === "approve_import") {
+        approved = await approveCourseImportBatch(created.batch.id, admin);
+      }
+      imports.push({
+        outputName: output.name,
+        batchId: created.batch.id,
+        datasetId: created.dataset.id,
+        status: approved ? "approved" : "pending",
+        summary: created.summary,
+        approvalResult: approved?.result ?? null
+      });
+    } catch (error) {
+      imports.push({
+        outputName: output.name,
+        status: "failed",
+        error: error instanceof Error ? error.message : "导入失败"
+      });
+    }
+  }
+  return imports;
+}
+
+function crawlerJobBundleFilename(job: any) {
+  return `${safeFilePart(job.name || job.id || "crawler-job")}-outputs.bundle.json`;
+}
+
+async function crawlerJobBundle(job: any) {
+  const outputs = Array.isArray(job.outputs) ? job.outputs : [];
+  const files = [];
+  for (const output of outputs) {
+    if (!output?.storageKey) continue;
+    const content = await readStoredJson(output.storageKey);
+    files.push({
+      name: output.name,
+      storageKey: output.storageKey,
+      size: output.size,
+      modifiedAt: output.modifiedAt,
+      payload: JSON.parse(content)
+    });
+  }
+  return {
+    job: serializeCrawlerJob(job),
+    files
+  };
+}
+
 async function startCrawlerJob(body: Record<string, unknown>, admin: any) {
   const input = normalizeCrawlerJobInput(body);
   if (input.target !== "programme_handbook") {
@@ -3215,8 +3431,9 @@ async function startCrawlerJob(body: Record<string, unknown>, admin: any) {
   await mkdir(crawlerOutputDir, { recursive: true });
   const script = await crawlerScriptPath();
   const appVersionId = await getActiveAppVersionId();
+  const beforeOutputs = await listCrawlerOutputs();
   const jobName = input.name || defaultCrawlerJobName(input);
-  const outDir = input.outputMode === "git_import_json" ? "course_imports/bnbu" : path.relative(process.cwd(), crawlerOutputDir);
+  const outDir = input.outputMode === "git_import_json" ? "course_imports/bnbu" : crawlerOutputDir;
   const args = [
     script,
     `--handbookUrl=${input.handbookUrl}`,
@@ -3258,7 +3475,8 @@ async function startCrawlerJob(body: Record<string, unknown>, admin: any) {
     finishedAt: null,
     exitCode: null,
     errorMessage: null,
-    outputs: []
+    outputs: [],
+    imports: []
   };
   crawlerJobs.set(createdJob.id, job);
   const child = spawn(process.execPath, args, { cwd: process.cwd(), env: process.env });
@@ -3283,12 +3501,31 @@ async function startCrawlerJob(body: Record<string, unknown>, admin: any) {
     job.exitCode = code;
     job.status = code === 0 ? "completed" : "failed";
     job.finishedAt = new Date().toISOString();
-    job.outputs = await listCrawlerOutputs();
+    const allOutputs = await listCrawlerOutputs();
+    job.outputs = crawlerOutputsChangedAfter(beforeOutputs, allOutputs);
+    if (!job.outputs.length) {
+      job.outputs = allOutputs.filter((file) => input.cohorts.some((cohort: string) => file.name.includes(`-${cohort}-`)));
+    }
     if (code !== 0 && !job.errorMessage) {
       const tail = (job.logs ?? []).join("").trim().split("\n").filter(Boolean).slice(-1)[0];
       job.errorMessage = tail || `Crawler exited with code ${code}`;
     }
+    if (code === 0) {
+      job.imports = await importCrawlerOutputsForJob(job, job.outputs, admin);
+      job.outputs = job.outputs.map((output: any) => ({
+        ...output,
+        importResult: job.imports.find((item: any) => item.outputName === output.name) ?? null
+      }));
+      const failedImport = job.imports.find((item: any) => item.status === "failed");
+      if (failedImport) {
+        job.status = "failed";
+        job.errorMessage = failedImport.error;
+      }
+    }
     job.logs.push(`\nFinished with exit code ${code} at ${job.finishedAt}\n`);
+    if (job.imports?.length) {
+      job.logs.push(`Crawler import actions: ${JSON.stringify(job.imports.map((item: any) => ({ outputName: item.outputName, status: item.status, batchId: item.batchId, error: item.error })), null, 2)}\n`);
+    }
     await persistCrawlerJob(job);
     await operationLog({
       actorUserId: admin.id,
@@ -5304,93 +5541,13 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
     const payload = courseImportPayloadFromBody(body);
     const name = optionalString(body.name) ?? optionalString(body.configName) ?? optionalString(body.sourceLabel);
     if (!name) throw new ApiError(400, "请为本次配置填写一个名称。");
-    const validation = validateBnbuCourseImportPayload(payload);
-    if (!validation.ok) {
-      throw new ApiError(400, `导入文件校验失败：${validation.errors.join("; ")}`);
-    }
-
-    const appVersionId = await getActiveAppVersionId();
-    const school = await getActiveSchool("BNBU");
-    const preview = await buildCourseImportPreview(payload);
-    const summary = buildCourseImportBatchSummary(payload, preview);
-    const cohortYears = importCohortYearsFromPayload(payload, preview);
-    const hash = payloadHash(payload);
-    const pendingBatches = await prisma.courseImportBatch.findMany({
-      where: {
-        appVersionId,
-        ...(school?.id ? { schoolId: school.id } : {}),
-        status: "pending"
-      },
-      select: { id: true, semesterCode: true, cohortYears: true, payload: true, summary: true, createdAt: true }
-    });
-    const duplicatePending = pendingBatches.find((batch) => {
-      const existingYears: number[] = numberValues(batch.cohortYears).length
-        ? numberValues(batch.cohortYears)
-        : isPlainRecord(batch.payload)
-          ? importCohortYearsFromPayload(batch.payload)
-          : numberValues(isPlainRecord(batch.summary) ? batch.summary.cohortYears : undefined);
-      return hasOverlappingNumber(existingYears, cohortYears);
-    });
-    if (duplicatePending) {
-      throw new ApiError(409, `已存在 ${cohortYears.join(", ")} admission 的 pending 配置，请先批准或拒绝旧配置后再创建。`, ERROR_CODES.COURSE_IMPORT_DUPLICATE_PENDING);
-    }
-    const dataset = await createCourseImportDataset({ payload, name, adminUserId: admin.id, schoolId: school?.id, preview });
-    const batch = await prisma.courseImportBatch.create({
-      data: {
-        appVersionId,
-        schoolId: school?.id,
-        datasetId: dataset.id,
-        name,
-        schemaVersion: validation.schemaVersion ?? "teamaking.bnbu_course_import.v1",
-        semesterCode: validation.semesterCode,
-        cohortYears: toJson(cohortYears),
-        payloadHash: hash,
-        summary: toJson(summary),
-        sourceLabel: summary.sourceLabel,
-        status: "pending",
-        payload: toJson({}),
-        validationSummary: toJson({ ...validation, preview })
-      }
-    });
-    await writeAudit(admin.id, "admin.course_imports.create", "CourseImportBatch", batch.id, null, { batch, validation, preview });
-    return created({ importBatch: summarizeCourseImportBatch(batch), validation, preview });
+    const createdBatch = await createCourseImportBatchFromPayload({ payload, name, admin, duplicateMode: "block" });
+    return created({ importBatch: summarizeCourseImportBatch(createdBatch.batch), validation: createdBatch.validation, preview: createdBatch.preview });
   }
 
   if (method === "POST" && resource === "course-imports" && id && action === "approve") {
-    const batch = await prisma.courseImportBatch.findUnique({ where: { id } });
-    if (!batch) throw new ApiError(404, "找不到这个课程配置操作。");
-    if (batch.status === "approved") throw new ApiError(400, "这个课程配置操作已经批准过。");
-    const approvalPayload = batch.datasetId ? await payloadFromDataset(batch.datasetId) : isPlainRecord(batch.payload) ? batch.payload : null;
-    if (!approvalPayload) throw new ApiError(400, "课程配置操作的 JSON 无法解析。");
-
-    const before = await prisma.courseImportBatch.findUnique({ where: { id } });
-    const result = await applyBnbuCourseImport(approvalPayload, batch.id);
-    const approvalPreview = await buildCourseImportPreview(approvalPayload);
-    const approvalSummary = buildCourseImportBatchSummary(approvalPayload, approvalPreview);
-    const approvalCohortYears = importCohortYearsFromPayload(approvalPayload, approvalPreview);
-    const updated = await prisma.courseImportBatch.update({
-      where: { id },
-      data: {
-        schoolId: result.school.id,
-        status: "approved",
-        validationSummary: result.validationSummary,
-        summary: toJson(approvalSummary),
-        cohortYears: toJson(approvalCohortYears),
-        payloadHash: batch.payloadHash ?? payloadHash(approvalPayload),
-        sourceLabel: batch.sourceLabel ?? approvalSummary.sourceLabel,
-        approvedByUserId: admin.id,
-        approvedAt: new Date()
-      }
-    });
-    await createVersionCheckpoint({
-      appVersionId: batch.appVersionId,
-      label: `After import: ${batch.name ?? batch.id}`,
-      kind: "course_import",
-      reason: "Course import approved",
-      triggeredByUserId: admin.id
-    });
-    await writeAudit(admin.id, "admin.course_imports.approve", "CourseImportBatch", id, before, { updated, result });
-    return ok({ importBatch: summarizeCourseImportBatch(updated), result });
+    const approved = await approveCourseImportBatch(id, admin);
+    return ok({ importBatch: summarizeCourseImportBatch(approved.importBatch), result: approved.result });
   }
 
   if (method === "POST" && resource === "course-imports" && id && action === "reject") {
@@ -6325,6 +6482,10 @@ async function handleCrawler(method: string, path: string[], request: NextReques
     await markStaleCrawlerJobs(appVersionId);
     const job = await prisma.crawlerJob.findUnique({ where: { id } });
     if (!job) throw new ApiError(404, "找不到这个爬虫任务。");
+    if (action === "download") {
+      const bundle = await crawlerJobBundle(job);
+      return jsonDownloadResponse(bundle, crawlerJobBundleFilename(job));
+    }
     return ok({ job: serializeCrawlerJob(job), outputs: await listCrawlerOutputs() });
   }
 

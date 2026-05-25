@@ -23,6 +23,10 @@ function isAdminPath(pathname: string) {
   return pathname === "/admin" || pathname.startsWith("/admin/") || pathname === "/admin-login" || pathname.startsWith("/api/admin") || pathname === "/api/auth/admin-login" || pathname === "/api/auth/developer-login";
 }
 
+function isAdminAuthPath(pathname: string) {
+  return pathname === "/admin-login" || pathname === "/api/auth/admin-login" || pathname === "/api/auth/developer-login";
+}
+
 function isCrawlerPath(pathname: string) {
   return pathname === "/crawler" || pathname.startsWith("/crawler/") || pathname.startsWith("/api/crawler");
 }
@@ -51,7 +55,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/crawler", request.url));
   }
 
-  if (isAdminPath(url.pathname) && !isLocalHost(hostname) && !allowedAdminHost) {
+  if (isAdminPath(url.pathname) && !isLocalHost(hostname) && !allowedAdminHost && !(allowedCrawlerHost && isAdminAuthPath(url.pathname))) {
     return new NextResponse("Not Found", { status: 404 });
   }
 
