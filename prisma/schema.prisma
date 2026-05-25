@@ -32,6 +32,7 @@ model AppVersion {
   errorEvents        ErrorEvent[]
   authEvents         AuthEvent[]
   announcements      SiteAnnouncement[]
+  contentDocuments   ContentDocument[]
 
   @@index([status])
   @@index([phase])
@@ -74,6 +75,7 @@ model User {
   supportTickets         SupportTicket[]
   announcementReads      UserAnnouncementRead[]
   publishedAnnouncements SiteAnnouncement[]      @relation("AnnouncementPublisher")
+  courseReviewComments   CourseReviewComment[]
 
   @@unique([appVersionId, email])
   @@index([appVersionId])
@@ -117,6 +119,10 @@ model UserProfile {
   resumeParsedData   Json     @default("{}")
   openToBeDiscovered Boolean  @default(true)
   visibilitySettings Json     @default("{}")
+  onboardingTourDismissedAt DateTime?
+  academicOverrideReason    String?
+  academicOverrideByUserId  String?
+  academicOverrideAt        DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -274,6 +280,7 @@ model Course {
   mappings        CourseMajorMapping[]
   curriculumRules CourseCurriculumRule[]
   portfolios      PortfolioItem[]
+  reviewComments  CourseReviewComment[]
 
   @@unique([schoolId, code])
   @@index([title])
@@ -762,6 +769,28 @@ model Endorsement {
   skill    Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
 }
 
+model CourseReviewComment {
+  id             String    @id @default(cuid())
+  courseId       String
+  userId         String
+  parentId       String?
+  body           String
+  status         String    @default("active")
+  deletedAt      DateTime?
+  deletedByUserId String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  course   Course                @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user     User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent   CourseReviewComment?  @relation("CourseReviewReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  CourseReviewComment[] @relation("CourseReviewReplies")
+
+  @@index([courseId, parentId, createdAt])
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
 model ErrorEvent {
   id           String   @id @default(cuid())
   appVersionId String   @default("legacy")
@@ -834,6 +863,33 @@ model SiteAnnouncement {
 
   @@index([appVersionId, status, publishedAt])
   @@index([audience])
+}
+
+model ContentDocument {
+  id              String    @id @default(cuid())
+  appVersionId    String    @default("legacy")
+  kind            String
+  parentId        String?
+  slug            String
+  title           String
+  summary         String?
+  bodyMarkdown    String    @default("")
+  imageUrls       Json      @default("[]")
+  status          String    @default("draft")
+  displayOrder    Int       @default(0)
+  publishedAt     DateTime?
+  updatedByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  appVersion AppVersion        @relation(fields: [appVersionId], references: [id], onDelete: Cascade)
+  parent     ContentDocument?  @relation("ContentDocumentTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children   ContentDocument[] @relation("ContentDocumentTree")
+
+  @@unique([appVersionId, kind, slug])
+  @@index([appVersionId, kind, status])
+  @@index([parentId])
+  @@index([displayOrder])
 }
 
 model UserAnnouncementRead {

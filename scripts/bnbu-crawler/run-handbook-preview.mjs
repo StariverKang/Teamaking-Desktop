@@ -3,7 +3,10 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { PDFParse } from "pdf-parse";
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { fileURLToPath } from "node:url";
+
+GlobalWorkerOptions.standardFontDataUrl = path.dirname(fileURLToPath(import.meta.url)) + "/node_modules/pdfjs-dist/standard_fonts/";
 
 const ROOT = process.cwd();
 const DEFAULT_HANDBOOK_URL = "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm";
@@ -38,19 +41,21 @@ const facultyCodeMap = new Map([
   ["Academic Registry", "AR"]
 ]);
 
-const classificationPatterns = [
-  [/major required/i, "major_required", "Major Required Courses"],
-  [/major elective/i, "major_elective", "Major Elective Courses"],
-  [/concentration required/i, "concentration_required", "Concentration Required Courses"],
-  [/concentration elective/i, "concentration_elective", "Concentration Elective Courses"],
-  [/BBA.*Core/i, "bba_core", "BBA(Hons) Core Courses"],
-  [/university core/i, "university_core", "University Core Courses"],
-  [/general education/i, "general_education", "General Education"],
-  [/free elective/i, "free_elective", "Free Elective Courses"],
-  [/supporting/i, "supporting_course", "Supporting Courses"],
-  [/internship/i, "internship", "Internship"],
-  [/final year project/i, "final_year_project", "Final Year Project"]
-];
+function classificationPatterns() {
+  return [
+    [/major required/i, "major_required", "Major Required Courses"],
+    [/major elective/i, "major_elective", "Major Elective Courses"],
+    [/concentration required/i, "concentration_required", "Concentration Required Courses"],
+    [/concentration elective/i, "concentration_elective", "Concentration Elective Courses"],
+    [/BBA.*Core/i, "bba_core", "BBA(Hons) Core Courses"],
+    [/university core/i, "university_core", "University Core Courses"],
+    [/general education/i, "general_education", "General Education"],
+    [/free elective/i, "free_elective", "Free Elective Courses"],
+    [/supporting/i, "supporting_course", "Supporting Courses"],
+    [/internship/i, "internship", "Internship"],
+    [/final year project/i, "final_year_project", "Final Year Project"]
+  ];
+}
 
 const programmeScopedClassifications = new Set([
   "major_required",
@@ -105,7 +110,7 @@ function programmeCodeFromHref(href) {
 }
 
 function classifyLine(line, current) {
-  for (const [pattern, classification, label] of classificationPatterns) {
+  for (const [pattern, classification, label] of classificationPatterns()) {
     if (pattern.test(line)) return { classification, label };
   }
   return current;
@@ -134,13 +139,18 @@ async function fetchBuffer(url) {
 }
 
 async function pdfText(buffer) {
-  const parser = new PDFParse({ data: buffer });
-  try {
-    const result = await parser.getText();
-    return result.text;
-  } finally {
-    await parser.destroy();
+  const data = new Uint8Array(buffer);
+  const doc = await getDocument({ data }).promise;
+  const lines = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    for (const item of content.items) {
+      if (item.str) lines.push(item.str);
+    }
   }
+  doc.destroy();
+  return lines.join("\n");
 }
 
 function parseCohortLinks(html, baseUrl) {

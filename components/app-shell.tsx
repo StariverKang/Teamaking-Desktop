@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { BookOpen, LayoutDashboard, MailCheck, Settings, Sparkles, UserRound, UsersRound } from "lucide-react";
 import { adminNav, studentNav } from "@/lib/ui-data";
 import { LanguageSwitcher } from "@/components/language-runtime";
@@ -37,9 +40,27 @@ export function Navbar() {
 }
 
 function NavItem({ href, label }: { href: string; label: string }) {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    if (!["/team-up-requests", "/inbox"].includes(href)) return;
+    let alive = true;
+    fetch("/api/notifications/summary")
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (!alive || !data?.summary) return;
+        setCount(href === "/team-up-requests" ? data.summary.teamUpInterests ?? 0 : data.summary.followRequests ?? 0);
+      })
+      .catch(() => null);
+    return () => {
+      alive = false;
+    };
+  }, [href]);
+
   return (
-    <Link href={href} className="rounded-sm px-3 py-2 hover:bg-mist">
+    <Link href={href} className="relative rounded-sm px-3 py-2 hover:bg-mist">
       {label}
+      {count > 0 ? <span className="ml-1 rounded-full bg-coral px-1.5 py-0.5 text-[10px] font-semibold text-paper">{count}</span> : null}
     </Link>
   );
 }
@@ -83,9 +104,7 @@ function Sidebar({ items, admin }: { items: { href: string; label: string }[]; a
       </div>
       <div className="grid gap-1">
         {items.map((item) => (
-          <Link key={item.href} href={item.href} className="rounded-sm border border-transparent px-3 py-2 text-sm text-ink/76 hover:border-ink/30 hover:bg-mist hover:text-ink">
-            {item.label}
-          </Link>
+          <NavItem key={item.href} href={item.href} label={item.label} />
         ))}
       </div>
     </aside>

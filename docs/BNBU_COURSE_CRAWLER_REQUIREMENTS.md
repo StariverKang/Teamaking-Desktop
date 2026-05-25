@@ -2,6 +2,8 @@
 
 本文档用于指导 BNBU 课程数据采集与处理程序。Crawler 可以作为独立子域名/本地端口运行，但它仍与主 TEAMAKING 系统解耦：crawler 负责采集、保留原始证据、清洗结构化数据，并最终输出 TEAMAKING 可导入的业务 JSON；主系统只通过管理员粘贴并审批 cleaned JSON 入库。
 
+当前产品边界：BNBU 课程配置以每年 admission programme handbook 为准。BNBU class schedule 只是学期时间安排，不作为课程存在、真实开课或 CourseBoard 配置依据；`semester_offerings` 与 `syllabus_teamwork` 不属于当前必要管线。Handbook import 可以保持 `offerings[]` 为空，系统会通过当前 academic term、学生 admission year、major 和 `relativeTermCodes` 激活 CourseBoard。
+
 目标工作流：
 
 ```text

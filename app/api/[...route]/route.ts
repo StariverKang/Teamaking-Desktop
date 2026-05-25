@@ -21,7 +21,6 @@ import {
 } from "@/lib/bnbu-course-import";
 import {
   demoAccounts,
-  demoAdminData,
   demoBoardById,
   demoCourseById,
   demoCourses,
@@ -29,7 +28,6 @@ import {
   demoPeople,
   demoPortfolioItems,
   demoPosts,
-  demoRequests,
   demoUserForAccount,
   isDemoAccessEnabled,
   isDemoUser,
@@ -40,14 +38,12 @@ import {
   createDemoPost,
   createDemoTeamUpInterest,
   demoAdminResource,
-  demoContactContext,
   demoFollowInbox,
   demoInterestsForPost,
   demoPostById,
   demoPostsForBoard,
   demoReceivedTeamUpInterests,
   resetDemoState,
-  sanitizeDemoPost,
   sanitizeDemoUser,
   updateDemoFollowRequest,
   updateDemoInterest
@@ -67,9 +63,9 @@ import {
 import { storeProfileUpload } from "@/lib/upload-storage";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     route?: string[];
-  };
+  }>;
 };
 
 export const runtime = "nodejs";
@@ -113,13 +109,132 @@ const courseInclude = {
   }
 };
 
-function routeOf(context: RouteContext) {
-  return context.params.route ?? [];
+async function routeOf(context: RouteContext) {
+  const params = await context.params;
+  return params.route ?? [];
 }
 
 function emailDomain(email: string) {
   const pieces = email.toLowerCase().split("@");
   return pieces.length === 2 ? pieces[1] : "";
+}
+
+function inferredEntryYearFromEmail(email: string) {
+  const localPart = email.toLowerCase().split("@")[0] ?? "";
+  const yearDigit = localPart[1];
+  if (!yearDigit || !/^\d$/.test(yearDigit)) return null;
+  return 2020 + Number(yearDigit);
+}
+
+function gradeFromEntryYear(entryYear?: number | null, now = new Date()) {
+  if (!entryYear || !Number.isFinite(entryYear)) return null;
+  const academicYear = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  const level = Math.max(1, Math.min(4, academicYear - entryYear + 1));
+  return `Year ${level}`;
+}
+
+function academicLockForUser(user: any) {
+  const inferredEntryYear = inferredEntryYearFromEmail(user.email);
+  const hasAdminOverride = Boolean(user.profile?.academicOverrideAt);
+  const entryYear = hasAdminOverride ? user.profile?.entryYear ?? inferredEntryYear : inferredEntryYear ?? user.profile?.entryYear;
+  const entryTerm = hasAdminOverride ? user.profile?.entryTerm ?? "Fall" : "Fall";
+  const grade = hasAdminOverride ? user.profile?.grade ?? gradeFromEntryYear(entryYear) : gradeFromEntryYear(entryYear) ?? user.profile?.grade ?? null;
+  return {
+    locked: Boolean(inferredEntryYear) && !hasAdminOverride,
+    source: hasAdminOverride ? "admin_override" : inferredEntryYear ? "email_second_digit" : "profile_fallback",
+    inferredEntryYear,
+    entryYear,
+    entryTerm,
+    grade,
+    overrideReason: user.profile?.academicOverrideReason ?? null,
+    overrideAt: user.profile?.academicOverrideAt ?? null
+  };
+}
+
+function profileWithAcademicLock(user: any) {
+  if (!user.profile) return user.profile;
+  const academic = academicLockForUser(user);
+  return {
+    ...user.profile,
+    grade: academic.grade,
+    entryYear: academic.entryYear,
+    entryTerm: academic.entryTerm,
+    academicLock: academic
+  };
+}
+
+function isCourseReviewDeleted(comment: any) {
+  return comment.status === "deleted" || Boolean(comment.deletedAt);
+}
+
+function serializeCourseReviewComment(comment: any, childMap: Map<string | null, any[]>): any {
+  const deleted = isCourseReviewDeleted(comment);
+  return {
+    id: comment.id,
+    courseId: comment.courseId,
+    userId: comment.userId,
+    parentId: comment.parentId,
+    body: deleted ? "评论已删除" : comment.body,
+    status: comment.status,
+    deleted,
+    createdAt: comment.createdAt,
+    updatedAt: comment.updatedAt,
+    user: comment.user ? publicUser(comment.user) : null,
+    replies: (childMap.get(comment.id) ?? []).map((reply) => serializeCourseReviewComment(reply, childMap))
+  };
+}
+
+function contentImageUrls(value: unknown) {
+  return stringArray(value).slice(0, 3);
+}
+
+function serializeContentDocument(document: any) {
+  return {
+    id: document.id,
+    kind: document.kind,
+    parentId: document.parentId,
+    slug: document.slug,
+    title: document.title,
+    summary: document.summary,
+    bodyMarkdown: document.bodyMarkdown,
+    imageUrls: contentImageUrls(document.imageUrls),
+    status: document.status,
+    displayOrder: document.displayOrder,
+    publishedAt: document.publishedAt,
+    createdAt: document.createdAt,
+    updatedAt: document.updatedAt,
+    children: (document.children ?? []).map((child: any) => serializeContentDocument(child))
+  };
+}
+
+function defaultDeveloperContactDocument(appVersionId: string) {
+  const now = new Date();
+  return {
+    id: "default-developer-contact",
+    appVersionId,
+    kind: "developer_contact",
+    parentId: null,
+    slug: "jayden-kang",
+    title: "联系开发者",
+    summary: "TEAMAKING 目前由 Jayden Kang 维护。你可以通过微信或邮箱联系开发者。",
+    bodyMarkdown: [
+      "## Jayden Kang / 康泓正",
+      "",
+      "BNBU 媒体与传播方向学生，关注产品原型、数据处理、内容运营和学生协作工具。TEAMAKING 当前用于把课程配置、Proof-of-Work Profile、Course Board 和轻量组队流程放在同一个校园场景里验证。",
+      "",
+      "- WeChat: Oboretastellar",
+      "- Email: wojiaonzj2005@163.com",
+      "- Skills: product operations, content systems, SQL/SPSS data analysis, Figma, writing, presentation, community operations",
+      "- Experience: sports media operation, AI marketing, Web3 product operation, social media operation, language teaching"
+    ].join("\n"),
+    imageUrls: [],
+    status: "published",
+    displayOrder: 0,
+    publishedAt: now,
+    createdAt: now,
+    updatedAt: now,
+    children: []
+  };
 }
 
 function publicUser(user: any, contactContext?: Parameters<typeof contactSnapshot>[1]) {
@@ -132,7 +247,7 @@ function publicUser(user: any, contactContext?: Parameters<typeof contactSnapsho
     isEmailVerified: user.isEmailVerified,
     onboardingCompleted: user.onboardingCompleted,
     school: user.school,
-    profile: user.profile,
+    profile: profileWithAcademicLock(user),
     contactInfo: user.contactInfo ? contactSnapshot(user.contactInfo, contactContext) : null,
     skills: user.skills ?? []
   };
@@ -238,6 +353,14 @@ async function operationLog(input: {
       metadata: toJson(input.metadata ?? {})
     }
   });
+}
+
+async function safeOperationLog(input: Parameters<typeof operationLog>[0]) {
+  try {
+    await operationLog(input);
+  } catch (error) {
+    console.error("Failed to write operation log", error);
+  }
 }
 
 async function writeAudit(adminUserId: string, action: string, targetType: string, targetId?: string | null, beforeValue?: unknown, afterValue?: unknown) {
@@ -412,32 +535,6 @@ async function enrichPostForViewer(post: any, viewer: any) {
     portfolioEvidenceCount: portfolioIds.length,
     contactInfo: post.user?.contactInfo ? contactSnapshot(post.user.contactInfo, context) : {}
   };
-}
-
-async function schoolDomainForEmail(email: string) {
-  const domain = emailDomain(email);
-  if (!domain) return null;
-  const appVersionId = await getActiveAppVersionId();
-
-  const existing = await prisma.schoolEmailDomain.findFirst({
-    where: { domain, status: "active", school: { appVersionId } },
-    include: { school: true }
-  });
-
-  if (existing) return existing;
-
-  const school = await prisma.school.upsert({
-    where: { appVersionId_shortName: { appVersionId, shortName: "TEAMAKING" } },
-    update: { name: "TEAMAKING", status: "active" },
-    create: { appVersionId, name: "TEAMAKING", shortName: "TEAMAKING", status: "active" }
-  });
-
-  return prisma.schoolEmailDomain.upsert({
-    where: { schoolId_domain: { schoolId: school.id, domain } },
-    update: { schoolId: school.id, status: "active" },
-    create: { schoolId: school.id, domain, status: "active" },
-    include: { school: true }
-  });
 }
 
 async function upsertVerifiedUser(input: {
@@ -1026,16 +1123,39 @@ async function handleDemo(method: string, path: string[], request: NextRequest) 
   throw new ApiError(404, "找不到演示访问接口。");
 }
 
-async function handleOnboarding(method: string, request: NextRequest) {
+async function handleOnboarding(method: string, path: string[], request: NextRequest) {
   const user = await requireUser();
 
   if (isDemoUser(user)) {
     if (method === "GET") {
-      return ok({ user: publicUser(user), ...demoOnboardingOptions() });
+      return ok({ user: publicUser(user), academicLock: academicLockForUser(user), ...demoOnboardingOptions() });
     }
+    if (method === "POST" && path[1] === "tour-dismiss") return ok({ message: "本地视觉演示模式已模拟关闭新手引导。" });
     if (method === "POST") {
       return ok({ profile: user.profile, message: "本地视觉演示模式已模拟保存 onboarding。" });
     }
+  }
+
+  if (method === "POST" && path[1] === "tour-dismiss") {
+    const profile = await prisma.userProfile.upsert({
+      where: { userId: user.id },
+      update: { onboardingTourDismissedAt: new Date() },
+      create: {
+        userId: user.id,
+        displayName: user.email.split("@")[0],
+        onboardingTourDismissedAt: new Date()
+      }
+    });
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "onboarding.tour.dismiss",
+      targetType: "UserProfile",
+      targetId: profile.id,
+      method,
+      path: request.nextUrl.pathname
+    });
+    return ok({ profile, message: "新手引导已关闭。" });
   }
 
   if (method === "GET") {
@@ -1045,17 +1165,18 @@ async function handleOnboarding(method: string, request: NextRequest) {
       prisma.semester.findMany({ where: { schoolId: user.schoolId ?? undefined }, orderBy: [{ year: "desc" }, { term: "asc" }] })
     ]);
 
-    return ok({ user: publicUser(user), faculties, majors, semesters });
+    return ok({ user: publicUser(user), academicLock: academicLockForUser(user), faculties, majors, semesters });
   }
 
   if (method === "POST") {
     const body = await readBody(request);
-    const grade = assertString(body.grade, "grade");
+    const academic = academicLockForUser(user);
+    const grade = academic.grade ?? assertString(body.grade, "grade");
     const facultyId = assertString(body.facultyId, "facultyId");
     const majorId = assertString(body.majorId, "majorId");
     const displayName = optionalString(body.displayName) ?? user.profile?.displayName ?? user.email.split("@")[0];
-    const entryYear = typeof body.entryYear === "number" && Number.isFinite(body.entryYear) ? Math.trunc(body.entryYear) : undefined;
-    const entryTerm = optionalString(body.entryTerm);
+    const entryYear = academic.entryYear ?? (typeof body.entryYear === "number" && Number.isFinite(body.entryYear) ? Math.trunc(body.entryYear) : undefined);
+    const entryTerm = academic.entryTerm ?? optionalString(body.entryTerm) ?? "Fall";
 
     const profile = await prisma.userProfile.upsert({
       where: { userId: user.id },
@@ -1116,6 +1237,10 @@ function portfolioPayload(body: Record<string, unknown>, existing?: any) {
   const fileExtension = optionalString(body.fileExtension) ?? (fileName ? fileExtensionOf(fileName) : existing?.fileExtension);
   const previewKind = optionalString(body.previewKind) ?? (fileName ? previewKindForFile(fileName) : existing?.previewKind ?? "link");
   const isPinned = typeof body.isPinned === "boolean" ? body.isPinned : existing?.isPinned ?? false;
+  const fieldText = (field: string, fallback?: string | null) => {
+    if (Object.prototype.hasOwnProperty.call(body, field)) return typeof body[field] === "string" ? (body[field] as string).trim() : "";
+    return fallback ?? "";
+  };
 
   return {
     title: optionalString(body.title) ?? existing?.title ?? "Untitled evidence",
@@ -1123,7 +1248,7 @@ function portfolioPayload(body: Record<string, unknown>, existing?: any) {
     relatedCourseId: optionalString(body.relatedCourseId) ?? existing?.relatedCourseId,
     semesterText: optionalString(body.semesterText) ?? existing?.semesterText,
     myRole: optionalString(body.myRole) ?? existing?.myRole,
-    contributionDescription: optionalString(body.contributionDescription) ?? existing?.contributionDescription ?? "用户上传的作品或证明材料。",
+    contributionDescription: fieldText("contributionDescription", existing?.contributionDescription),
     isGroupWork: typeof body.isGroupWork === "boolean" ? body.isGroupWork : existing?.isGroupWork ?? false,
     fileName,
     fileMimeType: optionalString(body.fileMimeType) ?? existing?.fileMimeType,
@@ -1137,8 +1262,8 @@ function portfolioPayload(body: Record<string, unknown>, existing?: any) {
     fileUrl: optionalString(body.fileUrl) ?? existing?.fileUrl,
     externalUrl: optionalString(body.externalUrl) ?? existing?.externalUrl,
     previewKind,
-    outcome: optionalString(body.outcome) ?? existing?.outcome,
-    reflection: optionalString(body.reflection) ?? existing?.reflection,
+    outcome: fieldText("outcome", existing?.outcome),
+    reflection: fieldText("reflection", existing?.reflection),
     parsedText: optionalString(body.parsedText) ?? existing?.parsedText,
     metadata: jsonObject(body.metadata, existing?.metadata ?? {}),
     visibility: optionalString(body.visibility) ?? existing?.visibility ?? "same_school",
@@ -1154,8 +1279,8 @@ async function resumeBufferFromUrl(resumeUrl: string) {
 
   if (resumeUrl.startsWith("/uploads/") || resumeUrl.startsWith("uploads/")) {
     const normalized = resumeUrl.startsWith("/") ? resumeUrl : `/${resumeUrl}`;
-    const publicRoot = path.resolve(process.cwd(), "public", "uploads");
-    const absolutePath = path.resolve(process.cwd(), "public", `.${normalized}`);
+    const publicRoot = path.resolve(/*turbopackIgnore: true*/ process.cwd(), "public", "uploads");
+    const absolutePath = path.resolve(/*turbopackIgnore: true*/ process.cwd(), "public", `.${normalized}`);
     if (!absolutePath.startsWith(`${publicRoot}${path.sep}`)) throw new ApiError(403, "简历文件路径不允许重新解析。");
     return readFile(absolutePath);
   }
@@ -1361,6 +1486,7 @@ async function handleProfile(method: string, path: string[], request: NextReques
 
     if (method === "PATCH") {
       const body = await readBody(request);
+      const academic = academicLockForUser(user);
       const profile = await prisma.userProfile.upsert({
         where: { userId: user.id },
         update: {
@@ -1370,9 +1496,9 @@ async function handleProfile(method: string, path: string[], request: NextReques
           backgroundImageUrl: optionalString(body.backgroundImageUrl),
           headline: optionalString(body.headline),
           bio: optionalString(body.bio) ?? "",
-          grade: optionalString(body.grade),
-          entryYear: typeof body.entryYear === "number" && Number.isFinite(body.entryYear) ? Math.trunc(body.entryYear) : null,
-          entryTerm: optionalString(body.entryTerm),
+          grade: academic.grade,
+          entryYear: academic.entryYear ?? null,
+          entryTerm: academic.entryTerm,
           facultyId: optionalString(body.facultyId),
           majorId: optionalString(body.majorId),
           outputTags: stringArray(body.outputTags),
@@ -1389,9 +1515,9 @@ async function handleProfile(method: string, path: string[], request: NextReques
           backgroundImageUrl: optionalString(body.backgroundImageUrl),
           headline: optionalString(body.headline),
           bio: optionalString(body.bio) ?? "",
-          grade: optionalString(body.grade),
-          entryYear: typeof body.entryYear === "number" && Number.isFinite(body.entryYear) ? Math.trunc(body.entryYear) : null,
-          entryTerm: optionalString(body.entryTerm),
+          grade: academic.grade,
+          entryYear: academic.entryYear ?? null,
+          entryTerm: academic.entryTerm,
           facultyId: optionalString(body.facultyId),
           majorId: optionalString(body.majorId),
           outputTags: stringArray(body.outputTags),
@@ -1550,17 +1676,208 @@ async function handleContactInfo(method: string, request: NextRequest) {
   throw new ApiError(405, "这个联系方式接口不支持当前请求方式。");
 }
 
-async function hasMutualFollow(userId: string, otherUserId: string) {
-  const request = await prisma.followRequest.findFirst({
+async function handleFriends(method: string, request: NextRequest) {
+  const user = await requireUser();
+  if (method !== "GET") throw new ApiError(405, "好友接口不支持当前请求方式。");
+
+  const query = normalizeSearch(request.nextUrl.searchParams.get("query") ?? "");
+  if (isDemoUser(user)) {
+    const friends = ["cs", "media", "admin"]
+      .map((account) => sanitizeDemoUser(demoUserForAccount(account), user.id))
+      .filter((friend) => friend.id !== user.id)
+      .map((friend) => publicUser(friend))
+      .filter((friend) => {
+        const haystack = [friend.email, friend.profile?.displayName, friend.profile?.major?.name, friend.profile?.grade].filter(Boolean).join(" ").toLowerCase();
+        return !query || haystack.includes(query);
+      });
+    return ok({ friends, total: friends.length });
+  }
+
+  const accepted = await prisma.followRequest.findMany({
     where: {
       status: "accepted",
-      OR: [
-        { senderId: userId, receiverId: otherUserId },
-        { senderId: otherUserId, receiverId: userId }
-      ]
+      OR: [{ senderId: user.id }, { receiverId: user.id }]
+    },
+    include: {
+      sender: { include: userInclude },
+      receiver: { include: userInclude }
+    },
+    orderBy: { updatedAt: "desc" }
+  });
+  const friends = accepted
+    .map((requestRow) => (requestRow.senderId === user.id ? requestRow.receiver : requestRow.sender))
+    .filter((friend) => friend.schoolId === user.schoolId)
+    .map((friend) => publicUser(friend))
+    .filter((friend) => {
+      const haystack = [friend.email, friend.profile?.displayName, friend.profile?.major?.name, friend.profile?.grade, friend.role].filter(Boolean).join(" ").toLowerCase();
+      return !query || haystack.includes(query);
+    });
+
+  return ok({ friends, total: friends.length });
+}
+
+async function handleNotifications(method: string) {
+  const user = await requireUser();
+  if (method !== "GET") throw new ApiError(405, "通知接口不支持当前请求方式。");
+
+  if (isDemoUser(user)) {
+    const teamUpCount = demoReceivedTeamUpInterests(user.id).filter((item) => item.status === "sent").length;
+    const followRequestCount = demoFollowInbox(user.id).filter((item) => item.status === "pending").length;
+    return ok({
+      summary: {
+        teamUpInterests: teamUpCount,
+        followRequests: followRequestCount,
+        total: teamUpCount + followRequestCount
+      }
+    });
+  }
+
+  const [teamUpInterests, followRequests] = await Promise.all([
+    prisma.teamUpRequest.count({ where: { receiverId: user.id, status: "sent" } }),
+    prisma.followRequest.count({ where: { receiverId: user.id, status: "pending" } })
+  ]);
+
+  return ok({
+    summary: {
+      teamUpInterests,
+      followRequests,
+      total: teamUpInterests + followRequests
     }
   });
-  return Boolean(request);
+}
+
+async function commentsForCourse(courseId: string, page: number, pageSize: number) {
+  const comments = await prisma.courseReviewComment.findMany({
+    where: { courseId },
+    include: { user: { include: userInclude } },
+    orderBy: { createdAt: "asc" }
+  });
+  const childMap = new Map<string | null, any[]>();
+  for (const comment of comments) {
+    const key = comment.parentId ?? null;
+    childMap.set(key, [...(childMap.get(key) ?? []), comment]);
+  }
+  const topLevel = childMap.get(null) ?? [];
+  const total = topLevel.length;
+  const safePageSize = Math.min(50, Math.max(1, pageSize || 10));
+  const safePage = Math.max(1, page || 1);
+  const visible = topLevel.slice((safePage - 1) * safePageSize, safePage * safePageSize);
+  return {
+    comments: visible.map((comment) => serializeCourseReviewComment(comment, childMap)),
+    pagination: {
+      page: safePage,
+      pageSize: safePageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / safePageSize))
+    }
+  };
+}
+
+async function handleCourseCommentReplies(method: string, path: string[], request: NextRequest) {
+  const user = await requireUser();
+  const commentId = path[1];
+  const action = path[2];
+  if (!commentId) throw new ApiError(404, "缺少评论编号。");
+
+  const parent = await prisma.courseReviewComment.findUnique({
+    where: { id: commentId },
+    include: { course: true }
+  });
+  if (!parent) throw new ApiError(404, "找不到这条评论。");
+  if (!isDemoUser(user)) assertSameSchool(user, parent.course.schoolId);
+
+  if (method === "POST" && action === "replies") {
+    const body = await readBody(request);
+    const text = assertString(body.body, "body").trim();
+    if (!text) throw new ApiError(400, "回复内容不能为空。");
+    if (text.length > 2000) throw new ApiError(400, "回复内容不能超过 2000 字。");
+    if (isDemoUser(user)) {
+      return created({
+        comment: {
+          id: `demo-reply-${Date.now()}`,
+          courseId: parent.courseId,
+          parentId: parent.id,
+          userId: user.id,
+          body: text,
+          status: "active",
+          user: publicUser(user),
+          replies: [],
+          createdAt: new Date()
+        }
+      });
+    }
+    const reply = await prisma.courseReviewComment.create({
+      data: {
+        courseId: parent.courseId,
+        parentId: parent.id,
+        userId: user.id,
+        body: text
+      },
+      include: { user: { include: userInclude } }
+    });
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "course_review.reply.create",
+      targetType: "CourseReviewComment",
+      targetId: reply.id,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { courseId: parent.courseId, parentId: parent.id }
+    });
+    return created({ comment: serializeCourseReviewComment(reply, new Map()) });
+  }
+
+  if (method === "DELETE" && !action) {
+    const canDelete = parent.userId === user.id || isAdminRole(user.role);
+    if (!canDelete) throw new ApiError(403, "只有评论者本人或管理员可以删除评论。");
+    if (isDemoUser(user)) return ok({ message: "本地视觉演示模式已模拟删除课程评论。" });
+    const deleted = await prisma.courseReviewComment.update({
+      where: { id: commentId },
+      data: {
+        status: "deleted",
+        deletedAt: new Date(),
+        deletedByUserId: user.id
+      }
+    });
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "course_review.comment.delete",
+      targetType: "CourseReviewComment",
+      targetId: commentId,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { courseId: parent.courseId }
+    });
+    return ok({ comment: deleted, message: "评论已删除，楼层结构已保留。" });
+  }
+
+  throw new ApiError(404, "找不到课程评论接口。");
+}
+
+async function handleContent(method: string, request: NextRequest) {
+  if (method !== "GET") throw new ApiError(405, "内容接口不支持当前请求方式。");
+  const appVersionId = await getActiveAppVersionId();
+  const kind = request.nextUrl.searchParams.get("kind") ?? "help";
+  const allowed = new Set(["help", "developer_log", "developer_contact"]);
+  if (!allowed.has(kind)) throw new ApiError(400, "内容类型无效。");
+
+  const rows = await prisma.contentDocument.findMany({
+    where: { appVersionId, kind, status: "published" },
+    orderBy: [{ displayOrder: "asc" }, { publishedAt: "desc" }, { createdAt: "desc" }]
+  });
+  const documents = rows.length || kind !== "developer_contact" ? rows : [defaultDeveloperContactDocument(appVersionId)];
+  const byParent = new Map<string | null, any[]>();
+  for (const document of documents) {
+    const key = document.parentId ?? null;
+    byParent.set(key, [...(byParent.get(key) ?? []), document]);
+  }
+  const attachChildren = (document: any): any => ({ ...document, children: (byParent.get(document.id) ?? []).map(attachChildren) });
+  return ok({
+    documents: (byParent.get(null) ?? []).map(attachChildren).map(serializeContentDocument),
+    flatDocuments: documents.map((document: any) => serializeContentDocument({ ...document, children: [] }))
+  });
 }
 
 async function handleCourses(method: string, path: string[], request: NextRequest) {
@@ -1710,6 +2027,75 @@ async function handleCourses(method: string, path: string[], request: NextReques
     });
 
     return created({ ticket, message: "已转为管理员工单，后续不再走课程审核流程。" });
+  }
+
+  if (path[1] && path[2] === "comments") {
+    const user = await requireUser();
+    const courseId = path[1];
+
+    if (isDemoUser(user)) {
+      if (method === "GET") {
+        return ok({
+          comments: [],
+          pagination: { page: 1, pageSize: 10, total: 0, totalPages: 1 },
+          message: "本地视觉演示模式暂未保存课程评论。"
+        });
+      }
+      if (method === "POST") {
+        const body = await readBody(request);
+        const text = assertString(body.body, "body").trim();
+        return created({
+          comment: {
+            id: `demo-course-comment-${Date.now()}`,
+            courseId,
+            userId: user.id,
+            parentId: null,
+            body: text,
+            status: "active",
+            user: publicUser(user),
+            replies: [],
+            createdAt: new Date()
+          },
+          message: "本地视觉演示模式已模拟发布课程评价。"
+        });
+      }
+    }
+
+    const course = await prisma.course.findUnique({ where: { id: courseId } });
+    if (!course) throw new ApiError(404, "找不到这门课程。");
+    assertSameSchool(user, course.schoolId);
+
+    if (method === "GET") {
+      const page = Number(request.nextUrl.searchParams.get("page") ?? "1") || 1;
+      const pageSize = Number(request.nextUrl.searchParams.get("pageSize") ?? "10") || 10;
+      return ok(await commentsForCourse(courseId, page, pageSize));
+    }
+
+    if (method === "POST") {
+      const body = await readBody(request);
+      const text = assertString(body.body, "body").trim();
+      if (!text) throw new ApiError(400, "评论内容不能为空。");
+      if (text.length > 2000) throw new ApiError(400, "评论内容不能超过 2000 字。");
+      const comment = await prisma.courseReviewComment.create({
+        data: {
+          courseId,
+          userId: user.id,
+          body: text
+        },
+        include: { user: { include: userInclude } }
+      });
+      await operationLog({
+        actorUserId: user.id,
+        actorRole: user.role,
+        action: "course_review.comment.create",
+        targetType: "CourseReviewComment",
+        targetId: comment.id,
+        method,
+        path: request.nextUrl.pathname,
+        summary: { courseId }
+      });
+      return created({ comment: serializeCourseReviewComment(comment, new Map()), message: "课程评价已发布。" });
+    }
   }
 
   if (method === "GET" && path[1]) {
@@ -2997,12 +3383,12 @@ function courseImportPayloadFromBody(body: Record<string, unknown>) {
   throw new ApiError(400, "payload must be a JSON object.", ERROR_CODES.COURSE_IMPORT_INVALID_JSON);
 }
 
-const writableStorageRoot = process.env.VERCEL ? path.join("/tmp", "teamaking") : path.join(process.cwd(), "storage");
+const writableStorageRoot = process.env.VERCEL ? path.join("/tmp", "teamaking") : path.join(/*turbopackIgnore: true*/ process.cwd(), "storage");
 const importArtifactDir = path.join(writableStorageRoot, "course_import_artifacts");
 const crawlerOutputDir = path.join(writableStorageRoot, "crawler_outputs");
 const crawlerScriptCandidates = [
-  path.join(process.cwd(), "scripts", "bnbu-crawler", "run-handbook-preview.mjs"),
-  path.join(process.cwd(), "local_bnbu_course_pipeline", "run_handbook_preview.mjs")
+  path.join(/*turbopackIgnore: true*/ process.cwd(), "scripts", "bnbu-crawler", "run-handbook-preview.mjs"),
+  path.join(/*turbopackIgnore: true*/ process.cwd(), "local_bnbu_course_pipeline", "run_handbook_preview.mjs")
 ];
 const crawlerJobs = new Map<string, any>();
 const crawlerStaleMs = 30 * 60 * 1000;
@@ -3023,7 +3409,7 @@ async function writeImportArtifact(payload: Record<string, unknown>, name: strin
   await mkdir(importArtifactDir, { recursive: true });
   const fileName = `${timestampFilePrefix()}_${safeFilePart(name)}.teamaking.json`;
   const absolutePath = path.join(importArtifactDir, fileName);
-  const storageKey = path.relative(process.cwd(), absolutePath);
+  const storageKey = path.relative(/*turbopackIgnore: true*/ process.cwd(), absolutePath);
   const content = `${JSON.stringify(payload, null, 2)}\n`;
   await writeFile(absolutePath, content, "utf8");
   return { fileName, storageKey, size: Buffer.byteLength(content, "utf8") };
@@ -3040,15 +3426,15 @@ function jsonDownloadResponse(payload: unknown, filename: string) {
 
 async function readStoredJson(storageKey?: string | null) {
   if (!storageKey) throw new ApiError(404, "找不到可下载文件。");
-  const absolutePath = path.resolve(process.cwd(), storageKey);
-  const allowedRoots = [importArtifactDir, crawlerOutputDir, path.join(process.cwd(), "course_imports", "bnbu")].map((item) => path.resolve(item));
+  const absolutePath = path.resolve(/*turbopackIgnore: true*/ process.cwd(), storageKey);
+  const allowedRoots = [importArtifactDir, crawlerOutputDir, path.join(/*turbopackIgnore: true*/ process.cwd(), "course_imports", "bnbu")].map((item) => path.resolve(item));
   const allowed = allowedRoots.some((root) => absolutePath === root || absolutePath.startsWith(`${root}${path.sep}`));
   if (!allowed || !absolutePath.endsWith(".json")) throw new ApiError(403, "文件路径不允许下载。");
   return readFile(absolutePath, "utf8");
 }
 
 async function listCrawlerOutputs() {
-  const dirs = [crawlerOutputDir, path.join(process.cwd(), "course_imports", "bnbu")];
+  const dirs = [crawlerOutputDir, path.join(/*turbopackIgnore: true*/ process.cwd(), "course_imports", "bnbu")];
   const files: any[] = [];
   for (const dir of dirs) {
     await mkdir(dir, { recursive: true });
@@ -3057,7 +3443,7 @@ async function listCrawlerOutputs() {
       const absolutePath = path.join(dir, name);
       const info = await stat(absolutePath).catch(() => null);
       if (!info?.isFile()) continue;
-      const storageKey = path.relative(process.cwd(), absolutePath);
+      const storageKey = path.relative(/*turbopackIgnore: true*/ process.cwd(), absolutePath);
       files.push({
         name,
         storageKey,
@@ -3094,11 +3480,7 @@ function parseCrawlerInstruction(value: unknown) {
     limit: /全部|所有|all/i.test(instruction) ? "all" : limitMatch?.[1] ?? "",
     academicYear,
     term,
-    target: lower.includes("syllabus") || lower.includes("teamwork") || instruction.includes("组队")
-      ? "syllabus_teamwork"
-      : lower.includes("offering") || lower.includes("course board") || instruction.includes("开课")
-        ? "semester_offerings"
-        : "programme_handbook"
+    target: "programme_handbook"
   };
 }
 
@@ -3324,41 +3706,204 @@ async function createCourseImportBatchFromPayload(input: {
   return { batch, dataset, validation, preview, summary };
 }
 
-async function approveCourseImportBatch(batchId: string, admin: any) {
-  const batch = await prisma.courseImportBatch.findUnique({ where: { id: batchId } });
-  if (!batch) throw new ApiError(404, "找不到这个课程配置操作。");
-  if (batch.status === "approved") throw new ApiError(400, "这个课程配置操作已经批准过。");
-  const approvalPayload = batch.datasetId ? await payloadFromDataset(batch.datasetId) : isPlainRecord(batch.payload) ? batch.payload : null;
-  if (!approvalPayload) throw new ApiError(400, "课程配置操作的 JSON 无法解析。");
+type CourseImportApproveStageName = "load_dataset" | "apply_import" | "build_summary" | "mark_approved" | "checkpoint";
 
-  const before = await prisma.courseImportBatch.findUnique({ where: { id: batchId } });
-  const result = await applyBnbuCourseImport(approvalPayload, batch.id);
-  const approvalPreview = await buildCourseImportPreview(approvalPayload);
-  const approvalSummary = buildCourseImportBatchSummary(approvalPayload, approvalPreview);
-  const approvalCohortYears = importCohortYearsFromPayload(approvalPayload, approvalPreview);
-  const updated = await prisma.courseImportBatch.update({
-    where: { id: batchId },
-    data: {
-      schoolId: result.school.id,
-      status: "approved",
-      validationSummary: result.validationSummary,
-      summary: toJson(approvalSummary),
-      cohortYears: toJson(approvalCohortYears),
-      payloadHash: batch.payloadHash ?? payloadHash(approvalPayload),
-      sourceLabel: batch.sourceLabel ?? approvalSummary.sourceLabel,
-      approvedByUserId: admin.id,
-      approvedAt: new Date()
+type CourseImportApproveStage = {
+  phase: CourseImportApproveStageName;
+  status: "running" | "success" | "failed" | "skipped";
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  details?: unknown;
+  error?: unknown;
+};
+
+function originalErrorDiagnostic(error: unknown) {
+  return {
+    name: error instanceof Error ? error.name : typeof error,
+    message: error instanceof Error ? error.message : String(error),
+    code: typeof (error as any)?.code === "string" ? (error as any).code : undefined,
+    meta: (error as any)?.meta
+  };
+}
+
+function courseImportApproveFailureNote(phase: string, error: unknown) {
+  const diagnostic = originalErrorDiagnostic(error);
+  return `Approve failed at ${phase} on ${new Date().toISOString()}: ${diagnostic.code ? `${diagnostic.code} ` : ""}${diagnostic.message}`;
+}
+
+async function runCourseImportApproveStage<T>(input: {
+  phase: CourseImportApproveStageName;
+  stages: CourseImportApproveStage[];
+  batchId: string;
+  admin: any;
+  appVersionId?: string;
+  details?: unknown;
+  fn: () => Promise<T>;
+}) {
+  const startedAt = new Date();
+  const startMs = Date.now();
+  const stage: CourseImportApproveStage = {
+    phase: input.phase,
+    status: "running",
+    startedAt: startedAt.toISOString(),
+    details: input.details
+  };
+  input.stages.push(stage);
+  try {
+    const result = await input.fn();
+    stage.status = "success";
+    stage.finishedAt = new Date().toISOString();
+    stage.durationMs = Date.now() - startMs;
+    await safeOperationLog({
+      appVersionId: input.appVersionId,
+      actorUserId: input.admin.id,
+      actorRole: input.admin.role,
+      action: "admin.course_imports.approve.stage",
+      targetType: "CourseImportBatch",
+      targetId: input.batchId,
+      status: "success",
+      summary: { phase: input.phase, durationMs: stage.durationMs },
+      metadata: { stage }
+    });
+    return result;
+  } catch (error) {
+    stage.status = "failed";
+    stage.finishedAt = new Date().toISOString();
+    stage.durationMs = Date.now() - startMs;
+    stage.error = originalErrorDiagnostic(error);
+    await safeOperationLog({
+      appVersionId: input.appVersionId,
+      actorUserId: input.admin.id,
+      actorRole: input.admin.role,
+      action: "admin.course_imports.approve.stage",
+      targetType: "CourseImportBatch",
+      targetId: input.batchId,
+      status: "failed",
+      summary: { phase: input.phase, durationMs: stage.durationMs },
+      metadata: { stage, originalError: stage.error }
+    });
+    throw error;
+  }
+}
+
+async function approveCourseImportBatch(batchId: string, admin: any) {
+  const stages: CourseImportApproveStage[] = [];
+  let loadedBatch: any = null;
+
+  try {
+    const { batch, approvalPayload } = await runCourseImportApproveStage({
+      phase: "load_dataset",
+      stages,
+      batchId,
+      admin,
+      fn: async () => {
+        const batch = await prisma.courseImportBatch.findUnique({ where: { id: batchId } });
+        loadedBatch = batch;
+        if (!batch) throw new ApiError(404, "找不到这个课程配置操作。");
+        if (batch.status === "approved") throw new ApiError(400, "这个课程配置操作已经批准过。");
+        const approvalPayload = batch.datasetId ? await payloadFromDataset(batch.datasetId) : isPlainRecord(batch.payload) ? batch.payload : null;
+        if (!approvalPayload) throw new ApiError(400, "课程配置操作的 JSON 无法解析。");
+        return { batch, approvalPayload };
+      }
+    });
+    loadedBatch = batch;
+
+    const before = await prisma.courseImportBatch.findUnique({ where: { id: batchId } });
+    const result = await runCourseImportApproveStage({
+      phase: "apply_import",
+      stages,
+      batchId,
+      admin,
+      appVersionId: batch.appVersionId,
+      details: { datasetId: batch.datasetId, cohortYears: numberValues(batch.cohortYears) },
+      fn: () => applyBnbuCourseImport(approvalPayload, batch.id)
+    });
+    const { approvalSummary, approvalCohortYears } = await runCourseImportApproveStage({
+      phase: "build_summary",
+      stages,
+      batchId,
+      admin,
+      appVersionId: batch.appVersionId,
+      fn: async () => {
+        const existingSummary = isPlainRecord(batch.summary) ? batch.summary : {};
+        const existingPreview = isPlainRecord(batch.validationSummary) && isPlainRecord(batch.validationSummary.preview)
+          ? batch.validationSummary.preview
+          : undefined;
+        return {
+          approvalSummary: Object.keys(existingSummary).length
+            ? existingSummary
+            : buildCourseImportBatchSummary(approvalPayload, { validation: validateBnbuCourseImportPayload(approvalPayload), counts: {} }),
+          approvalCohortYears: numberValues(batch.cohortYears).length
+            ? numberValues(batch.cohortYears)
+            : importCohortYearsFromPayload(approvalPayload, existingPreview)
+        };
+      }
+    });
+    const updated = await runCourseImportApproveStage({
+      phase: "mark_approved",
+      stages,
+      batchId,
+      admin,
+      appVersionId: batch.appVersionId,
+      fn: () => prisma.courseImportBatch.update({
+        where: { id: batchId },
+        data: {
+          schoolId: result.school.id,
+          status: "approved",
+          validationSummary: result.validationSummary,
+          summary: toJson(approvalSummary),
+          cohortYears: toJson(approvalCohortYears),
+          payloadHash: batch.payloadHash ?? payloadHash(approvalPayload),
+          sourceLabel: batch.sourceLabel ?? textValue(approvalSummary.sourceLabel),
+          adminNote: typeof batch.adminNote === "string" && batch.adminNote.startsWith("Approve failed at ") ? null : batch.adminNote,
+          approvedByUserId: admin.id,
+          approvedAt: new Date()
+        }
+      })
+    });
+    const checkpoint = await runCourseImportApproveStage({
+      phase: "checkpoint",
+      stages,
+      batchId,
+      admin,
+      appVersionId: batch.appVersionId,
+      details: { mode: "manual", status: "skipped_manual_checkpoint" },
+      fn: async () => ({ mode: "manual", status: "skipped_manual_checkpoint" })
+    });
+    await writeAudit(admin.id, "admin.course_imports.approve", "CourseImportBatch", batchId, before, { updated, result, checkpoint, stages });
+    return { importBatch: updated, result, checkpoint, stages };
+  } catch (error) {
+    const failedStage = [...stages].reverse().find((stage) => stage.status === "failed");
+    const phase = failedStage?.phase ?? "unknown";
+    const metadata = {
+      batchId,
+      phase,
+      stages,
+      originalError: originalErrorDiagnostic(error)
+    };
+    if (loadedBatch) {
+      await prisma.courseImportBatch.update({
+        where: { id: batchId },
+        data: { adminNote: courseImportApproveFailureNote(phase, error) }
+      }).catch((updateError) => console.error("Failed to write course import approve failure note", updateError));
     }
-  });
-  await createVersionCheckpoint({
-    appVersionId: batch.appVersionId,
-    label: `After import: ${batch.name ?? batch.id}`,
-    kind: "course_import",
-    reason: "Course import approved",
-    triggeredByUserId: admin.id
-  });
-  await writeAudit(admin.id, "admin.course_imports.approve", "CourseImportBatch", batchId, before, { updated, result });
-  return { importBatch: updated, result };
+    await safeOperationLog({
+      appVersionId: loadedBatch?.appVersionId,
+      actorUserId: admin.id,
+      actorRole: admin.role,
+      action: "admin.course_imports.approve",
+      targetType: "CourseImportBatch",
+      targetId: batchId,
+      status: "failed",
+      summary: { phase },
+      metadata
+    });
+    if (error instanceof ApiError && error.status < 500) {
+      throw new ApiError(error.status, error.message, error.errorCode, metadata);
+    }
+    throw new ApiError(500, `课程配置批准失败：${phase}。请在 Error Events 中查看 request id。`, ERROR_CODES.INTERNAL_SERVER_ERROR, metadata);
+  }
 }
 
 async function importCrawlerOutputsForJob(job: any, outputs: any[], admin: any) {
@@ -3425,7 +3970,7 @@ async function crawlerJobBundle(job: any) {
 async function startCrawlerJob(body: Record<string, unknown>, admin: any) {
   const input = normalizeCrawlerJobInput(body);
   if (input.target !== "programme_handbook") {
-    throw new ApiError(400, "当前 crawler runner 已支持 programme_handbook。semester offerings / syllabus teamwork 已在 UI 预留，等官方来源确认后再接解析器。");
+    throw new ApiError(400, "当前 BNBU 课程配置只以每年 admission programme handbook 为准；class schedule 不是课程存在依据，semester offerings / syllabus teamwork 不作为当前产品目标。");
   }
   if (!input.cohorts.length) throw new ApiError(400, "至少填写一个 admission year，例如 2025 或 2025,2024。");
   await mkdir(crawlerOutputDir, { recursive: true });
@@ -3479,7 +4024,7 @@ async function startCrawlerJob(body: Record<string, unknown>, admin: any) {
     imports: []
   };
   crawlerJobs.set(createdJob.id, job);
-  const child = spawn(process.execPath, args, { cwd: process.cwd(), env: process.env });
+  const child = spawn(process.execPath, args, { cwd: /*turbopackIgnore: true*/ process.cwd(), env: process.env });
   child.stdout.on("data", (chunk) => {
     job.logs.push(chunk.toString());
     void persistCrawlerJob(job);
@@ -5195,18 +5740,38 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
       }
     }
 
-    const incomingRuleIds = records(payload.curriculumRules).map((rule) => textValue(rule.id)).filter(Boolean);
-    if (incomingRuleIds.length) {
-      await tx.courseCurriculumRule.updateMany({
-        where: { semesterId: semester.id, externalId: { notIn: incomingRuleIds } },
-        data: { status: "inactive" }
+    const incomingRules = records(payload.curriculumRules);
+    const incomingRuleIds = incomingRules.map((rule) => textValue(rule.id)).filter(Boolean);
+    const incomingRuleIdSet = new Set(incomingRuleIds);
+    const incomingCohortYears = uniqueSortedNumbers(incomingRules.flatMap(cohortYearsForRule));
+    let deactivatedRuleCount = 0;
+    if (incomingRuleIds.length && incomingCohortYears.length) {
+      const existingRulesForSemester = await tx.courseCurriculumRule.findMany({
+        where: { semesterId: semester.id, status: "active" },
+        select: { id: true, externalId: true, audience: true }
       });
+      const ruleIdsToDeactivate = existingRulesForSemester
+        .filter((rule: { externalId: string; audience: unknown }) => {
+          if (incomingRuleIdSet.has(rule.externalId)) return false;
+          const existingCohortYears = cohortYearsForRule({ audience: isPlainRecord(rule.audience) ? rule.audience : {} });
+          return hasOverlappingNumber(existingCohortYears, incomingCohortYears);
+        })
+        .map((rule: { id: string }) => rule.id);
+      deactivatedRuleCount = ruleIdsToDeactivate.length;
+      if (ruleIdsToDeactivate.length) {
+        await tx.courseCurriculumRule.updateMany({
+          where: { id: { in: ruleIdsToDeactivate } },
+          data: { status: "inactive" }
+        });
+      }
     }
 
     const autoJoinResults = [];
     const activatedBoards = [];
+    let autoJoinSkippedOutsideTerm = 0;
+    let rulesInAcademicTermContext = 0;
     const handbookOnlyImport = records(payload.offerings).length === 0;
-    for (const ruleInput of records(payload.curriculumRules)) {
+    for (const ruleInput of incomingRules) {
       const course = courseByCode.get(textValue(ruleInput.courseCode));
       if (!course) continue;
       const classification = textValue(ruleInput.classification);
@@ -5214,6 +5779,8 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
       const audience = isPlainRecord(ruleInput.audience) ? ruleInput.audience : {};
       const relativeTermCodes = relativeTermCodesForRule(ruleInput);
       const externalId = textValue(ruleInput.id);
+      const matchesAcademicTerm = ruleMatchesAcademicTermContext(ruleInput, semester);
+      if (matchesAcademicTerm) rulesInAcademicTermContext += 1;
       const rule = await tx.courseCurriculumRule.upsert({
         where: { semesterId_externalId: { semesterId: semester.id, externalId } },
         update: {
@@ -5248,7 +5815,7 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
         }
       });
 
-      if (handbookOnlyImport && ruleMatchesAcademicTermContext(ruleInput, semester)) {
+      if (handbookOnlyImport && matchesAcademicTerm) {
         const offering = await findOrCreateAcademicTermOffering(tx, {
           courseId: course.id,
           semesterId: semester.id,
@@ -5259,6 +5826,10 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
       }
 
       if (studentAction === "default_join") {
+        if (!matchesAcademicTerm) {
+          autoJoinSkippedOutsideTerm += 1;
+          continue;
+        }
         const result = await applyDefaultJoinRule(tx, {
           ruleId: rule.id,
           schoolId: school.id,
@@ -5279,9 +5850,12 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
       semester,
       validationSummary: summary,
       activatedBoards,
-      autoJoinResults
+      autoJoinResults,
+      deactivatedRuleCount,
+      rulesInAcademicTermContext,
+      autoJoinSkippedOutsideTerm
     };
-  });
+  }, { timeout: 60000, maxWait: 10000 });
 }
 
 function activeAnnouncementWhere(appVersionId: string, now = new Date()) {
@@ -5658,6 +6232,83 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
     }
   }
 
+  if (resource === "content") {
+    const appVersionId = await getActiveAppVersionId();
+    if (method === "GET" && !id) {
+      const kind = request.nextUrl.searchParams.get("kind") ?? undefined;
+      const documents = await prisma.contentDocument.findMany({
+        where: {
+          appVersionId,
+          ...(kind ? { kind } : {})
+        },
+        orderBy: [{ kind: "asc" }, { displayOrder: "asc" }, { updatedAt: "desc" }]
+      });
+      return ok({ documents: documents.map((document) => serializeContentDocument({ ...document, children: [] })) });
+    }
+
+    if (method === "POST" && !id) {
+      const body = await readBody(request);
+      const kind = optionalString(body.kind) ?? "help";
+      if (!["help", "developer_log", "developer_contact"].includes(kind)) throw new ApiError(400, "内容类型无效。");
+      const imageUrls = contentImageUrls(body.imageUrls);
+      if (kind === "developer_log" && imageUrls.length > 3) throw new ApiError(400, "开发者日志最多支持 3 张图片。");
+      const status = optionalString(body.status) ?? "draft";
+      const document = await prisma.contentDocument.create({
+        data: {
+          appVersionId,
+          kind,
+          parentId: optionalString(body.parentId),
+          slug: optionalString(body.slug) ?? `${kind}-${Date.now()}`,
+          title: assertString(body.title, "title"),
+          summary: optionalString(body.summary),
+          bodyMarkdown: optionalString(body.bodyMarkdown) ?? "",
+          imageUrls,
+          status,
+          displayOrder: Number(body.displayOrder ?? 0) || 0,
+          publishedAt: status === "published" ? new Date() : null,
+          updatedByUserId: admin.id
+        }
+      });
+      await writeAudit(admin.id, "admin.content.create", "ContentDocument", document.id, null, document);
+      return created({ document: serializeContentDocument({ ...document, children: [] }), message: status === "published" ? "文档已发布。" : "文档草稿已创建。" });
+    }
+
+    if (method === "PATCH" && id) {
+      const body = await readBody(request);
+      const before = await prisma.contentDocument.findUnique({ where: { id } });
+      if (!before || before.appVersionId !== appVersionId) throw new ApiError(404, "找不到这篇文档。");
+      const status = optionalString(body.status) ?? before.status;
+      const nextImageUrls = Object.prototype.hasOwnProperty.call(body, "imageUrls") ? contentImageUrls(body.imageUrls) : contentImageUrls(before.imageUrls);
+      if ((optionalString(body.kind) ?? before.kind) === "developer_log" && nextImageUrls.length > 3) throw new ApiError(400, "开发者日志最多支持 3 张图片。");
+      const document = await prisma.contentDocument.update({
+        where: { id },
+        data: {
+          kind: optionalString(body.kind) ?? before.kind,
+          parentId: Object.prototype.hasOwnProperty.call(body, "parentId") ? optionalString(body.parentId) : before.parentId,
+          slug: optionalString(body.slug) ?? before.slug,
+          title: optionalString(body.title) ?? before.title,
+          summary: Object.prototype.hasOwnProperty.call(body, "summary") ? optionalString(body.summary) : before.summary,
+          bodyMarkdown: Object.prototype.hasOwnProperty.call(body, "bodyMarkdown") ? optionalString(body.bodyMarkdown) ?? "" : before.bodyMarkdown,
+          imageUrls: nextImageUrls,
+          status,
+          displayOrder: Object.prototype.hasOwnProperty.call(body, "displayOrder") ? Number(body.displayOrder ?? 0) || 0 : before.displayOrder,
+          publishedAt: status === "published" ? before.publishedAt ?? new Date() : before.publishedAt,
+          updatedByUserId: admin.id
+        }
+      });
+      await writeAudit(admin.id, "admin.content.patch", "ContentDocument", id, before, document);
+      return ok({ document: serializeContentDocument({ ...document, children: [] }), message: "文档已更新。" });
+    }
+
+    if (method === "DELETE" && id) {
+      const before = await prisma.contentDocument.findUnique({ where: { id } });
+      if (!before || before.appVersionId !== appVersionId) throw new ApiError(404, "找不到这篇文档。");
+      await prisma.contentDocument.delete({ where: { id } });
+      await writeAudit(admin.id, "admin.content.delete", "ContentDocument", id, before, null);
+      return ok({ message: "文档已删除。" });
+    }
+  }
+
   if (resource === "admin-users") {
     if (admin.role !== "super_admin") {
       throw new ApiError(403, "只有 super_admin 可以维护管理员账号。", ERROR_CODES.AUTH_ADMIN_LOGIN_REQUIRED);
@@ -5752,20 +6403,52 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
 
   if (method === "PATCH" && resource === "users" && id) {
     const body = await readBody(request);
-    const before = await prisma.user.findUnique({ where: { id } });
+    const before = await prisma.user.findUnique({ where: { id }, include: { profile: true } });
+    if (!before) throw new ApiError(404, "找不到这个用户。");
     const requestedStatus = optionalString(body.status);
     const suspendedUntilText = optionalString(body.suspendedUntil);
     const user = await prisma.user.update({
       where: { id },
       data: {
-        role: optionalString(body.role) ?? before?.role,
-        status: requestedStatus ?? before?.status,
-        suspendedUntil: suspendedUntilText ? new Date(suspendedUntilText) : requestedStatus === "active" ? null : before?.suspendedUntil,
-        adminNote: optionalString(body.adminNote) ?? before?.adminNote,
-        onboardingCompleted: typeof body.onboardingCompleted === "boolean" ? body.onboardingCompleted : before?.onboardingCompleted
+        role: optionalString(body.role) ?? before.role,
+        status: requestedStatus ?? before.status,
+        suspendedUntil: suspendedUntilText ? new Date(suspendedUntilText) : requestedStatus === "active" ? null : before.suspendedUntil,
+        adminNote: optionalString(body.adminNote) ?? before.adminNote,
+        onboardingCompleted: typeof body.onboardingCompleted === "boolean" ? body.onboardingCompleted : before.onboardingCompleted
       },
       include: adminUserInclude
     });
+    if (
+      Object.prototype.hasOwnProperty.call(body, "entryYear") ||
+      Object.prototype.hasOwnProperty.call(body, "entryTerm") ||
+      Object.prototype.hasOwnProperty.call(body, "grade") ||
+      Object.prototype.hasOwnProperty.call(body, "academicOverrideReason")
+    ) {
+      const entryYear = Number(body.entryYear ?? before.profile?.entryYear);
+      const entryTerm = optionalString(body.entryTerm) ?? before.profile?.entryTerm ?? "Fall";
+      const grade = optionalString(body.grade) ?? gradeFromEntryYear(Number.isFinite(entryYear) ? entryYear : before.profile?.entryYear) ?? before.profile?.grade ?? null;
+      await prisma.userProfile.upsert({
+        where: { userId: id },
+        update: {
+          entryYear: Number.isFinite(entryYear) ? entryYear : before.profile?.entryYear,
+          entryTerm,
+          grade,
+          academicOverrideReason: optionalString(body.academicOverrideReason) ?? "管理员手动覆盖邮箱推断年级",
+          academicOverrideByUserId: admin.id,
+          academicOverrideAt: new Date()
+        },
+        create: {
+          userId: id,
+          displayName: user.profile?.displayName ?? user.email.split("@")[0],
+          entryYear: Number.isFinite(entryYear) ? entryYear : null,
+          entryTerm,
+          grade,
+          academicOverrideReason: optionalString(body.academicOverrideReason) ?? "管理员手动覆盖邮箱推断年级",
+          academicOverrideByUserId: admin.id,
+          academicOverrideAt: new Date()
+        }
+      });
+    }
     await writeAudit(admin.id, "admin.users.patch", "User", id, before, user);
     return ok({ user });
   }
@@ -6444,19 +7127,7 @@ async function handleCrawler(method: string, path: string[], request: NextReques
           value: "programme_handbook",
           label: "Programme handbook",
           supported: true,
-          description: "抓取每个 admission year 的四年课程安排，输出 Course + admission-year Curriculum Rules。"
-        },
-        {
-          value: "semester_offerings",
-          label: "Semester offerings",
-          supported: false,
-          description: "预留入口；需要 BNBU 官方真实开课表来源。"
-        },
-        {
-          value: "syllabus_teamwork",
-          label: "Syllabus teamwork evidence",
-          supported: false,
-          description: "预留入口；需要 syllabus PDF/HTML 来源。"
+          description: "唯一启用来源；抓取每个 admission year 的四年课程安排，输出 Course + admission-year Curriculum Rules。"
         }
       ],
       outputs: await listCrawlerOutputs()
@@ -6507,17 +7178,21 @@ async function handleCrawler(method: string, path: string[], request: NextReques
 }
 
 async function dispatch(method: string, context: RouteContext, request: NextRequest) {
-  const path = routeOf(context);
+  const path = await routeOf(context);
   const root = path[0];
 
   await ensureSystemIsActive(root);
 
   if (root === "auth") return handleAuth(method, path, request);
   if (root === "demo") return handleDemo(method, path, request);
-  if (root === "onboarding") return handleOnboarding(method, request);
+  if (root === "onboarding") return handleOnboarding(method, path, request);
   if (root === "profile") return handleProfile(method, path, request);
   if (root === "contact-info" && path[1] === "me") return handleContactInfo(method, request);
+  if (root === "friends") return handleFriends(method, request);
+  if (root === "notifications" && path[1] === "summary") return handleNotifications(method);
+  if (root === "content") return handleContent(method, request);
   if (root === "courses") return handleCourses(method, path, request);
+  if (root === "course-comments") return handleCourseCommentReplies(method, path, request);
   if (root === "boards") return handleBoards(method, path, request);
   if (root === "teamaking-posts") return handleTeamakingPosts(method, path, request);
   if (root === "team-up-interests") return handleTeamUpInterests(method, path);

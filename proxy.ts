@@ -31,7 +31,7 @@ function isCrawlerPath(pathname: string) {
   return pathname === "/crawler" || pathname.startsWith("/crawler/") || pathname.startsWith("/api/crawler");
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const url = request.nextUrl;
   const hostname = request.headers.get("host")?.split(":")[0]?.toLowerCase() ?? "";
   const allowedAdminHost = adminHosts().includes(hostname);

@@ -1,5 +1,6 @@
 import { TeamakingPostPage } from "@/components/client-pages";
 
-export default function Page({ params }: { params: { postId: string } }) {
-  return <TeamakingPostPage postId={params.postId} />;
+export default async function Page({ params }: { params: Promise<{ postId: string }> }) {
+  const { postId } = await params;
+  return <TeamakingPostPage postId={postId} />;
 }

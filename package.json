@@ -4,11 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "postinstall": "prisma generate",
-    "lint": "next lint",
-    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "typecheck": "next typegen && tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:validate": "prisma validate",
@@ -17,29 +17,34 @@
     "admin:create": "tsx scripts/admin-users.ts create",
     "admin:reset-password": "tsx scripts/admin-users.ts reset",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "env -u FORCE_COLOR -u NO_COLOR playwright test"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1053.0",
     "@prisma/client": "5.22.0",
     "clsx": "2.1.1",
+    "fflate": "^0.8.2",
     "lucide-react": "0.468.0",
     "mammoth": "^1.12.0",
-    "next": "14.2.18",
+    "next": "^16.2.6",
     "pdf-parse": "^2.4.5",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "tencentcloud-sdk-nodejs-ses": "^4.1.222"
+    "react-markdown": "^10.1.0",
+    "read-excel-file": "^9.0.10",
+    "remark-gfm": "^4.0.1",
+    "tencentcloud-sdk-nodejs-ses": "^4.1.222",
+    "word-extractor": "^1.0.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
-    "@types/node": "22.10.2",
+    "@types/node": "^22.19.19",
     "@types/react": "18.3.18",
     "@types/react-dom": "18.3.5",
     "autoprefixer": "10.4.20",
-    "eslint": "8.57.1",
-    "eslint-config-next": "14.2.18",
-    "postcss": "8.4.49",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.6",
+    "postcss": "^8.5.15",
     "prisma": "5.22.0",
     "tailwindcss": "3.4.17",
     "tsx": "4.19.2",
@@ -48,5 +53,9 @@
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
+  },
+  "overrides": {
+    "uuid": "^11.1.1",
+    "postcss": "^8.5.15"
   }
 }

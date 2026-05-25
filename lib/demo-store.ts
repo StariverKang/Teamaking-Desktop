@@ -1,5 +1,5 @@
 import { contactSnapshot, ContactViewerContext } from "@/lib/contact";
-import { demoAccounts, DemoAccountKey, demoAdminData, demoBoardById, demoPeople, demoPosts, demoRequests, demoUserForAccount, normalizeDemoAccount } from "@/lib/demo-data";
+import { demoAccounts, DemoAccountKey, demoAdminData, demoBoardById, demoPosts, demoRequests, demoUserForAccount, normalizeDemoAccount } from "@/lib/demo-data";
 
 type DemoState = {
   posts: any[];

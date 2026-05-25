@@ -1,5 +1,6 @@
 import { CourseDetailPage } from "@/components/client-pages";
 
-export default function Page({ params }: { params: { courseId: string } }) {
-  return <CourseDetailPage courseId={params.courseId} />;
+export default async function Page({ params }: { params: Promise<{ courseId: string }> }) {
+  const { courseId } = await params;
+  return <CourseDetailPage courseId={courseId} />;
 }

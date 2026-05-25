@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Navbar } from "@/components/app-shell";
 import { AnnouncementCenter } from "@/components/announcement-center";
+import { SupportWidget } from "@/components/client-pages";
 import { LanguageRuntime } from "@/components/language-runtime";
 
 export const metadata: Metadata = {
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Navbar />
           <AnnouncementCenter />
           {children}
+          <SupportWidget />
         </LanguageRuntime>
       </body>
     </html>

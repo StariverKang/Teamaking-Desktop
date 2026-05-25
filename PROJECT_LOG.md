@@ -581,3 +581,71 @@
   - 对同 admission year 的旧 pending 批次，`approve_import` 会标记为 rejected，避免重复 pending 阻挡现场导入。
 - 验证：
   - 待运行 `npm run typecheck` 和 `npm run build` 后部署。
+
+### 社交、课程评价、资料上传与内容中心改造
+
+- 背景：
+  - 用户要求 mutual follow 后形成好友列表、真实课程可评论、Profile 上传流程可编辑和站内预览、onboarding 改成遮罩式引导、邮箱推断年级锁定、帮助中心/开发者日志/联系开发者可由管理员维护。
+  - 用户要求工单入口改为右下角折叠浮窗，TeamUp/好友申请在菜单显示提醒数字，管理员表格隐藏内部字段并保留搜索。
+- 改动：
+  - 新增 `CourseReviewComment` 与 `ContentDocument` 模型和 migration `20260526030000_social_content_reviews`；`UserProfile` 增加 onboarding tour dismissal 与管理员学业信息覆盖字段。
+  - 新增 `/api/friends`、课程评论/回复/删除接口、`/api/notifications/summary`、`/api/content` 和 `/api/admin/content` CRUD。
+  - `/onboarding` 改为遮罩式 step tour；学校邮箱 local-part 第二位数字会推断 `entryYear = 2020 + x`、`entryTerm = Fall` 和当前 `grade`，普通用户在 Profile 端只读，管理员可在 User Management 覆盖。
+  - 新增 `/friends`、`/help`、`/developer-log`、`/contact-developer`、`/admin/content` 页面；联系开发者默认文档基于 260506 简历摘要，并固定展示 WeChat `Oboretastellar` 和邮箱 `wojiaonzj2005@163.com`。
+  - 课程详情页新增课程评价区；Course Board 标题可进入课程详情；评论支持顶层分页、多级回复和软删除。
+  - Profile 上传证明的贡献说明、结果/复盘前端可空；已上传 PortfolioItem 可视觉化编辑；技能认证和职业认证合并展示；简历作为独立模块靠后；图片/PDF/文本/Markdown/Office 文件通过浮窗站内预览。
+  - 全站新增右下角工单浮窗；Navbar/Sidebar 对 TeamUp Interest 和 Follow Request pending 数显示红点数字。
+  - 管理员通用表格隐藏 `appVersionId`，`id` 放靠后；User Management 首列提供“查看 Profile”，并保留字段搜索。
+- 验证：
+  - `npm run prisma:validate` 通过。
+  - `npm run prisma:generate` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过。
+  - `npm run test` 通过（3 files passed，6 tests passed，1 skipped）。
+  - `npm run build` 通过。
+
+### Course Import 批准失败修复
+
+- 背景：
+  - 线上管理员后台批准 course import 时出现 `INTERNAL_SERVER_ERROR`，请求 ID 为 `63f98f4b-5e8f-4426-a74c-5b86e9a5793e`。
+  - 已通过线上 `/admin/error-events` 查询到该错误事件：路径为 `/api/admin/course-imports/cmpll34f807demy9jdv7bspjv/approve`，但旧版本 `metadata` 为空，无法从数据库日志直接确认 Prisma code。
+  - 当前本地环境没有 Vercel CLI/token，不能直接读取 Vercel production function log；本轮改动重点是让后续同类错误在 `ErrorEvent.metadata` 中留下阶段、耗时、Prisma code/meta。
+- 改动：
+  - `approveCourseImportBatch` 增加 `load_dataset`、`apply_import`、`build_summary`、`mark_approved`、`checkpoint` 阶段追踪，每个阶段写 `operationLog`。
+  - 批准失败时会把失败阶段、阶段耗时、原始错误 name/message/code/meta 写入 `ErrorEvent.metadata`，同时把可读失败摘要写入 `CourseImportBatch.adminNote`。
+  - 批准成功后不再同步创建完整 `VersionCheckpoint`；`checkpoint` 阶段改为 `skipped_manual_checkpoint`，管理员需要回溯点时在版本管理页手动创建完整快照。
+  - `applyBnbuCourseImport` 的 `default_join` 只对匹配当前 academic term 的规则执行，避免 2025 admission 在 `2026-Spring` 对全部 default-join rules 做无效查询。
+  - rule deactivation 范围从“同 semester 全量”收窄为“同 semester 且 admission years 与本次导入重叠”，避免导入 2025 admission 时误停用 2024 admission 规则。
+  - Prisma import transaction 临时设置 `timeout: 60000`、`maxWait: 10000`。
+- 验证：
+  - `npm run prisma:validate` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run test` 通过（3 files passed，6 tests passed，1 skipped）。
+  - `npm run build` 通过。
+
+### 剩余未完成任务修正版收尾
+
+- 背景：
+  - 用户确认 BNBU class schedule 只是学期时间安排，不应作为课程存在、真实开课或 CourseBoard 配置依据。
+  - 本轮按每年 admission handbook 作为唯一课程配置来源，忽略 `semester_offerings` 与 `syllabus_teamwork` 管线。
+- 改动：
+  - Crawler API 与 `/crawler` 页面只暴露 `programme_handbook` 目标；自然语言里出现“开课/组队”等词也不会自动切到预留目标。
+  - README、crawler 管理员变量表、BNBU crawler requirements 明确：`offerings[]` 对 handbook import 为空是正常状态，CourseBoard 由当前 academic term + admission year + major + `relativeTermCodes` 激活。
+  - 上传解析扩展到 CSV/TSV、Excel `.xls/.xlsx`、PPTX、旧 `.ppt` 二进制文本兜底、旧 `.doc`；解析失败时保存文件并返回清楚 fallback 文本，不阻止上传。
+  - 新增 `read-excel-file`、`word-extractor`、`fflate` 依赖；因 `xlsx` npm audit 存在无修复漏洞，改用 `read-excel-file` 处理 `.xlsx`。
+  - `@types/node` 升级到 `22.19.19`，解决 Vite 8 peer dependency warning；Next.js / `eslint-config-next` 升级到 `16.2.6`，ESLint 升级到 `9.39.4` 并改用 flat config。
+  - `npm run build` 切换为 `next build --webpack`，消除 Next 16 Turbopack NFT tracing warning；`middleware.ts` 按 Next 16 约定迁移为 `proxy.ts`。
+  - 修复 Next 16 async API 兼容：`cookies()`、App Route `context.params` 和动态页面 `params` 均改为 await。
+  - `npm run typecheck` 改为先执行 `next typegen`，确保 Next 16 route types 在独立 typecheck 时已生成。
+  - `npm run test:e2e` 清理 `FORCE_COLOR` / `NO_COLOR` 环境变量，消除 Playwright/Node 颜色环境 warning。
+  - 按线上报错复盘建议，将 crawler 脚本里的 `classificationPatterns` 顶层数组改为函数返回，规避 Node.js v25 + `pdfjs-dist` 静态解析触发形态。
+  - `.env.example` 与环境变量文档补充 `TEST_DATABASE_URL`，强调 DB integration test 只能使用独立测试库。
+  - `docs/PRE_LAUNCH_ISSUES.md` 将旧 Vercel dependency warnings 和 Next 16 Turbopack NFT tracing warning 均标记为 Fixed。
+- 验证：
+  - `npm run prisma:validate` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run test` 通过（3 files passed，8 passed，1 skipped）。
+  - `npm run test:e2e` 通过（2 passed，0 warnings）。
+  - `npm run build` 通过（0 warnings）。
+  - `npm audit --omit=dev --registry=https://registry.npmjs.org --json` 通过，0 vulnerabilities。

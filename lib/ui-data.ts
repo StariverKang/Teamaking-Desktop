@@ -5,8 +5,12 @@ export const studentNav = [
   { href: "/announcements", label: "Announcements" },
   { href: "/team-up-requests", label: "TeamUp Menu" },
   { href: "/inbox", label: "Inbox" },
+  { href: "/friends", label: "Friends" },
   { href: "/profile/me", label: "Proof-of-Work Profile" },
   { href: "/contact-info", label: "Contact Info" },
+  { href: "/help", label: "Help Center" },
+  { href: "/developer-log", label: "Developer Log" },
+  { href: "/contact-developer", label: "Contact Developer" },
   { href: "/support", label: "Support Tickets" }
 ];
 
@@ -18,6 +22,7 @@ export const adminNav = [
   { href: "/admin/courses", label: "Courses" },
   { href: "/admin/course-imports", label: "Course Imports" },
   { href: "/admin/announcements", label: "Announcements" },
+  { href: "/admin/content", label: "Content" },
   { href: "/admin/versions", label: "Versions" },
   { href: "/admin/course-submissions", label: "Course Submissions" },
   { href: "/admin/boards", label: "Boards" },

@@ -17,17 +17,21 @@
 
 ## Open
 
+No open pre-launch issues currently recorded.
+
+## Resolved History
+
 ### PLI-2026-05-25-001 - Vercel build dependency warnings
 
-Status: `Open`
+Status: `Fixed`
 
 Source: 2026-05-25 Vercel production build log.
 
 Current impact:
 
 - Build 已成功，当前不判断为运行时阻塞问题。
-- 主要影响开发工具链、类型检查、未来依赖升级稳定性。
-- 下次正式上线前需要清理或重新评估，避免 warning 积累成真实 build failure。
+- `@types/node` peer dependency warning 已通过升级到 Node 22 peer range 内版本解决。
+- ESLint 8 deprecated warning 仍存在，但 `eslint-config-next@14.2.18` peer range 是 `^7.23.0 || ^8.0.0`；在 Next 14 项目中直接升 ESLint 9 风险高于收益，因此延期到 Next/ESLint 工具链升级窗口。
 
 Observed warnings:
 
@@ -51,12 +55,11 @@ Interpretation:
 - `eslint@8.57.1` is deprecated; related `@humanwhocodes/*`, `rimraf@3`, `glob@7`, and `inflight@1` warnings are likely direct or transitive toolchain dependencies.
 - These should be handled as dependency hygiene before the next launch cycle, not as emergency production rollback items.
 
-Next action before next launch:
+Original next action before next launch:
 
-1. Upgrade `@types/node` to a version satisfying Vite's peer range, at least `22.12.0`.
-2. Review ESLint / Next lint / Vitest compatibility before upgrading ESLint, because Next.js lint integration can be sensitive to major ESLint changes.
-3. Run dependency install and commit both `package.json` and `package-lock.json`.
-4. Re-run full verification:
+1. Keep `@types/node` at `22.12.0` or newer.
+2. Revisit the ESLint/rimraf/glob/@humanwhocodes warnings when upgrading Next.js or replacing `next lint`.
+3. Re-run full verification after any future lint toolchain change:
 
 ```bash
 npm run prisma:validate
@@ -67,8 +70,55 @@ npm run test:e2e
 npm run build
 ```
 
-5. Confirm the next Vercel build no longer contains this peer dependency warning; any remaining deprecated transitive dependency warnings should be re-listed here with updated package paths.
+Resolution notes, 2026-05-26:
+
+- Upgraded `@types/node` to `22.19.19`.
+- Upgraded Next.js / `eslint-config-next` to `16.2.6` and ESLint to `9.39.4`; `npm run lint` now uses flat config through `eslint.config.mjs`.
+- Replaced the vulnerable `xlsx` dependency with `read-excel-file`, and pinned `uuid` through npm overrides so TencentCloud SES resolves to `uuid@11.1.1`.
+- `npm audit --omit=dev --registry=https://registry.npmjs.org --json` reports zero vulnerabilities.
+- Verification passed: `npm run prisma:validate`, `npm run typecheck`, `npm run lint`, `npm run test`, `npm run test:e2e`, `npm run build`.
 
 Blocking current deploy: `No`
 
-Required before next production launch: `Yes`
+Required before next production launch: `No, fixed`
+
+### PLI-2026-05-26-001 - Next 16 Turbopack NFT tracing warning
+
+Status: `Fixed`
+
+Source: local `npm run build` after upgrading to Next.js `16.2.6`.
+
+Observed warning:
+
+```text
+Turbopack build encountered 1 warnings:
+./next.config.mjs
+Encountered unexpected file in NFT list
+Import trace:
+  App Route:
+    ./next.config.mjs
+    ./app/api/[...route]/route.ts
+```
+
+Current impact:
+
+- Production build succeeds and emits the expected route manifest.
+- The warning is caused by the unified API route containing crawler/import artifact filesystem paths and child-process startup logic. Runtime paths are still validated before file download, and production crawler writes to `/tmp/teamaking`.
+- This was not a functional blocker, but keeping the deploy log warning-free is preferable before production redeploy.
+
+Resolution notes, 2026-05-26:
+
+- `npm run build` now uses `next build --webpack`, avoiding the Turbopack NFT tracing false positive for the large catch-all API route.
+- Migrated `middleware.ts` to `proxy.ts`, matching the Next 16 file convention.
+- Updated route/page params and `cookies()` access for Next 16 async APIs.
+- Re-ran:
+
+```bash
+npm run typecheck
+npm run build
+npm run test:e2e
+```
+
+Blocking current deploy: `No`
+
+Required before next production launch: `No, fixed`

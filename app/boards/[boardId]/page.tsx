@@ -1,5 +1,6 @@
 import { BoardPage } from "@/components/client-pages";
 
-export default function Page({ params }: { params: { boardId: string } }) {
-  return <BoardPage boardId={params.boardId} />;
+export default async function Page({ params }: { params: Promise<{ boardId: string }> }) {
+  const { boardId } = await params;
+  return <BoardPage boardId={boardId} />;
 }

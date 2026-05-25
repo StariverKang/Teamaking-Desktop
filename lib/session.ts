@@ -32,7 +32,8 @@ export function setDemoSessionCookie(response: NextResponse, account: string) {
 }
 
 export async function getCurrentUser() {
-  const userId = cookies().get(SESSION_COOKIE)?.value;
+  const cookieStore = await cookies();
+  const userId = cookieStore.get(SESSION_COOKIE)?.value;
   if (!userId) return null;
 
   if (userId.startsWith(DEMO_SESSION_PREFIX)) {

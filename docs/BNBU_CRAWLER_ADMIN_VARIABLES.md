@@ -18,7 +18,7 @@
 |---|---|---:|---:|---|---|---|---|
 | Job name | `name` / `jobName` | 文本 | 否 | 根据 admission years 自动生成 | `2025+2024 admission handbook full crawl` | 给本次爬虫任务一个人能读懂的名称。 | 不填也能跑；系统内部仍有 `CrawlerJob.id`，但页面主要展示任务名。 |
 | 自然语言说明 | `instruction` | 文本 | 否 | 一段默认说明 | `爬取 2025 和 2024 admission 的 programme handbook，输出 2026 Fall 的课程配置 JSON。` | 辅助自动识别 URL、admission years、programme codes、academic year、term、limit 和 target。 | 明确字段会覆盖自然语言推断。自然语言适合快速填写，但正式任务建议同时检查下方结构化字段。 |
-| 爬取目标 | `target` | 枚举 | 是 | `programme_handbook` | `programme_handbook` | 决定运行哪类解析器。 | 目前只有 `programme_handbook` 可执行；`semester_offerings` 和 `syllabus_teamwork` 是预留入口。 |
+| 爬取目标 | `target` | 枚举 | 是 | `programme_handbook` | `programme_handbook` | 决定运行哪类解析器。 | 当前只保留 `programme_handbook`。BNBU class schedule 只是学期时间安排，不作为课程存在或 Course Board 配置依据。 |
 | Handbook URL | `handbookUrl` | URL | 是 | BNBU programme handbook 页面 | `https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm` | Crawler 从这里寻找每个 admission year 的 programme handbook 页面和 PDF。 | 不要填某一个专业 PDF，除非后续解析器明确支持。当前应填 handbook index 页面。 |
 | Admission years | `cohorts` | 逗号分隔年份 | 是 | `2025,2024` | `2025`、`2025,2024` | 指“哪一年入学的学生”的四年课程安排。输出文件会按 admission year 分开生成。 | 这是学生入学年份，不是当前学年，也不是开课学期。 |
 | Programme codes | `programmes` / `programmeCodes` | 逗号分隔代码 | 否 | 空 | `ACCT,MCOM` | 只爬指定专业。留空表示该 admission year 下所有可识别专业。 | 代码通常来自 PDF 文件名前缀，如 `ACCT`。大小写不敏感，系统会转大写。 |
@@ -34,8 +34,8 @@
 | 页面选项 | API 值 | 当前状态 | 输出内容 |
 |---|---|---|---|
 | Programme handbook | `programme_handbook` | 已支持 | 课程目录 `courses[]`、专业/学院、按 admission year 的 `curriculumRules[]`。通常 `offerings[]` 为空。 |
-| Semester offerings | `semester_offerings` | 预留 | 未来用于真实开课表/本学期开课列表，生成 `offerings[]` 和 Course Board 激活依据。 |
-| Syllabus teamwork evidence | `syllabus_teamwork` | 预留 | 未来用于 syllabus PDF/HTML，生成 teamwork requirement evidence。 |
+
+`semester_offerings` 和 `syllabus_teamwork` 不在当前产品目标内。管理员如果看到 BNBU class schedule，请不要把它当作真实开课列表；课程配置仍以每年 admission handbook JSON 为准。
 
 ## Output Mode
 
@@ -52,7 +52,7 @@
 |---|---|---|---|
 | 只生成并下载 JSON | `download_only` | 不创建批次，不写课程数据。Job 行会显示“下载本次爬取内容”。 | 默认安全模式、人工检查 JSON。 |
 | 创建待审批导入批次 | `create_pending` | 为本次每个 admission year 输出创建 pending `CourseImportBatch` 和线上数据集。 | 管理员还想去 `/admin/course-imports` 看 Diff 后再批准。 |
-| 直接批准并更新线上数据库 | `approve_import` | 创建导入批次后立即批准，写入 Course、CourseCurriculumRule 等配置数据，并创建版本 checkpoint。 | 现场确认范围无误后快速更新线上数据库。 |
+| 直接批准并更新线上数据库 | `approve_import` | 创建导入批次后立即批准，写入 Course、CourseCurriculumRule 等配置数据；完整版本 checkpoint 由管理员在版本管理页手动创建。 | 现场确认范围无误后快速更新线上数据库。 |
 
 `approve_import` 不会清空已有用户、课程、公告或历史日志。若同 admission year 已有旧 pending 批次，系统会把旧 pending 标记为 rejected，避免重复待审批项。
 
@@ -67,7 +67,7 @@
 | `cohortYears` | `cohorts` | `[2025, 2024]` | 写入 JSON 顶层，用于说明这份文件覆盖哪些 admission years。 |
 | `selectedProgrammeCodes` | 实际匹配到的 PDF | `["ACCT", "MCOM"]` | 写入 `crawlerMeta`，用于检查本次到底爬了哪些专业。 |
 | `isCurrentCandidate` | 固定为 false | `false` | crawler 输出不会请求切换系统当前学期。 |
-| `offerings` | 当前 handbook parser | `[]` | programme handbook 不是真实开课表，所以通常为空。Course Board 由 academic term + admission-year rule 匹配激活。 |
+| `offerings` | 当前 handbook parser | `[]` | programme handbook import 通常为空。Course Board 由 academic term + admission-year rule 匹配激活，不依赖 class schedule。 |
 
 ## Jobs Table
 
@@ -132,7 +132,7 @@
 | 问题 | 现象 | 正确理解 / 处理 |
 |---|---|---|
 | 把 `Activation preview year / term` 当 admission year | 输出 Scope 看起来是 `2025,2024 · 2026-Fall`，管理员以为重复。 | `2025,2024` 是入学年份；`2026-Fall` 只用于预览这些 admission-year 规则在某个 academic term 会激活哪些 Course Board。 |
-| `offerings[]` 为空 | 管理后台 warning 或 preview 显示 offerings empty。 | 对 programme handbook 来说正常。真实 offerings 需要未来 semester offerings parser。 |
+| `offerings[]` 为空 | 管理后台 warning 或 preview 显示 offerings empty。 | 对 programme handbook 来说正常；系统会用 admission-year rules 激活 CourseBoard。不要用 BNBU class schedule 填充 offerings。 |
 | Job 显示 `failed` 但 Download outputs 有文件 | 能下载某些 JSON。 | 可能前面 admission year / programme 已写出，后续步骤失败。必须看 Log 和 Result，不要当作全量完成。 |
 | `Limit = 1` 后以为数据少是 bug | 只生成一个 programme 的课程。 | `Limit` 是测试用限制。正式导入用 `all`。 |
 | 选 `course_imports/bnbu` 后以为已入库 | 文件出现在 download 列表或项目目录。 | 这只是生成 JSON 文件。只有 After crawl 选择 `create_pending` 或 `approve_import` 才会进入导入工作流。 |
@@ -151,8 +151,8 @@
 - `semester.isCurrentCandidate` 是否为 `false`。
 - `curriculumRules[].audience.majorCodes` 是否对专业必修/专业选修等专业范围课程存在。
 - `major_required`、`major_elective`、`concentration_required`、`concentration_elective` 不应使用 `allMajors: true`。
-- `offerings[]` 为空时，要确认这是 handbook admission-year import，而不是本学期真实开课表 import。
+- `offerings[]` 为空时，要确认这是 handbook admission-year import；当前 BNBU 管线不使用 class schedule 生成 offerings。
 
 ## Ownership Boundary
 
-Crawler 页面默认只负责“生成可审查 JSON”。如果管理员选择 `直接批准并更新线上数据库`，主系统数据库变化会在 crawler job 完成后立即发生；该动作仍会创建 `CourseImportBatch`、`CourseImportDataset`、操作日志和 version checkpoint，方便之后审计与回溯。任何课程目录、admission-year curriculum rules、Course Board 激活、默认加入、操作日志和版本 checkpoint，都以管理员导入页和管理员版本页为准。
+Crawler 页面默认只负责“生成可审查 JSON”。如果管理员选择 `直接批准并更新线上数据库`，主系统数据库变化会在 crawler job 完成后立即发生；该动作仍会创建 `CourseImportBatch`、`CourseImportDataset` 和操作日志。完整 version checkpoint 由管理员在版本管理页手动创建，避免大导入请求同步生成完整快照导致超时。任何课程目录、admission-year curriculum rules、Course Board 激活、默认加入、操作日志和版本 checkpoint，都以管理员导入页和管理员版本页为准。

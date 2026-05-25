@@ -202,3 +202,17 @@ UPLOAD_STORAGE_MODE="inline"
 11. Neon production migration 已执行。
 12. Vercel 已 Redeploy。
 13. `/admin/announcements` 可发布公告，主站任意页面顶部显示公告弹窗，`/announcements` 可查看历史。
+
+## 测试数据库
+
+需要真实数据库的 integration test 必须使用独立 `TEST_DATABASE_URL`，不要复用 `DATABASE_URL`，也不要指向生产库。
+
+```env
+TEST_DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/teamaking_test?schema=public"
+```
+
+建议：
+
+- 测试库名称明确包含 `test`。
+- 需要导入样本数据时只使用脱敏 seed 或测试 fixture。
+- 在 CI/Vercel Preview 中如未配置 `TEST_DATABASE_URL`，DB integration tests 会安全跳过；正式上线前应在本地或独立 CI 环境跑一次带测试库的完整集成测试。

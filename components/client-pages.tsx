@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Award, Check, Copy, FileText, Handshake, Image as ImageIcon, KeyRound, Link as LinkIcon, MailCheck, Music, Plus, Search, Send, Settings, Trash2, UserRound } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { ArrowRight, Award, Check, Copy, FileText, Handshake, Image as ImageIcon, KeyRound, Link as LinkIcon, MailCheck, MessageCircle, Music, Plus, Search, Send, Settings, Trash2, UserRound, X } from "lucide-react";
 import { Card, EmptyState, LoadingState, PageShell, SkillBadge, StatusPill } from "@/components/app-shell";
 import { CourseCard, ProfileCard, TeamakingPostCard, TeamUpRequestCard } from "@/components/cards";
 import { contributionTypes, strengths } from "@/lib/constants";
@@ -109,6 +111,66 @@ function Field({
 
 const inputClass = "focus-ring w-full rounded-sm border border-ink/30 bg-paper px-3 py-2 text-sm text-ink";
 
+function MarkdownRenderer({ children }: { children: string }) {
+  return (
+    <div className="prose prose-sm max-w-none text-ink prose-headings:text-ink prose-a:text-coral prose-strong:text-ink prose-code:rounded prose-code:bg-mist prose-code:px-1 prose-pre:bg-ink prose-pre:text-paper">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children || ""}</ReactMarkdown>
+    </div>
+  );
+}
+
+function FilePreviewModal({ item, onClose }: { item: any; onClose: () => void }) {
+  if (!item) return null;
+  const url = item.fileUrl || item.externalUrl;
+  const kind = item.previewKind;
+  const parsedText = item.parsedText || item.metadata?.parsedText || item.metadata?.summary || item.contributionDescription || "";
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-ink/72 px-4 py-6">
+      <div className="max-h-[90vh] w-full max-w-5xl overflow-hidden border-2 border-ink bg-paper shadow-hard">
+        <div className="flex items-center justify-between gap-3 border-b-2 border-ink bg-chalk px-4 py-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-coral">{item.fileName || item.title || "Preview"}</p>
+            <h2 className="truncate text-xl font-semibold text-ink">{item.title || "文件预览"}</h2>
+          </div>
+          <button type="button" onClick={onClose} className="focus-ring grid h-10 w-10 shrink-0 place-items-center border border-ink/30 bg-paper" aria-label="关闭预览">
+            <X size={18} aria-hidden />
+          </button>
+        </div>
+        <div className="max-h-[calc(90vh-88px)] overflow-auto p-4">
+          {url && kind === "image" ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={url} alt={item.title || item.fileName || "preview"} className="max-h-[74vh] w-full object-contain" />
+          ) : url && kind === "pdf" ? (
+            <iframe title={item.title || "PDF preview"} src={url} className="h-[74vh] w-full border border-ink/20 bg-white" />
+          ) : url && kind === "office" ? (
+            <div className="grid gap-3">
+              <iframe title={item.title || "Office preview"} src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`} className="h-[74vh] w-full border border-ink/20 bg-white" />
+              {parsedText ? (
+                <details className="border border-ink/20 bg-chalk p-3">
+                  <summary className="cursor-pointer font-semibold">如果 Office 预览不可用，展开查看解析文本</summary>
+                  <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs leading-5">{parsedText}</pre>
+                </details>
+              ) : null}
+            </div>
+          ) : kind === "markdown" ? (
+            <MarkdownRenderer>{parsedText || `[打开文件](${url})`}</MarkdownRenderer>
+          ) : kind === "text" || parsedText ? (
+            <pre className="max-h-[74vh] overflow-auto whitespace-pre-wrap break-words border border-ink/20 bg-chalk p-4 text-sm leading-6 text-ink/78">{parsedText || "暂无可预览文本。"}</pre>
+          ) : url ? (
+            <div className="grid gap-3">
+              <p className="text-sm leading-6 text-ink/62">这个文件类型暂时不能直接内嵌预览，可以使用外部链接打开。</p>
+              <a href={url} target="_blank" rel="noreferrer" className="w-fit border border-ink/30 px-3 py-2 text-sm font-semibold">打开文件</a>
+            </div>
+          ) : (
+            <p className="text-sm text-ink/62">这个材料没有可预览文件。</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const portfolioTypeLabels: Record<string, string> = {
   portfolio: "个人作品",
   coursework: "课程作品",
@@ -121,16 +183,15 @@ const portfolioTypeLabels: Record<string, string> = {
   gpa_screenshot: "GPA 截图",
   language_score: "语言成绩",
   award_certificate: "获奖证书",
-  skill_certification: "技能认证",
-  career_certification: "职业认证",
-  resume: "简历",
+  skill_certification: "技能 / 职业认证",
+  career_certification: "技能 / 职业认证",
+  resume: "旧简历材料",
   other: "其他"
 };
 
-const portfolioTypes = Object.keys(portfolioTypeLabels);
+const portfolioTypes = Object.keys(portfolioTypeLabels).filter((type) => type !== "resume" && type !== "career_certification");
 const currentCalendarYear = new Date().getFullYear();
 const defaultEntryYear = new Date().getMonth() + 1 >= 8 ? currentCalendarYear : currentCalendarYear - 1;
-const entryYearOptions = Array.from({ length: 8 }, (_, index) => defaultEntryYear + 1 - index);
 const entryTermOptions = ["Fall", "Spring"];
 
 const acceptedProfileFiles = [
@@ -220,6 +281,10 @@ function formatFileSize(value?: number) {
 
 function textList(value: unknown) {
   return Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
+}
+
+function contentImageUrls(value: unknown) {
+  return textList(value).slice(0, 3);
 }
 
 function renderResumeParsedData(parsed: any, fallbackFileName: string) {
@@ -320,13 +385,6 @@ const portfolioEvidenceSections = [
     matches: (item: any) => !["resume", "skill_certification", "career_certification", "language_score", "award_certificate", "gpa_screenshot"].includes(item.type)
   },
   {
-    key: "resume",
-    title: "简历",
-    emptyTitle: "还没有公开简历",
-    emptyBody: "对方还没有展示可见的简历文件或简历解析。",
-    matches: (item: any) => item.type === "resume"
-  },
-  {
     key: "certifications",
     title: "技能 / 职业认证",
     emptyTitle: "还没有公开技能认证",
@@ -339,10 +397,17 @@ const portfolioEvidenceSections = [
     emptyTitle: "还没有公开奖项或成绩证明",
     emptyBody: "获奖证书、GPA 截图等证明会显示在这里。",
     matches: (item: any) => ["award_certificate", "gpa_screenshot"].includes(item.type)
+  },
+  {
+    key: "resume",
+    title: "简历解析（靠后展示）",
+    emptyTitle: "还没有公开简历",
+    emptyBody: "对方还没有展示可见的简历文件或简历解析。",
+    matches: (item: any) => item.type === "resume"
   }
 ];
 
-function PortfolioEvidenceSection({ section, items, editable, onDelete }: { section: (typeof portfolioEvidenceSections)[number]; items: any[]; editable?: boolean; onDelete?: (id: string) => void }) {
+function PortfolioEvidenceSection({ section, items, editable, onDelete, onEdit }: { section: (typeof portfolioEvidenceSections)[number]; items: any[]; editable?: boolean; onDelete?: (id: string) => void; onEdit?: (item: any) => void }) {
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -350,7 +415,7 @@ function PortfolioEvidenceSection({ section, items, editable, onDelete }: { sect
         <span className="border border-ink/20 px-2 py-1 text-xs font-semibold text-ink/56">{items.length}</span>
       </div>
       {items.length > 0 ? (
-        <PaginatedGrid items={items} pageSize={4} render={(item) => <PortfolioEvidenceCard key={item.id ?? item.title} item={item} editable={editable} onDelete={onDelete} />} />
+        <PaginatedGrid items={items} pageSize={4} render={(item) => <PortfolioEvidenceCard key={item.id ?? item.title} item={item} editable={editable} onDelete={onDelete} onEdit={onEdit} />} />
       ) : (
         <EmptyState title={section.emptyTitle} body={section.emptyBody} />
       )}
@@ -757,6 +822,9 @@ export function OnboardingPage() {
   const router = useRouter();
   const { data, error, loading } = useApi("/api/onboarding");
   const [form, setForm] = useState({ displayName: "", grade: "Year 2", entryYear: defaultEntryYear, entryTerm: "Fall", facultyId: "", majorId: "" });
+  const [tourStep, setTourStep] = useState(0);
+  const [tourClosed, setTourClosed] = useState(false);
+  const academicLock = data?.academicLock;
   const majors = useMemo(() => (data?.majors ?? []).filter((major: any) => !form.facultyId || major.facultyId === form.facultyId), [data, form.facultyId]);
 
   useEffect(() => {
@@ -764,9 +832,9 @@ export function OnboardingPage() {
       setForm((current) => ({
         ...current,
         displayName: data.user.profile?.displayName ?? data.user.email?.split("@")[0] ?? "",
-        grade: data.user.profile?.grade ?? current.grade,
-        entryYear: data.user.profile?.entryYear ?? current.entryYear,
-        entryTerm: data.user.profile?.entryTerm ?? current.entryTerm,
+        grade: data.academicLock?.grade ?? data.user.profile?.grade ?? current.grade,
+        entryYear: data.academicLock?.entryYear ?? data.user.profile?.entryYear ?? current.entryYear,
+        entryTerm: data.academicLock?.entryTerm ?? data.user.profile?.entryTerm ?? current.entryTerm,
         facultyId: data.faculties?.[0]?.id ?? "",
         majorId: data.majors?.[0]?.id ?? ""
       }));
@@ -779,8 +847,39 @@ export function OnboardingPage() {
     router.push("/dashboard");
   }
 
+  async function closeTour() {
+    setTourClosed(true);
+    await api("/api/onboarding/tour-dismiss", { method: "POST" }).catch(() => null);
+  }
+
+  const tourSteps = [
+    { title: "欢迎来到 TEAMAKING", body: "这里用 Proof-of-Work Profile、Course Board 和轻量 Team Up 帮你更快找到靠谱同学。" },
+    { title: "先补基础信息", body: "下面填写显示名称、学院和专业。年级会尽量从学校邮箱自动推断。" },
+    { title: "Profile 可以继续编辑", body: "进入后可以在 Profile 页面补充作品证明、联系方式、头像和简历解析。" },
+    { title: "遇到问题提交工单", body: "右下角支持按钮和 Support 页面都可以联系管理员。" },
+    { title: "最后去 Course Board", body: "完成后进入 Dashboard，再从课程页加入 Course Board 并发布 Open to Team。" }
+  ];
+
   return (
     <PageShell title="完成基础引导" eyebrow="Onboarding" description="这里不会验证官方选课，只用来帮助系统推荐课程板，并让同学理解你的协作背景。">
+      {!tourClosed && !(data?.user?.profile?.onboardingTourDismissedAt) ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-ink/70 px-4">
+          <div className="w-full max-w-lg border-2 border-ink bg-paper p-5 shadow-hard">
+            <p className="text-xs font-semibold uppercase tracking-wide text-coral">Step {tourStep + 1} / {tourSteps.length}</p>
+            <h2 className="mt-2 text-2xl font-semibold text-ink">{tourSteps[tourStep].title}</h2>
+            <p className="mt-3 text-sm leading-6 text-ink/68">{tourSteps[tourStep].body}</p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button type="button" onClick={closeTour} className="border border-ink/30 px-3 py-2 text-sm font-semibold">关闭引导</button>
+              <button type="button" onClick={() => setTourStep((value) => Math.max(0, value - 1))} disabled={tourStep === 0} className="border border-ink/30 px-3 py-2 text-sm font-semibold disabled:opacity-40">上一步</button>
+              {tourStep < tourSteps.length - 1 ? (
+                <button type="button" onClick={() => setTourStep((value) => value + 1)} className="bg-ink px-3 py-2 text-sm font-semibold text-paper">下一步</button>
+              ) : (
+                <button type="button" onClick={closeTour} className="bg-coral px-3 py-2 text-sm font-semibold text-paper">开始填写</button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {data ? (
         <div className="grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
@@ -802,20 +901,14 @@ export function OnboardingPage() {
                 <input className={inputClass} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} />
               </Field>
               <Field label="年级 / Academic Year">
-                <select className={inputClass} value={form.grade} onChange={(event) => setForm({ ...form, grade: event.target.value })}>
-                  {["Year 1", "Year 2", "Year 3", "Year 4"].map((grade) => (
-                    <option key={grade}>{grade}</option>
-                  ))}
-                </select>
+                <input className={inputClass} value={form.grade} readOnly={Boolean(academicLock?.locked)} onChange={(event) => setForm({ ...form, grade: event.target.value })} />
               </Field>
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="入学年份 / Entry Year">
-                  <select className={inputClass} value={form.entryYear} onChange={(event) => setForm({ ...form, entryYear: Number(event.target.value) })}>
-                    {entryYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
-                  </select>
+                <Field label="入学年份 / Entry Year" help={academicLock?.locked ? "由邮箱第二位数字推断，特殊情况联系管理员覆盖。" : undefined}>
+                  <input className={inputClass} type="number" value={form.entryYear} readOnly={Boolean(academicLock?.locked)} onChange={(event) => setForm({ ...form, entryYear: Number(event.target.value) })} />
                 </Field>
                 <Field label="入学学期 / Entry Term">
-                  <select className={inputClass} value={form.entryTerm} onChange={(event) => setForm({ ...form, entryTerm: event.target.value })}>
+                  <select className={inputClass} value={form.entryTerm} disabled={Boolean(academicLock?.locked)} onChange={(event) => setForm({ ...form, entryTerm: event.target.value })}>
                     {entryTermOptions.map((term) => <option key={term}>{term}</option>)}
                   </select>
                 </Field>
@@ -935,10 +1028,12 @@ export function DashboardPage() {
   );
 }
 
-function PortfolioEvidenceCard({ item, editable, onDelete }: { item: any; editable?: boolean; onDelete?: (id: string) => void }) {
+function PortfolioEvidenceCard({ item, editable, onDelete, onEdit }: { item: any; editable?: boolean; onDelete?: (id: string) => void; onEdit?: (item: any) => void }) {
   const typeLabel = portfolioTypeLabels[item.type] ?? item.type ?? "作品";
+  const [previewing, setPreviewing] = useState(false);
   return (
     <div className="border-2 border-ink bg-paper p-4">
+      <FilePreviewModal item={previewing ? item : null} onClose={() => setPreviewing(false)} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -946,12 +1041,21 @@ function PortfolioEvidenceCard({ item, editable, onDelete }: { item: any; editab
             {item.visibility ? <StatusPill status={item.visibility} /> : null}
           </div>
           <h3 className="mt-3 text-lg font-semibold text-ink">{item.title}</h3>
-          <p className="mt-2 line-clamp-2 text-sm leading-6 text-ink/66">{item.contributionDescription}</p>
+          <p className="mt-2 line-clamp-2 text-sm leading-6 text-ink/66">{item.contributionDescription || "暂无贡献说明。"}</p>
         </div>
-        {editable && onDelete ? (
-          <button type="button" onClick={() => onDelete(item.id)} className="focus-ring border border-ink/40 px-3 py-2 text-sm font-semibold text-rust">
-            <Trash2 size={15} aria-hidden />
-          </button>
+        {editable ? (
+          <div className="flex gap-2">
+            {onEdit ? (
+              <button type="button" onClick={() => onEdit(item)} className="focus-ring border border-ink/40 px-3 py-2 text-sm font-semibold">
+                编辑
+              </button>
+            ) : null}
+            {onDelete ? (
+              <button type="button" onClick={() => onDelete(item.id)} className="focus-ring border border-ink/40 px-3 py-2 text-sm font-semibold text-rust">
+                <Trash2 size={15} aria-hidden />
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
@@ -962,10 +1066,10 @@ function PortfolioEvidenceCard({ item, editable, onDelete }: { item: any; editab
         </div>
         <div className="flex flex-wrap items-start gap-2">
             {item.fileUrl ? (
-              <a href={item.fileUrl} target="_blank" className="inline-flex items-center gap-1 border border-ink/40 px-2 py-1 text-xs font-semibold" rel="noreferrer">
+              <button type="button" onClick={() => setPreviewing(true)} className="inline-flex items-center gap-1 border border-ink/40 px-2 py-1 text-xs font-semibold">
                 {previewIcon(item.previewKind)}
                 预览
-              </a>
+              </button>
             ) : null}
             {item.externalUrl ? (
               <a href={item.externalUrl} target="_blank" className="inline-flex items-center gap-1 border border-ink/40 px-2 py-1 text-xs font-semibold" rel="noreferrer">
@@ -1036,6 +1140,34 @@ export function ProfileEditorPage() {
     parsedText: "",
     metadata: {}
   });
+  const [editingPortfolioId, setEditingPortfolioId] = useState("");
+  const academicLock = data?.user?.profile?.academicLock ?? onboarding?.academicLock;
+
+  function resetPortfolioForm() {
+    setEditingPortfolioId("");
+    setPortfolioForm({
+      title: "",
+      type: "portfolio",
+      myRole: "",
+      semesterText: "",
+      contributionDescription: "",
+      outcome: "",
+      reflection: "",
+      externalUrl: "",
+      visibility: "same_school",
+      isGroupWork: false,
+      isPinned: false,
+      fileName: "",
+      fileMimeType: "",
+      fileSize: 0,
+      fileExtension: "",
+      storageKey: "",
+      fileUrl: "",
+      previewKind: "link",
+      parsedText: "",
+      metadata: {}
+    });
+  }
 
   useEffect(() => {
     if (data?.user) {
@@ -1144,16 +1276,17 @@ export function ProfileEditorPage() {
     setSaved("");
     const sameHonorTypeCount = portfolioItems.filter((item) => item.type === portfolioForm.type).length;
     const pinnedCount = portfolioItems.filter((item) => item.isPinned).length;
-    if (isHonorItem(portfolioForm) && sameHonorTypeCount >= 3) {
+    if (!editingPortfolioId && isHonorItem(portfolioForm) && sameHonorTypeCount >= 3) {
       setSaved("语言成绩、GPA、奖项/认证每类最多上传 3 个。");
       return;
     }
-    if (portfolioForm.isPinned && pinnedCount >= 3) {
+    if (!editingPortfolioId && portfolioForm.isPinned && pinnedCount >= 3) {
       setSaved("每个用户最多置顶 3 个过往成果。");
       return;
     }
-    const result = await api("/api/profile/me/portfolio-items", {
-      method: "POST",
+    const endpoint = editingPortfolioId ? `/api/profile/me/portfolio-items/${editingPortfolioId}` : "/api/profile/me/portfolio-items";
+    const result = await api(endpoint, {
+      method: editingPortfolioId ? "PATCH" : "POST",
       body: JSON.stringify({
         ...portfolioForm,
         metadata: {
@@ -1162,32 +1295,42 @@ export function ProfileEditorPage() {
         }
       })
     });
-    setSaved("作品/证明材料已保存。");
-    setPortfolioForm({
-      title: "",
-      type: "portfolio",
-      myRole: "",
-      semesterText: "",
-      contributionDescription: "",
-      outcome: "",
-      reflection: "",
-      externalUrl: "",
-      visibility: "same_school",
-      isGroupWork: false,
-      isPinned: false,
-      fileName: "",
-      fileMimeType: "",
-      fileSize: 0,
-      fileExtension: "",
-      storageKey: "",
-      fileUrl: "",
-      previewKind: "link",
-      parsedText: "",
-      metadata: {}
-    });
+    setSaved(editingPortfolioId ? "作品/证明材料已更新。" : "作品/证明材料已保存。");
+    resetPortfolioForm();
     if (result?.portfolioItem) {
-      setPortfolioItems((current) => [result.portfolioItem, ...current]);
+      setPortfolioItems((current) =>
+        editingPortfolioId
+          ? current.map((item) => (item.id === result.portfolioItem.id ? result.portfolioItem : item))
+          : [result.portfolioItem, ...current]
+      );
     }
+  }
+
+  function editPortfolioItem(item: any) {
+    setEditingPortfolioId(item.id);
+    setPortfolioForm({
+      title: item.title ?? "",
+      type: item.type === "career_certification" || item.type === "resume" ? "skill_certification" : item.type ?? "portfolio",
+      myRole: item.myRole ?? "",
+      semesterText: item.semesterText ?? "",
+      contributionDescription: item.contributionDescription ?? "",
+      outcome: item.outcome ?? "",
+      reflection: item.reflection ?? "",
+      externalUrl: item.externalUrl ?? "",
+      visibility: item.visibility ?? "same_school",
+      isGroupWork: Boolean(item.isGroupWork),
+      isPinned: Boolean(item.isPinned),
+      fileName: item.fileName ?? "",
+      fileMimeType: item.fileMimeType ?? "",
+      fileSize: item.fileSize ?? 0,
+      fileExtension: item.fileExtension ?? "",
+      storageKey: item.storageKey ?? "",
+      fileUrl: item.fileUrl ?? "",
+      previewKind: item.previewKind ?? "link",
+      parsedText: item.parsedText ?? "",
+      metadata: item.metadata ?? {}
+    });
+    setSaved("正在编辑已有作品；修改后点击保存。");
   }
 
   async function deletePortfolioItem(id: string) {
@@ -1262,18 +1405,14 @@ export function ProfileEditorPage() {
                 </Field>
               </div>
               <div className="mt-4 grid gap-4 md:grid-cols-5">
-                <Field label="年级">
-                  <select className={inputClass} value={form.grade} onChange={(event) => setForm({ ...form, grade: event.target.value })}>
-                    {["Year 1", "Year 2", "Year 3", "Year 4"].map((grade) => <option key={grade}>{grade}</option>)}
-                  </select>
+                <Field label="年级" help={academicLock?.locked ? "根据学校邮箱自动推断，普通用户不可手动修改；特殊情况请提交工单。" : undefined}>
+                  <input className={inputClass} value={form.grade} readOnly={Boolean(academicLock?.locked)} onChange={(event) => setForm({ ...form, grade: event.target.value })} />
                 </Field>
                 <Field label="入学年份">
-                  <select className={inputClass} value={form.entryYear} onChange={(event) => setForm({ ...form, entryYear: Number(event.target.value) })}>
-                    {entryYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
-                  </select>
+                  <input className={inputClass} type="number" value={form.entryYear} readOnly={Boolean(academicLock?.locked)} onChange={(event) => setForm({ ...form, entryYear: Number(event.target.value) })} />
                 </Field>
                 <Field label="入学学期">
-                  <select className={inputClass} value={form.entryTerm} onChange={(event) => setForm({ ...form, entryTerm: event.target.value })}>
+                  <select className={inputClass} value={form.entryTerm} disabled={Boolean(academicLock?.locked)} onChange={(event) => setForm({ ...form, entryTerm: event.target.value })}>
                     {entryTermOptions.map((term) => <option key={term}>{term}</option>)}
                   </select>
                 </Field>
@@ -1343,7 +1482,7 @@ export function ProfileEditorPage() {
 
             <Card>
               <h2 className="text-xl font-semibold text-ink">简历上传与解析</h2>
-              <p className="mt-2 text-sm leading-6 text-ink/62">当前本地解析支持 txt / md / 代码类文本提取；PDF、Word、PPT、表格会先保存文件元数据，后续可接云端解析服务。</p>
+              <p className="mt-2 text-sm leading-6 text-ink/62">当前本地解析支持 txt / md / 代码、PDF、Word、PPT、Excel/CSV 等文本提取；旧 Office、加密文件或扫描件解析失败时会保存文件并显示原因。</p>
               <div className="mt-4 grid gap-4 md:grid-cols-[1fr_1fr]">
                 <Field label="简历 URL">
                   <input className={inputClass} value={form.resumeUrl} onChange={(event) => setForm({ ...form, resumeUrl: event.target.value })} />
@@ -1391,7 +1530,14 @@ export function ProfileEditorPage() {
           </form>
 
           <Card>
-            <h2 className="text-xl font-semibold text-ink">新增作品 / 证明材料</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-semibold text-ink">{editingPortfolioId ? "编辑作品 / 证明材料" : "新增作品 / 证明材料"}</h2>
+              {editingPortfolioId ? (
+                <button type="button" onClick={resetPortfolioForm} className="border border-ink/30 px-3 py-2 text-sm font-semibold">
+                  取消编辑
+                </button>
+              ) : null}
+            </div>
             <p className="mt-2 text-sm leading-6 text-ink/62">兼容 md、Word、表格、PDF、PPT、图像、音频、设计稿、代码等主流文件后缀；GPA 截图、获奖证书、技能/职业认证也作为证明材料管理。</p>
             <form onSubmit={createPortfolioItem} className="mt-4 grid gap-4">
               <div className="grid gap-4 md:grid-cols-3">
@@ -1461,7 +1607,7 @@ export function ProfileEditorPage() {
               {portfolioForm.fileName ? <PortfolioEvidenceCard item={portfolioForm} /> : null}
               <button className="focus-ring inline-flex w-fit items-center gap-2 rounded-sm bg-rust px-4 py-2 font-semibold text-paper">
                 <Plus size={16} aria-hidden />
-                保存作品 / 证明
+                {editingPortfolioId ? "更新作品 / 证明" : "保存作品 / 证明"}
               </button>
             </form>
           </Card>
@@ -1491,11 +1637,11 @@ export function ProfileEditorPage() {
                 <div className="mt-5 grid gap-6">
                   <section>
                     <h3 className="mb-3 text-lg font-semibold text-ink">置顶成果</h3>
-                    {pinned.length > 0 ? <PaginatedGrid items={pinned} pageSize={3} render={(item) => <PortfolioEvidenceCard key={item.id} item={item} editable onDelete={deletePortfolioItem} />} /> : <EmptyState title="还没有置顶成果" body="勾选置顶展示后，会优先显示最多三个作品。" />}
+                    {pinned.length > 0 ? <PaginatedGrid items={pinned} pageSize={3} render={(item) => <PortfolioEvidenceCard key={item.id} item={item} editable onDelete={deletePortfolioItem} onEdit={editPortfolioItem} />} /> : <EmptyState title="还没有置顶成果" body="勾选置顶展示后，会优先显示最多三个作品。" />}
                   </section>
-                  <PortfolioEvidenceSection section={portfolioEvidenceSections[0]} items={filteredPaperwork} editable onDelete={deletePortfolioItem} />
+                  <PortfolioEvidenceSection section={portfolioEvidenceSections[0]} items={filteredPaperwork} editable onDelete={deletePortfolioItem} onEdit={editPortfolioItem} />
                   {portfolioEvidenceSections.slice(1).map((section) => (
-                    <PortfolioEvidenceSection key={section.key} section={section} items={portfolioItems.filter(section.matches)} editable onDelete={deletePortfolioItem} />
+                    <PortfolioEvidenceSection key={section.key} section={section} items={portfolioItems.filter(section.matches)} editable onDelete={deletePortfolioItem} onEdit={editPortfolioItem} />
                   ))}
                 </div>
               );
@@ -1828,14 +1974,123 @@ export function SupportPage() {
   );
 }
 
+export function SupportWidget() {
+  const pathname = usePathname();
+  const { data: me } = useApi("/api/auth/me");
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({
+    email: "",
+    category: "bug",
+    title: "",
+    description: ""
+  });
+
+  useEffect(() => {
+    if (me?.user?.email) setForm((current) => ({ ...current, email: me.user.email }));
+  }, [me]);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setMessage("");
+    setError("");
+    const result = await api("/api/support-tickets", { method: "POST", body: JSON.stringify(form) }).catch((err: Error) => {
+      setError(err.message);
+      return null;
+    });
+    if (result) {
+      setMessage("工单已提交。");
+      setForm({ email: me?.user?.email ?? "", category: "bug", title: "", description: "" });
+    }
+  }
+
+  if (pathname?.startsWith("/admin") || pathname?.startsWith("/crawler")) return null;
+
+  return (
+    <div className="fixed bottom-5 right-5 z-40">
+      {open ? (
+        <div className="mb-3 w-[min(360px,calc(100vw-40px))] border-2 border-ink bg-paper p-4 shadow-hard">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-semibold text-ink">联系管理员</h2>
+            <button type="button" onClick={() => setOpen(false)} className="border border-ink/30 p-1"><X size={16} aria-hidden /></button>
+          </div>
+          <form onSubmit={submit} className="mt-3 grid gap-3">
+            <input className={inputClass} value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="联系邮箱" />
+            <select className={inputClass} value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>
+              <option value="missing_course">缺失课程</option>
+              <option value="course_config_error">课程配置错误</option>
+              <option value="bug">Bug</option>
+              <option value="error_report">报错</option>
+              <option value="admin_request">后台需求</option>
+              <option value="other">其他</option>
+            </select>
+            <input className={inputClass} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="标题" />
+            <textarea className={inputClass} rows={4} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="请描述问题或需求" />
+            <button className="bg-ink px-3 py-2 text-sm font-semibold text-paper">提交工单</button>
+          </form>
+          <ErrorBox message={error} />
+          {message ? <p className="mt-2 text-sm font-medium text-forest">{message}</p> : null}
+        </div>
+      ) : null}
+      <button type="button" onClick={() => setOpen((value) => !value)} className="focus-ring inline-flex h-12 w-12 items-center justify-center rounded-full border-2 border-ink bg-coral text-paper shadow-hard" aria-label="提交支持工单">
+        <MessageCircle size={22} aria-hidden />
+      </button>
+    </div>
+  );
+}
+
+export function ContentDocumentsPage({ kind, title, eyebrow, description }: { kind: "help" | "developer_log" | "developer_contact"; title: string; eyebrow: string; description: string }) {
+  const { data, error, loading } = useApi(`/api/content?kind=${kind}`);
+  const documents = data?.documents ?? [];
+
+  function renderDocument(document: any, depth = 0): React.ReactNode {
+    return (
+      <details key={document.id} open={depth === 0} className="border-2 border-ink bg-chalk p-4">
+        <summary className="cursor-pointer list-none">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-coral">{document.slug}</p>
+              <h2 className="mt-1 text-xl font-semibold text-ink">{document.title}</h2>
+              {document.summary ? <p className="mt-2 text-sm leading-6 text-ink/62">{document.summary}</p> : null}
+            </div>
+            {document.publishedAt ? <span className="border border-ink/20 px-2 py-1 text-xs text-ink/58">{new Date(document.publishedAt).toLocaleDateString()}</span> : null}
+          </div>
+        </summary>
+        <div className="mt-4 grid gap-4">
+          {contentImageUrls(document.imageUrls).length ? (
+            <div className="grid gap-3 md:grid-cols-3">
+              {contentImageUrls(document.imageUrls).map((url) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={url} src={url} alt={document.title} className="max-h-64 w-full border border-ink/20 object-contain" />
+              ))}
+            </div>
+          ) : null}
+          <MarkdownRenderer>{document.bodyMarkdown}</MarkdownRenderer>
+          {(document.children ?? []).length ? <div className="grid gap-3 pl-3">{document.children.map((child: any) => renderDocument(child, depth + 1))}</div> : null}
+        </div>
+      </details>
+    );
+  }
+
+  return (
+    <PageShell title={title} eyebrow={eyebrow} description={description}>
+      {loading ? <LoadingState /> : <ErrorBox message={error} />}
+      <div className="grid gap-4">
+        {documents.map((document: any) => renderDocument(document))}
+        {!loading && documents.length === 0 ? <EmptyState title="暂无内容" body="管理员发布内容后，会显示在这里。" /> : null}
+      </div>
+    </PageShell>
+  );
+}
+
 export function CoursesPage() {
   const router = useRouter();
   const [q, setQ] = useState("");
-  const [refresh, setRefresh] = useState(0);
   const { data: me, loading: authLoading } = useApi("/api/auth/me");
   const isAuthed = Boolean(me?.user);
-  const { data: recommended } = useApi(isAuthed ? "/api/courses/recommended" : null, [refresh, isAuthed]);
-  const { data: search } = useApi(isAuthed ? `/api/courses/search?q=${encodeURIComponent(q)}` : null, [q, refresh, isAuthed]);
+  const { data: recommended } = useApi(isAuthed ? "/api/courses/recommended" : null, [isAuthed]);
+  const { data: search } = useApi(isAuthed ? `/api/courses/search?q=${encodeURIComponent(q)}` : null, [q, isAuthed]);
 
   async function joinFirstBoard(course: any) {
     const board = course.offerings?.[0]?.boards?.[0];
@@ -1939,6 +2194,108 @@ export function CoursesPage() {
   );
 }
 
+function CourseCommentItem({ comment, onReply, onDelete }: { comment: any; onReply: (id: string, body: string) => void; onDelete: (id: string) => void }) {
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [body, setBody] = useState("");
+  const [showReplies, setShowReplies] = useState(true);
+
+  async function submitReply(event: FormEvent) {
+    event.preventDefault();
+    await onReply(comment.id, body);
+    setBody("");
+    setReplyOpen(false);
+    setShowReplies(true);
+  }
+
+  return (
+    <div className="border border-ink/15 bg-paper p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold text-ink">{comment.user?.profile?.displayName ?? comment.user?.email ?? "用户"}</p>
+          <p className="text-xs text-ink/50">{comment.createdAt ? new Date(comment.createdAt).toLocaleString() : ""}</p>
+        </div>
+        <button type="button" onClick={() => onDelete(comment.id)} className="border border-ink/30 px-2 py-1 text-xs font-semibold text-rust">
+          删除
+        </button>
+      </div>
+      <p className={`mt-3 whitespace-pre-wrap text-sm leading-6 ${comment.deleted ? "text-ink/45" : "text-ink/72"}`}>{comment.body}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" onClick={() => setReplyOpen((value) => !value)} className="border border-ink/30 px-2 py-1 text-xs font-semibold">回复</button>
+        {(comment.replies ?? []).length ? (
+          <button type="button" onClick={() => setShowReplies((value) => !value)} className="border border-ink/30 px-2 py-1 text-xs font-semibold">
+            {showReplies ? "收起回复" : `展开 ${comment.replies.length} 条回复`}
+          </button>
+        ) : null}
+      </div>
+      {replyOpen ? (
+        <form onSubmit={submitReply} className="mt-3 grid gap-2">
+          <textarea className={inputClass} rows={2} value={body} onChange={(event) => setBody(event.target.value)} placeholder="写一条回复" />
+          <button className="w-fit border border-ink bg-ink px-3 py-1.5 text-xs font-semibold text-paper">发布回复</button>
+        </form>
+      ) : null}
+      {showReplies && (comment.replies ?? []).length ? (
+        <div className="mt-3 grid gap-3 border-l-2 border-ink/15 pl-3">
+          {comment.replies.map((reply: any) => (
+            <CourseCommentItem key={reply.id} comment={reply} onReply={onReply} onDelete={onDelete} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CourseCommentsSection({ courseId }: { courseId: string }) {
+  const [page, setPage] = useState(1);
+  const [refresh, setRefresh] = useState(0);
+  const [body, setBody] = useState("");
+  const [message, setMessage] = useState("");
+  const { data, error, loading } = useApi(`/api/courses/${courseId}/comments?page=${page}&pageSize=8`, [page, refresh, courseId]);
+  const pagination = data?.pagination ?? { page: 1, totalPages: 1, total: 0 };
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setMessage("");
+    await api(`/api/courses/${courseId}/comments`, { method: "POST", body: JSON.stringify({ body }) });
+    setBody("");
+    setRefresh((value) => value + 1);
+    setMessage("课程评价已发布。");
+  }
+
+  async function reply(parentId: string, replyBody: string) {
+    await api(`/api/course-comments/${parentId}/replies`, { method: "POST", body: JSON.stringify({ body: replyBody }) });
+    setRefresh((value) => value + 1);
+  }
+
+  async function remove(commentId: string) {
+    await api(`/api/course-comments/${commentId}`, { method: "DELETE" });
+    setRefresh((value) => value + 1);
+  }
+
+  return (
+    <Card>
+      <h2 className="text-xl font-semibold text-ink">课程评价</h2>
+      <p className="mt-2 text-sm leading-6 text-ink/62">绑定真实课程目录，不绑定某个具体 Course Board；评论记录真实时间，不支持点赞。</p>
+      <form onSubmit={submit} className="mt-4 grid gap-3">
+        <textarea className={inputClass} rows={4} value={body} onChange={(event) => setBody(event.target.value)} placeholder="写下课程体验、任务类型、组队建议或注意事项。" />
+        <button className="focus-ring w-fit bg-coral px-4 py-2 text-sm font-semibold text-paper">发布评价</button>
+      </form>
+      {message ? <p className="mt-3 border border-forest/20 bg-paper px-3 py-2 text-sm font-medium text-forest">{message}</p> : null}
+      {loading ? <p className="mt-4 text-sm text-ink/56">正在读取评论...</p> : <ErrorBox message={error} />}
+      <div className="mt-4 grid gap-3">
+        {(data?.comments ?? []).map((comment: any) => (
+          <CourseCommentItem key={comment.id} comment={comment} onReply={reply} onDelete={remove} />
+        ))}
+        {(data?.comments ?? []).length === 0 ? <p className="text-sm text-ink/56">还没有课程评价。</p> : null}
+      </div>
+      <div className="mt-4 flex items-center justify-between border border-ink/15 bg-chalk px-3 py-2 text-sm">
+        <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1} className="border border-ink/30 px-3 py-1 font-semibold disabled:opacity-40">上一页</button>
+        <span>{pagination.page} / {pagination.totalPages} · {pagination.total} 条</span>
+        <button type="button" onClick={() => setPage((value) => Math.min(pagination.totalPages, value + 1))} disabled={page >= pagination.totalPages} className="border border-ink/30 px-3 py-1 font-semibold disabled:opacity-40">下一页</button>
+      </div>
+    </Card>
+  );
+}
+
 export function CourseDetailPage({ courseId }: { courseId: string }) {
   const { data, error, loading } = useApi(`/api/courses/${courseId}`);
   const course = data?.course;
@@ -1953,6 +2310,7 @@ export function CourseDetailPage({ courseId }: { courseId: string }) {
             <h2 className="mt-1 text-2xl font-semibold text-ink">{course.title}</h2>
             <p className="mt-3 text-sm leading-6 text-ink/68">{course.description || "暂无课程描述。"}</p>
           </Card>
+          <CourseCommentsSection courseId={course.id} />
           <div className="grid gap-4 md:grid-cols-2">
             {(course.offerings ?? []).map((offering: any) => (
               <Card key={offering.id}>
@@ -2079,7 +2437,9 @@ export function BoardPage({ boardId }: { boardId: string }) {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-sm font-semibold text-coral">{course?.code}</p>
-                <h2 className="text-2xl font-semibold text-ink">{course?.title}</h2>
+                <h2 className="text-2xl font-semibold text-ink">
+                  {course?.id ? <Link href={`/courses/${course.id}`} className="underline decoration-ink/20 underline-offset-4 hover:text-coral">{course?.title}</Link> : course?.title}
+                </h2>
                 <p className="mt-3 text-sm leading-6 text-ink/68">
                   开放时间：{board.openFrom ? new Date(board.openFrom).toLocaleDateString() : "当前学期开放"} - {board.openUntil ? new Date(board.openUntil).toLocaleDateString() : "学期结束前"}
                 </p>
@@ -2195,11 +2555,13 @@ export function BoardPage({ boardId }: { boardId: string }) {
 
 export function TeamakingPostPage({ postId }: { postId: string }) {
   const [refresh, setRefresh] = useState(0);
+  const { data: me } = useApi("/api/auth/me");
   const { data, error, loading } = useApi(`/api/teamaking-posts/${postId}`, [refresh]);
   const { data: interests } = useApi(`/api/teamaking-posts/${postId}/interests`, [refresh]);
   const [form, setForm] = useState({ message: "", senderContribution: "" });
   const [message, setMessage] = useState("");
   const post = data?.post;
+  const isOwnPost = Boolean(me?.user?.id && post?.userId === me.user.id);
 
   async function teamUp(event: FormEvent) {
     event.preventDefault();
@@ -2222,18 +2584,22 @@ export function TeamakingPostPage({ postId }: { postId: string }) {
           <Card>
             <h2 className="text-xl font-semibold text-ink">Team Up</h2>
             <p className="mt-2 text-sm leading-6 text-ink/62">发送一条轻量联系请求，说明你想贡献什么。最终沟通和组队在平台外完成。</p>
-            <form onSubmit={teamUp} className="mt-4 grid gap-4">
-              <Field label="你的消息">
-                <textarea className={inputClass} rows={4} value={form.message} onChange={(event) => setForm({ ...form, message: event.target.value })} />
-              </Field>
-              <Field label="你可以贡献什么">
-                <textarea className={inputClass} rows={3} value={form.senderContribution} onChange={(event) => setForm({ ...form, senderContribution: event.target.value })} />
-              </Field>
-              <button className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-coral px-4 py-2 font-semibold text-white">
-                <Handshake size={16} aria-hidden />
-                Send Team Up
-              </button>
-            </form>
+            {isOwnPost ? (
+              <p className="mt-4 border border-ink/20 bg-paper px-3 py-2 text-sm text-ink/68">这是你自己发布的 Teamaking Post，不能给自己发送 TeamUp Interest。</p>
+            ) : (
+              <form onSubmit={teamUp} className="mt-4 grid gap-4">
+                <Field label="你的消息">
+                  <textarea className={inputClass} rows={4} value={form.message} onChange={(event) => setForm({ ...form, message: event.target.value })} />
+                </Field>
+                <Field label="你可以贡献什么">
+                  <textarea className={inputClass} rows={3} value={form.senderContribution} onChange={(event) => setForm({ ...form, senderContribution: event.target.value })} />
+                </Field>
+                <button className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-coral px-4 py-2 font-semibold text-white">
+                  <Handshake size={16} aria-hidden />
+                  Send Team Up
+                </button>
+              </form>
+            )}
             {message ? <p className="mt-3 text-sm font-medium text-moss">{message}</p> : null}
           </Card>
           <div className="lg:col-span-2">
@@ -2341,6 +2707,28 @@ export function InboxPage() {
           </Card>
         ))}
         {(data?.requests ?? []).length === 0 ? <EmptyState title="没有关注申请" body="其他用户申请关注你时，会出现在这里。" /> : null}
+      </div>
+    </PageShell>
+  );
+}
+
+export function FriendsPage() {
+  const [query, setQuery] = useState("");
+  const { data, error, loading } = useApi(`/api/friends?query=${encodeURIComponent(query)}`, [query]);
+  const friends = data?.friends ?? [];
+
+  return (
+    <PageShell title="Friends" eyebrow="Mutual Follow" description="双方关注申请 accepted 后，会在这里成为好友；可搜索姓名、邮箱、专业或年级。">
+      <Card>
+        <div className="flex items-center gap-2">
+          <Search size={16} aria-hidden className="text-ink/45" />
+          <input className={inputClass} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索姓名、邮箱、专业、年级" />
+        </div>
+      </Card>
+      {loading ? <LoadingState /> : <ErrorBox message={error} />}
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        {friends.map((friend: any) => <ProfileCard key={friend.id} user={friend} />)}
+        {!loading && friends.length === 0 ? <EmptyState title="还没有好友" body="当关注申请被对方接受后，双方会出现在彼此好友列表里。" /> : null}
       </div>
     </PageShell>
   );
@@ -2462,8 +2850,7 @@ function rowsFromData(data: any) {
 export function AdminResourcePage({
   title,
   endpoint,
-  description,
-  defaultActionPath
+  description
 }: {
   title: string;
   endpoint: string;
@@ -2505,6 +2892,7 @@ export function AdminResourcePage({
   const [importPage, setImportPage] = useState(1);
   const [importEdit, setImportEdit] = useState<{ kind: string; id: string; draft: Record<string, string | boolean>; raw: any } | null>(null);
   const [courseDraft, setCourseDraft] = useState<Record<string, string>>({});
+  const [adminTableQuery, setAdminTableQuery] = useState("");
 
   useEffect(() => {
     if (primaryRows.length > 0 && !selectedId) setSelectedId(primaryRows[0].id ?? primaryRows[0].key ?? "");
@@ -2539,6 +2927,24 @@ export function AdminResourcePage({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resource, selectedCourse?.id, selectedCourse?.updatedAt]);
+
+  useEffect(() => {
+    if (resource !== "content") return;
+    const selectedDocument = (data?.documents ?? []).find((document: any) => document.id === selectedId);
+    if (!selectedDocument) return;
+    setTextFields((current) => ({
+      ...current,
+      contentKind: selectedDocument.kind ?? "help",
+      contentTitle: selectedDocument.title ?? "",
+      contentSlug: selectedDocument.slug ?? "",
+      contentParentId: selectedDocument.parentId ?? "",
+      contentSummary: selectedDocument.summary ?? "",
+      contentBodyMarkdown: selectedDocument.bodyMarkdown ?? "",
+      contentImageUrls: contentImageUrls(selectedDocument.imageUrls).join(", "),
+      contentStatus: selectedDocument.status ?? "draft",
+      contentDisplayOrder: String(selectedDocument.displayOrder ?? 0)
+    }));
+  }, [resource, selectedId, data?.documents]);
 
   async function runAction(path: string, method: string, body: Record<string, unknown>, options: { busy?: string; success?: (response: any) => string; after?: (response: any) => void } = {}) {
     setResult(null);
@@ -3019,6 +3425,119 @@ export function AdminResourcePage({
   }
 
   function renderAdminForm() {
+    if (resource === "content") {
+      const documents = data?.documents ?? [];
+      const selectedDocument = documents.find((document: any) => document.id === selectedId);
+      const draft = {
+        kind: textFields.contentKind ?? selectedDocument?.kind ?? "help",
+        title: textFields.contentTitle ?? selectedDocument?.title ?? "",
+        slug: textFields.contentSlug ?? selectedDocument?.slug ?? "",
+        parentId: textFields.contentParentId ?? selectedDocument?.parentId ?? "",
+        summary: textFields.contentSummary ?? selectedDocument?.summary ?? "",
+        bodyMarkdown: textFields.contentBodyMarkdown ?? selectedDocument?.bodyMarkdown ?? "",
+        imageUrls: textFields.contentImageUrls ?? contentImageUrls(selectedDocument?.imageUrls).join(", "),
+        status: textFields.contentStatus ?? selectedDocument?.status ?? "draft",
+        displayOrder: textFields.contentDisplayOrder ?? String(selectedDocument?.displayOrder ?? 0)
+      };
+      const setDraft = (key: string, value: string) => setTextFields({ ...textFields, [key]: value });
+      const clearDraft = () => {
+        setSelectedId("");
+        setTextFields({
+          ...textFields,
+          contentKind: "help",
+          contentTitle: "",
+          contentSlug: "",
+          contentParentId: "",
+          contentSummary: "",
+          contentBodyMarkdown: "",
+          contentImageUrls: "",
+          contentStatus: "draft",
+          contentDisplayOrder: "0"
+        });
+      };
+      return (
+        <div className="grid gap-5">
+          <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
+            <select className={inputClass} value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
+              <option value="">新建文档</option>
+              {documents.map((document: any) => (
+                <option key={document.id} value={document.id}>{document.kind} · {document.title} · {document.status}</option>
+              ))}
+            </select>
+            <button type="button" onClick={clearDraft} className="border border-ink/30 px-3 py-2 text-sm font-semibold">新建</button>
+            {selectedId ? (
+              <button type="button" onClick={() => runAction(`/api/admin/content/${selectedId}`, "DELETE", {}, { success: (response) => response.message ?? "文档已删除。", after: clearDraft })} className="border border-rust/40 px-3 py-2 text-sm font-semibold text-rust">
+                删除
+              </button>
+            ) : null}
+          </div>
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const body = {
+                kind: draft.kind,
+                title: draft.title,
+                slug: draft.slug || `${draft.kind}-${Date.now()}`,
+                parentId: draft.parentId,
+                summary: draft.summary,
+                bodyMarkdown: draft.bodyMarkdown,
+                imageUrls: draft.imageUrls.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 3),
+                status: draft.status,
+                displayOrder: Number(draft.displayOrder) || 0
+              };
+              runAction(selectedId ? `/api/admin/content/${selectedId}` : "/api/admin/content", selectedId ? "PATCH" : "POST", body, {
+                success: (response) => response.message ?? "文档已保存。"
+              });
+            }}
+          >
+            <div className="grid gap-3 md:grid-cols-4">
+              <Field label="类型">
+                <select className={inputClass} value={draft.kind} onChange={(event) => setDraft("contentKind", event.target.value)}>
+                  <option value="help">帮助中心</option>
+                  <option value="developer_log">开发者日志</option>
+                  <option value="developer_contact">联系开发者</option>
+                </select>
+              </Field>
+              <Field label="状态">
+                <select className={inputClass} value={draft.status} onChange={(event) => setDraft("contentStatus", event.target.value)}>
+                  <option value="draft">draft</option>
+                  <option value="published">published</option>
+                  <option value="hidden">hidden</option>
+                </select>
+              </Field>
+              <Field label="Slug">
+                <input className={inputClass} value={draft.slug} onChange={(event) => setDraft("contentSlug", event.target.value)} />
+              </Field>
+              <Field label="排序">
+                <input className={inputClass} type="number" value={draft.displayOrder} onChange={(event) => setDraft("contentDisplayOrder", event.target.value)} />
+              </Field>
+            </div>
+            <Field label="标题">
+              <input className={inputClass} value={draft.title} onChange={(event) => setDraft("contentTitle", event.target.value)} />
+            </Field>
+            <Field label="父级文档 ID（可选）">
+              <input className={inputClass} value={draft.parentId} onChange={(event) => setDraft("contentParentId", event.target.value)} />
+            </Field>
+            <Field label="摘要">
+              <input className={inputClass} value={draft.summary} onChange={(event) => setDraft("contentSummary", event.target.value)} />
+            </Field>
+            <Field label="图片 URL，逗号分隔，最多 3 张">
+              <input className={inputClass} value={draft.imageUrls} onChange={(event) => setDraft("contentImageUrls", event.target.value)} />
+            </Field>
+            <Field label="Markdown 正文">
+              <textarea className={inputClass} rows={12} value={draft.bodyMarkdown} onChange={(event) => setDraft("contentBodyMarkdown", event.target.value)} />
+            </Field>
+            <div className="grid gap-3 border border-ink/15 bg-chalk p-3">
+              <p className="text-sm font-semibold text-ink">预览</p>
+              <MarkdownRenderer>{draft.bodyMarkdown}</MarkdownRenderer>
+            </div>
+            <button className="w-fit bg-ink px-4 py-2 text-sm font-semibold text-paper">{selectedId ? "更新文档" : "创建文档"}</button>
+          </form>
+        </div>
+      );
+    }
+
     if (resource === "versions") {
       const activeVersion = data?.activeVersion;
       const versions = data?.versions ?? [];
@@ -4073,42 +4592,52 @@ export function AdminResourcePage({
     <PageShell title={title} eyebrow="Admin" description={description} aside="admin">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       <div className="grid gap-5">
-        {!["course-imports", "courses", "versions", "logs", "support-tickets"].includes(resource) ? rows.map(([key, rows]) => (
-          <Card key={key}>
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-xl font-semibold text-ink">{key}</h2>
-              <span className="rounded-lg bg-mist px-2.5 py-1 text-xs font-semibold text-moss">{rows.length} records</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-b border-ink/10 text-ink/58">
-                    {Object.keys(rows[0] ?? { empty: "" })
-                      .slice(0, 7)
-                      .map((column) => (
-                        <th key={column} className="px-3 py-2 font-semibold">
-                          {column}
-                        </th>
-                      ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.id ?? JSON.stringify(row).slice(0, 20)} className="border-b border-ink/6">
-                      {Object.keys(rows[0] ?? { empty: "" })
-                        .slice(0, 7)
-                        .map((column) => (
-                          <td key={column} className="max-w-[220px] truncate px-3 py-2 text-ink/72">
-                            {column === "status" || column === "role" ? <StatusPill status={previewValue(row[column])} /> : previewValue(row[column])}
-                          </td>
+        {!["course-imports", "courses", "versions", "logs", "support-tickets"].includes(resource) ? rows.map(([key, rows]) => {
+          const filteredRows = rows.filter((row) => !adminTableQuery || JSON.stringify(row).toLowerCase().includes(adminTableQuery.toLowerCase()));
+          const rawColumns = Object.keys(rows[0] ?? { empty: "" }).filter((column) => column !== "appVersionId");
+          const columns = [...rawColumns.filter((column) => column !== "id").slice(0, 7), ...(rawColumns.includes("id") ? ["id"] : [])];
+          return (
+            <Card key={key}>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-semibold text-ink">{key}</h2>
+                  <span className="rounded-lg bg-mist px-2.5 py-1 text-xs font-semibold text-moss">{filteredRows.length} / {rows.length} records</span>
+                </div>
+                <input className={`${inputClass} md:max-w-xs`} value={adminTableQuery} onChange={(event) => setAdminTableQuery(event.target.value)} placeholder="搜索邮箱、名称、role、code、year/status" />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-ink/10 text-ink/58">
+                      {key === "users" ? <th className="px-3 py-2 font-semibold">Profile</th> : null}
+                      {columns.map((column) => (
+                          <th key={column} className="px-3 py-2 font-semibold">
+                            {column}
+                          </th>
                         ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )) : null}
+                  </thead>
+                  <tbody>
+                    {filteredRows.map((row) => (
+                      <tr key={row.id ?? JSON.stringify(row).slice(0, 20)} className="border-b border-ink/6">
+                        {key === "users" ? (
+                          <td className="px-3 py-2">
+                            <Link href={`/profile/${row.id}`} className="border border-ink/30 px-2 py-1 text-xs font-semibold">查看 Profile</Link>
+                          </td>
+                        ) : null}
+                        {columns.map((column) => (
+                            <td key={column} className="max-w-[220px] truncate px-3 py-2 text-ink/72">
+                              {column === "status" || column === "role" ? <StatusPill status={previewValue(row[column])} /> : previewValue(row[column])}
+                            </td>
+                          ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          );
+        }) : null}
         <Card>
           <h2 className="text-xl font-semibold text-ink">无代码管理操作</h2>
           <p className="mt-2 text-sm leading-6 text-ink/62">使用表单、下拉框和按钮完成管理，不需要手写接口路径或 JSON。</p>
@@ -4180,7 +4709,7 @@ export function CrawlerPortalPage() {
       title="BNBU Crawler Portal"
       eyebrow="Crawler"
       aside="none"
-      description="独立爬虫入口：输入范围、来源网页和自然语言说明，生成可下载 cleaned JSON；也可在管理员确认后创建导入批次或直接批准写入线上数据库。"
+      description="独立爬虫入口：以每年 admission programme handbook 为准生成 cleaned JSON；也可在管理员确认后创建导入批次或直接批准写入线上数据库。"
     >
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {error && /请先完成|unauthorized|API_UNAUTHORIZED/i.test(error) ? (
@@ -4193,7 +4722,7 @@ export function CrawlerPortalPage() {
       <div className="grid gap-5">
         <Card>
           <h2 className="text-xl font-semibold text-ink">Crawl request</h2>
-          <p className="mt-2 text-sm leading-6 text-ink/62">当前可执行目标是 programme handbook。它按 admission year 生成四年课程安排；Academic year / term 只用于预览“如果现在激活 Course Board，应匹配哪一批规则”，不是课程安排本身的分类方式。</p>
+          <p className="mt-2 text-sm leading-6 text-ink/62">当前唯一可执行目标是 programme handbook。它按 admission year 生成四年课程安排；BNBU class schedule 只是时间表，不作为课程存在或 CourseBoard 配置依据。Academic year / term 只用于预览“如果现在激活 Course Board，应匹配哪一批规则”。</p>
           {result ? (
             <div className={`mt-4 border px-3 py-2 text-sm font-medium ${
               result.type === "error" ? "border-rust/40 bg-rust/5 text-rust" : "border-forest/30 bg-forest/10 text-forest"
