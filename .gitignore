@@ -4,7 +4,16 @@ node_modules
 .env.local
 dist
 coverage
+test-results
+playwright-report
 *.log
 .DS_Store
 tsconfig.tsbuildinfo
 public/uploads
+storage/
+docs/admin-credentials.local.md
+local_bnbu_course_pipeline/
+!course_imports/
+!course_imports/bnbu/
+!course_imports/bnbu/*.teamaking.json
+!course_imports/bnbu/.gitkeep

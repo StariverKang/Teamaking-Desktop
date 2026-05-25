@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Navbar } from "@/components/app-shell";
+import { AnnouncementCenter } from "@/components/announcement-center";
+import { LanguageRuntime } from "@/components/language-runtime";
 
 export const metadata: Metadata = {
   title: "TEAMAKING",
@@ -9,10 +11,13 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" suppressHydrationWarning>
       <body>
-        <Navbar />
-        {children}
+        <LanguageRuntime>
+          <Navbar />
+          <AnnouncementCenter />
+          {children}
+        </LanguageRuntime>
       </body>
     </html>
   );

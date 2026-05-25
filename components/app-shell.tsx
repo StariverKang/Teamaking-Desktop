@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { BookOpen, LayoutDashboard, MailCheck, Settings, Sparkles, UserRound, UsersRound } from "lucide-react";
 import { adminNav, studentNav } from "@/lib/ui-data";
+import { LanguageSwitcher } from "@/components/language-runtime";
 import clsx from "clsx";
 
 export function Navbar() {
@@ -17,15 +18,19 @@ export function Navbar() {
           <NavItem href="/dashboard" label="Dashboard" />
           <NavItem href="/courses" label="Courses" />
           <NavItem href="/matches" label="Matches" />
+          <NavItem href="/announcements" label="Announcements" />
           <NavItem href="/support" label="Support" />
         </nav>
-        <Link
-          href="/login"
-          className="focus-ring inline-flex items-center gap-2 rounded-sm border border-ink bg-rust px-4 py-2 text-sm font-semibold text-paper shadow-soft"
-        >
-          <MailCheck size={16} aria-hidden />
-          登录 / 注册
-        </Link>
+        <div className="flex items-center gap-3">
+          <LanguageSwitcher />
+          <Link
+            href="/login"
+            className="focus-ring inline-flex items-center gap-2 rounded-sm border border-ink bg-rust px-4 py-2 text-sm font-semibold text-paper shadow-soft"
+          >
+            <MailCheck size={16} aria-hidden />
+            登录 / 注册
+          </Link>
+        </div>
       </div>
     </header>
   );

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Award, Check, FileText, Handshake, Image as ImageIcon, KeyRound, Link as LinkIcon, MailCheck, Music, Plus, Search, Send, Settings, Trash2, UserRound } from "lucide-react";
+import { ArrowRight, Award, Check, Copy, FileText, Handshake, Image as ImageIcon, KeyRound, Link as LinkIcon, MailCheck, Music, Plus, Search, Send, Settings, Trash2, UserRound } from "lucide-react";
 import { Card, EmptyState, LoadingState, PageShell, SkillBadge, StatusPill } from "@/components/app-shell";
 import { CourseCard, ProfileCard, TeamakingPostCard, TeamUpRequestCard } from "@/components/cards";
 import { contributionTypes, strengths } from "@/lib/constants";
@@ -21,7 +21,8 @@ async function api(path: string, options: RequestInit = {}) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error ?? "请求失败，请稍后再试。");
+    const code = data.errorCode ? `（代码：${data.errorCode}；请求：${data.requestId ?? "unknown"}）` : "";
+    throw new Error(`${data.error ?? "请求失败，请稍后再试。"}${code}`);
   }
 
   return data;
@@ -38,7 +39,8 @@ async function uploadProfileFile(file: File, purpose: string) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error ?? "上传失败，请稍后再试。");
+    const code = data.errorCode ? `（代码：${data.errorCode}；请求：${data.requestId ?? "unknown"}）` : "";
+    throw new Error(`${data.error ?? "上传失败，请稍后再试。"}${code}`);
   }
 
   return data.upload;
@@ -126,6 +128,10 @@ const portfolioTypeLabels: Record<string, string> = {
 };
 
 const portfolioTypes = Object.keys(portfolioTypeLabels);
+const currentCalendarYear = new Date().getFullYear();
+const defaultEntryYear = new Date().getMonth() + 1 >= 8 ? currentCalendarYear : currentCalendarYear - 1;
+const entryYearOptions = Array.from({ length: 8 }, (_, index) => defaultEntryYear + 1 - index);
+const entryTermOptions = ["Fall", "Spring"];
 
 const acceptedProfileFiles = [
   ".md",
@@ -193,10 +199,102 @@ function tagsToText(value: unknown) {
   return Array.isArray(value) ? value.join(", ") : "";
 }
 
+function uniqueTextList(values: unknown[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const item = String(value ?? "").trim();
+    const key = item.toLowerCase();
+    if (!item || seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+  return result;
+}
+
 function formatFileSize(value?: number) {
   if (!value) return "";
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function textList(value: unknown) {
+  return Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
+}
+
+function renderResumeParsedData(parsed: any, fallbackFileName: string) {
+  const sections = parsed?.sections && typeof parsed.sections === "object" ? parsed.sections : {};
+  const sectionEntries = Object.entries(sections) as [string, { label?: string; items?: string[] }][];
+  const rawText = String(parsed?.rawText ?? "");
+  const skills = textList(parsed?.skills);
+  const highlights = textList(parsed?.highlights);
+  const contacts = [
+    parsed?.email ? `邮箱：${parsed.email}` : "",
+    parsed?.phone ? `电话：${parsed.phone}` : "",
+    ...textList(parsed?.links).map((link) => `链接：${link}`)
+  ].filter(Boolean);
+
+  return (
+    <div className="mt-4 grid gap-4 border border-ink/25 bg-paper p-3 text-sm leading-6 text-ink/66">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold text-ink">{parsed?.fileName || fallbackFileName || "尚未上传简历"}</p>
+          <p className="mt-1 text-xs text-ink/50">{parsed?.parser ? `Parser: ${parsed.parser}` : "上传后会在这里显示解析结果。"}</p>
+        </div>
+        {parsed?.parsedAt ? <span className="border border-ink/20 px-2 py-1 text-xs text-ink/58">{new Date(parsed.parsedAt).toLocaleString()}</span> : null}
+      </div>
+      <div className="border border-ink/15 bg-chalk p-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-ink/48">Auto summary</p>
+        <p className="mt-2 whitespace-pre-wrap text-ink/72">{String(parsed?.summary ?? "上传后会在这里显示解析结果。")}</p>
+      </div>
+      {contacts.length || skills.length ? (
+        <div className="grid gap-3 md:grid-cols-2">
+          {contacts.length ? (
+            <div className="border border-ink/15 bg-chalk p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink/48">Contact detected</p>
+              <div className="mt-2 grid gap-1">
+                {contacts.slice(0, 8).map((item) => <p key={item} className="break-words">{item}</p>)}
+              </div>
+            </div>
+          ) : null}
+          {skills.length ? (
+            <div className="border border-ink/15 bg-chalk p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink/48">Keywords</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {skills.map((skill) => <SkillBadge key={skill}>{skill}</SkillBadge>)}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {highlights.length ? (
+        <div className="border border-ink/15 bg-chalk p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink/48">Highlights</p>
+          <ul className="mt-2 grid gap-1.5">
+            {highlights.map((item) => <li key={item} className="break-words">- {item}</li>)}
+          </ul>
+        </div>
+      ) : null}
+      {sectionEntries.length ? (
+        <div className="grid gap-3 md:grid-cols-2">
+          {sectionEntries.slice(0, 6).map(([key, section]) => (
+            <div key={key} className="max-h-52 overflow-auto border border-ink/15 bg-chalk p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink/48">{section.label ?? key}</p>
+              <div className="mt-2 grid gap-1.5">
+                {textList(section.items).map((item) => <p key={item} className="break-words">{item}</p>)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {rawText ? (
+        <details className="border border-ink/15 bg-chalk p-3">
+          <summary className="cursor-pointer font-semibold text-ink">完整解析原文</summary>
+          <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-words border border-ink/10 bg-paper p-3 text-xs leading-5 text-ink/70">{rawText}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
 }
 
 function previewIcon(kind?: string) {
@@ -211,6 +309,53 @@ const honorTypes = new Set(["gpa_screenshot", "award_certificate", "skill_certif
 
 function isHonorItem(item: any) {
   return honorTypes.has(item.type);
+}
+
+const portfolioEvidenceSections = [
+  {
+    key: "paperwork",
+    title: "过往作品 / Paperwork",
+    emptyTitle: "还没有公开过往作品",
+    emptyBody: "课程作品、报告、PPT、代码、设计稿等证明材料会显示在这里。",
+    matches: (item: any) => !["resume", "skill_certification", "career_certification", "language_score", "award_certificate", "gpa_screenshot"].includes(item.type)
+  },
+  {
+    key: "resume",
+    title: "简历",
+    emptyTitle: "还没有公开简历",
+    emptyBody: "对方还没有展示可见的简历文件或简历解析。",
+    matches: (item: any) => item.type === "resume"
+  },
+  {
+    key: "certifications",
+    title: "技能 / 职业认证",
+    emptyTitle: "还没有公开技能认证",
+    emptyBody: "技能认证、职业认证、语言成绩等证明会显示在这里。",
+    matches: (item: any) => ["skill_certification", "career_certification", "language_score"].includes(item.type)
+  },
+  {
+    key: "awards",
+    title: "奖项 / GPA",
+    emptyTitle: "还没有公开奖项或成绩证明",
+    emptyBody: "获奖证书、GPA 截图等证明会显示在这里。",
+    matches: (item: any) => ["award_certificate", "gpa_screenshot"].includes(item.type)
+  }
+];
+
+function PortfolioEvidenceSection({ section, items, editable, onDelete }: { section: (typeof portfolioEvidenceSections)[number]; items: any[]; editable?: boolean; onDelete?: (id: string) => void }) {
+  return (
+    <section>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-lg font-semibold text-ink">{section.title}</h3>
+        <span className="border border-ink/20 px-2 py-1 text-xs font-semibold text-ink/56">{items.length}</span>
+      </div>
+      {items.length > 0 ? (
+        <PaginatedGrid items={items} pageSize={4} render={(item) => <PortfolioEvidenceCard key={item.id ?? item.title} item={item} editable={editable} onDelete={onDelete} />} />
+      ) : (
+        <EmptyState title={section.emptyTitle} body={section.emptyBody} />
+      )}
+    </section>
+  );
 }
 
 function fileFamily(item: any) {
@@ -376,7 +521,8 @@ export function LoginPage() {
       setIsLoggingIn(false);
     });
 
-    if (result?.user?.onboardingCompleted) router.push("/dashboard");
+    if (result?.redirectPath) router.push(result.redirectPath);
+    else if (result?.user?.onboardingCompleted) router.push("/dashboard");
     else if (result?.user) router.push("/onboarding");
   }
 
@@ -419,6 +565,14 @@ export function LoginPage() {
       setIsCompleting(false);
     });
 
+    if (result?.redirectPath) {
+      setMode("login");
+      setPassword("");
+      setCode("");
+      setDevCode("");
+      setMessage(result.message ?? "处理完成，请登录。");
+      return;
+    }
     if (result?.user?.onboardingCompleted) router.push("/dashboard");
     else if (result?.user) router.push("/onboarding");
   }
@@ -523,7 +677,7 @@ export function AdminLoginPage() {
     event.preventDefault();
     setError("");
     setIsDeveloperLoggingIn(true);
-    const result = await api("/api/auth/developer-login", {
+    const result = await api("/api/auth/admin-login", {
       method: "POST",
       body: JSON.stringify({ email: developerEmail, password: developerPassword })
     }).catch((err: Error) => {
@@ -602,7 +756,7 @@ export function DemoAccessPage() {
 export function OnboardingPage() {
   const router = useRouter();
   const { data, error, loading } = useApi("/api/onboarding");
-  const [form, setForm] = useState({ displayName: "", grade: "Year 2", facultyId: "", majorId: "" });
+  const [form, setForm] = useState({ displayName: "", grade: "Year 2", entryYear: defaultEntryYear, entryTerm: "Fall", facultyId: "", majorId: "" });
   const majors = useMemo(() => (data?.majors ?? []).filter((major: any) => !form.facultyId || major.facultyId === form.facultyId), [data, form.facultyId]);
 
   useEffect(() => {
@@ -610,6 +764,9 @@ export function OnboardingPage() {
       setForm((current) => ({
         ...current,
         displayName: data.user.profile?.displayName ?? data.user.email?.split("@")[0] ?? "",
+        grade: data.user.profile?.grade ?? current.grade,
+        entryYear: data.user.profile?.entryYear ?? current.entryYear,
+        entryTerm: data.user.profile?.entryTerm ?? current.entryTerm,
         facultyId: data.faculties?.[0]?.id ?? "",
         majorId: data.majors?.[0]?.id ?? ""
       }));
@@ -651,6 +808,18 @@ export function OnboardingPage() {
                   ))}
                 </select>
               </Field>
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="入学年份 / Entry Year">
+                  <select className={inputClass} value={form.entryYear} onChange={(event) => setForm({ ...form, entryYear: Number(event.target.value) })}>
+                    {entryYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
+                  </select>
+                </Field>
+                <Field label="入学学期 / Entry Term">
+                  <select className={inputClass} value={form.entryTerm} onChange={(event) => setForm({ ...form, entryTerm: event.target.value })}>
+                    {entryTermOptions.map((term) => <option key={term}>{term}</option>)}
+                  </select>
+                </Field>
+              </div>
               <Field label="Faculty / College">
                 <select className={inputClass} value={form.facultyId} onChange={(event) => setForm({ ...form, facultyId: event.target.value, majorId: "" })}>
                   {(data.faculties ?? []).map((faculty: any) => (
@@ -824,6 +993,8 @@ export function ProfileEditorPage() {
     headline: "",
     bio: "",
     grade: "Year 2",
+    entryYear: defaultEntryYear,
+    entryTerm: "Fall",
     facultyId: "",
     majorId: "",
     avatarUrl: "",
@@ -875,6 +1046,8 @@ export function ProfileEditorPage() {
         headline: profile?.headline ?? "",
         bio: profile?.bio ?? "",
         grade: profile?.grade ?? "Year 2",
+        entryYear: profile?.entryYear ?? defaultEntryYear,
+        entryTerm: profile?.entryTerm ?? "Fall",
         facultyId: profile?.facultyId ?? onboarding?.faculties?.[0]?.id ?? "",
         majorId: profile?.majorId ?? onboarding?.majors?.[0]?.id ?? "",
         avatarUrl: profile?.avatarUrl ?? "",
@@ -916,6 +1089,27 @@ export function ProfileEditorPage() {
     }
   }
 
+  async function reparseResume() {
+    if (!form.resumeUrl) {
+      setSaved("请先上传或填写简历 URL。");
+      return;
+    }
+    setUploading("resume-reparse");
+    setSaved("");
+    try {
+      const result = await api("/api/profile/me/reparse-resume", { method: "POST" });
+      setForm((current) => ({
+        ...current,
+        resumeParsedData: result.resumeParsedData ?? current.resumeParsedData
+      }));
+      setSaved(result.message ?? "简历已重新整理。");
+    } catch (err) {
+      setSaved(err instanceof Error ? err.message : "简历重新整理失败。");
+    } finally {
+      setUploading("");
+    }
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setSaved("");
@@ -927,6 +1121,8 @@ export function ProfileEditorPage() {
         headline: form.headline,
         bio: form.bio,
         grade: form.grade,
+        entryYear: form.entryYear,
+        entryTerm: form.entryTerm,
         facultyId: form.facultyId,
         majorId: form.majorId,
         avatarUrl: form.avatarUrl,
@@ -1065,10 +1261,20 @@ export function ProfileEditorPage() {
                   </div>
                 </Field>
               </div>
-              <div className="mt-4 grid gap-4 md:grid-cols-3">
+              <div className="mt-4 grid gap-4 md:grid-cols-5">
                 <Field label="年级">
                   <select className={inputClass} value={form.grade} onChange={(event) => setForm({ ...form, grade: event.target.value })}>
                     {["Year 1", "Year 2", "Year 3", "Year 4"].map((grade) => <option key={grade}>{grade}</option>)}
+                  </select>
+                </Field>
+                <Field label="入学年份">
+                  <select className={inputClass} value={form.entryYear} onChange={(event) => setForm({ ...form, entryYear: Number(event.target.value) })}>
+                    {entryYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
+                  </select>
+                </Field>
+                <Field label="入学学期">
+                  <select className={inputClass} value={form.entryTerm} onChange={(event) => setForm({ ...form, entryTerm: event.target.value })}>
+                    {entryTermOptions.map((term) => <option key={term}>{term}</option>)}
                   </select>
                 </Field>
                 <Field label="Faculty">
@@ -1159,11 +1365,19 @@ export function ProfileEditorPage() {
                   />
                 </Field>
               </div>
-              <div className="mt-4 border border-ink/25 bg-paper p-3 text-sm leading-6 text-ink/66">
-                <p className="font-semibold text-ink">{form.resumeFileName || "尚未上传简历"}</p>
-                <p>解析摘要：{String((form.resumeParsedData as any)?.summary ?? "上传后会在这里显示解析结果。")}</p>
-                {Array.isArray((form.resumeParsedData as any)?.skills) ? <p>识别技能：{((form.resumeParsedData as any).skills as string[]).join(", ")}</p> : null}
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  className="focus-ring inline-flex items-center gap-2 rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-45"
+                  disabled={!form.resumeUrl || uploading === "resume-reparse"}
+                  onClick={reparseResume}
+                >
+                  <FileText size={16} aria-hidden />
+                  {uploading === "resume-reparse" ? "正在整理..." : "重新整理当前简历"}
+                </button>
+                <p className="text-sm leading-6 text-ink/56">已有简历也可以直接重新解析，生成摘要、分区和关键词。</p>
               </div>
+              {renderResumeParsedData(form.resumeParsedData, form.resumeFileName)}
             </Card>
 
             <label className="flex items-center gap-2 text-sm font-semibold text-ink">
@@ -1267,13 +1481,11 @@ export function ProfileEditorPage() {
               ))}
             </div>
             {(() => {
-              const works = portfolioItems.filter((item) => !isHonorItem(item));
-              const honors = portfolioItems.filter(isHonorItem);
-              const pinned = works.filter((item) => item.isPinned).slice(0, 3);
-              const filteredWorks = works.filter((item) => {
+              const pinned = portfolioItems.filter((item) => item.isPinned).slice(0, 3);
+              const filteredPaperwork = portfolioItems.filter((item) => {
                 const ownershipOk = workOwnershipFilter === "all" || (workOwnershipFilter === "group" ? item.isGroupWork : !item.isGroupWork);
                 const typeOk = workTypeFilter === "all" || fileFamily(item) === workTypeFilter;
-                return ownershipOk && typeOk;
+                return portfolioEvidenceSections[0].matches(item) && ownershipOk && typeOk;
               });
               return (
                 <div className="mt-5 grid gap-6">
@@ -1281,14 +1493,10 @@ export function ProfileEditorPage() {
                     <h3 className="mb-3 text-lg font-semibold text-ink">置顶成果</h3>
                     {pinned.length > 0 ? <PaginatedGrid items={pinned} pageSize={3} render={(item) => <PortfolioEvidenceCard key={item.id} item={item} editable onDelete={deletePortfolioItem} />} /> : <EmptyState title="还没有置顶成果" body="勾选置顶展示后，会优先显示最多三个作品。" />}
                   </section>
-                  <section>
-                    <h3 className="mb-3 text-lg font-semibold text-ink">作品成果</h3>
-                    {filteredWorks.length > 0 ? <PaginatedGrid items={filteredWorks} render={(item) => <PortfolioEvidenceCard key={item.id} item={item} editable onDelete={deletePortfolioItem} />} /> : <EmptyState title="还没有匹配的作品" body="调整筛选条件或上传新的作品成果。" />}
-                  </section>
-                  <section>
-                    <h3 className="mb-3 text-lg font-semibold text-ink">语言成绩 / GPA / 奖项荣誉</h3>
-                    {honors.length > 0 ? <PaginatedGrid items={honors} pageSize={3} render={(item) => <PortfolioEvidenceCard key={item.id} item={item} editable onDelete={deletePortfolioItem} />} /> : <EmptyState title="还没有荣誉证明" body="语言成绩、GPA、奖项和认证会独立显示，不与作品混在一起。" />}
-                  </section>
+                  <PortfolioEvidenceSection section={portfolioEvidenceSections[0]} items={filteredPaperwork} editable onDelete={deletePortfolioItem} />
+                  {portfolioEvidenceSections.slice(1).map((section) => (
+                    <PortfolioEvidenceSection key={section.key} section={section} items={portfolioItems.filter(section.matches)} editable onDelete={deletePortfolioItem} />
+                  ))}
                 </div>
               );
             })()}
@@ -1305,8 +1513,52 @@ export function ProfileEditorPage() {
 export function PublicProfilePage({ userId }: { userId: string }) {
   const { data, error, loading } = useApi(`/api/profile/${userId}`);
   const [followMessage, setFollowMessage] = useState("");
+  const [copiedContact, setCopiedContact] = useState("");
   const profile = data?.user?.profile;
   const contact = data?.contactInfo ?? data?.user?.contactInfo ?? {};
+  const profileTags = uniqueTextList([
+    ...(Array.isArray(profile?.outputTags) ? profile.outputTags : []),
+    ...((data?.user?.skills ?? []).map((item: any) => item.skill?.name ?? item.name).filter(Boolean))
+  ]);
+
+  async function copyContactValue(key: string, value: string) {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    setCopiedContact(key);
+    window.setTimeout(() => setCopiedContact((current) => (current === key ? "" : current)), 1600);
+  }
+
+  function ContactRow({ itemKey, label, value }: { itemKey: string; label: string; value?: string | null }) {
+    if (!value) return null;
+    return (
+      <div className="flex flex-wrap items-start justify-between gap-3 py-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink/48">{label}</p>
+          <p className="mt-1 break-all text-sm leading-6 text-ink/78">{value}</p>
+        </div>
+        <button
+          type="button"
+          className="focus-ring inline-flex shrink-0 items-center gap-2 rounded-sm border border-ink/25 px-3 py-1.5 text-xs font-semibold text-ink"
+          onClick={() => copyContactValue(itemKey, value)}
+        >
+          {copiedContact === itemKey ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+          {copiedContact === itemKey ? "已复制" : "复制"}
+        </button>
+      </div>
+    );
+  }
 
   async function follow() {
     const result = await api(`/api/profile/${userId}/follow-request`, { method: "POST" });
@@ -1335,9 +1587,10 @@ export function PublicProfilePage({ userId }: { userId: string }) {
                 <div>
                   <p className="text-sm font-semibold uppercase tracking-wide text-rust">{profile?.nickname || data.user.email}</p>
                   <h2 className="mt-1 text-3xl font-semibold text-ink">{profile?.displayName}</h2>
-                  <p className="mt-2 text-sm text-ink/68">{profile?.headline || `${profile?.grade ?? ""} · ${profile?.major?.name ?? ""}`}</p>
+                  <p className="mt-2 text-sm text-ink/68">{profile?.grade ?? "未填写年级"} · {profile?.major?.name ?? "未填写专业"}</p>
+                  {profile?.headline ? <p className="mt-1 text-sm text-ink/68">{profile.headline}</p> : null}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {Array.isArray(profile?.outputTags) ? profile.outputTags.map((tag: string) => <SkillBadge key={tag}>{tag}</SkillBadge>) : null}
+                    {profileTags.map((tag: string) => <SkillBadge key={tag}>{tag}</SkillBadge>)}
                   </div>
                 </div>
               </div>
@@ -1348,28 +1601,27 @@ export function PublicProfilePage({ userId }: { userId: string }) {
             </button>
             {followMessage ? <p className="mt-2 text-sm font-medium text-moss">{followMessage}</p> : null}
           </Card>
-          <div className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
-            <Card>
-              <h2 className="text-xl font-semibold text-ink">Contact</h2>
-              <div className="mt-4 grid gap-2 text-sm leading-6 text-ink/68">
-                <p>学校邮箱：{contact.schoolEmail ?? data.user.email}</p>
-                {contact.wechatId ? <p>WeChat：{contact.wechatId}</p> : null}
-                {contact.linkedinUrl ? <p>LinkedIn / 主页：{contact.linkedinUrl}</p> : null}
-                {contact.personalEmail ? <p>个人邮箱：{contact.personalEmail}</p> : null}
-                {contact.wechatQrImageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
+          <Card>
+            <h2 className="text-xl font-semibold text-ink">联系方式</h2>
+            <div className="mt-4 divide-y divide-ink/12 border-y border-ink/12">
+              <ContactRow itemKey="schoolEmail" label="学校邮箱" value={contact.schoolEmail ?? data.user.email} />
+              <ContactRow itemKey="wechatId" label="WeChat" value={contact.wechatId} />
+              <ContactRow itemKey="linkedinUrl" label="LinkedIn / 主页" value={contact.linkedinUrl} />
+              <ContactRow itemKey="personalEmail" label="个人邮箱" value={contact.personalEmail} />
+              {contact.wechatQrImageUrl ? (
+                <div className="py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-ink/48">WeChat QR</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={contact.wechatQrImageUrl} alt="WeChat QR" className="mt-3 h-32 w-32 border border-ink/30 object-cover" />
-                ) : null}
-              </div>
-            </Card>
-            <ProfileCard user={data.user} />
-          </div>
+                </div>
+              ) : null}
+            </div>
+          </Card>
           <Card>
             <h2 className="text-xl font-semibold text-ink">Portfolio evidence</h2>
             {(() => {
-              const works = (data.portfolioItems ?? []).filter((item: any) => !isHonorItem(item));
-              const honors = (data.portfolioItems ?? []).filter(isHonorItem);
-              const pinned = works.filter((item: any) => item.isPinned).slice(0, 3);
+              const portfolioItems = data.portfolioItems ?? [];
+              const pinned = portfolioItems.filter((item: any) => item.isPinned).slice(0, 3);
               return (
                 <div className="mt-4 grid gap-6">
                   {pinned.length > 0 ? (
@@ -1378,14 +1630,9 @@ export function PublicProfilePage({ userId }: { userId: string }) {
                       <PaginatedGrid items={pinned} pageSize={3} render={(item) => <PortfolioEvidenceCard key={item.id} item={item} />} />
                     </section>
                   ) : null}
-                  <section>
-                    <h3 className="mb-3 text-lg font-semibold text-ink">Works</h3>
-                    {works.length > 0 ? <PaginatedGrid items={works} render={(item) => <PortfolioEvidenceCard key={item.id} item={item} />} /> : <EmptyState title="还没有公开作品" body="对方还没有展示可见的作品成果。" />}
-                  </section>
-                  <section>
-                    <h3 className="mb-3 text-lg font-semibold text-ink">Honors</h3>
-                    {honors.length > 0 ? <PaginatedGrid items={honors} pageSize={3} render={(item) => <PortfolioEvidenceCard key={item.id} item={item} />} /> : <EmptyState title="还没有公开荣誉" body="语言成绩、GPA、奖项和认证会独立展示。" />}
-                  </section>
+                  {portfolioEvidenceSections.map((section) => (
+                    <PortfolioEvidenceSection key={section.key} section={section} items={portfolioItems.filter(section.matches)} />
+                  ))}
                 </div>
               );
             })()}
@@ -1488,6 +1735,8 @@ export function SupportPage() {
   });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const { data: mine, loading: mineLoading } = useApi(me?.user ? "/api/support-tickets/mine" : null, [me?.user?.id, refreshKey]);
 
   useEffect(() => {
     if (me?.user?.email) setForm((current) => ({ ...current, email: me.user.email }));
@@ -1504,6 +1753,7 @@ export function SupportPage() {
     if (result) {
       setMessage("工单已提交。管理员会在后台查看并处理。");
       setForm({ email: me?.user?.email ?? "", category: "missing_course", title: "", description: "", relatedUrl: "" });
+      setRefreshKey((value) => value + 1);
     }
   }
 
@@ -1527,6 +1777,7 @@ export function SupportPage() {
             <Field label="工单类型">
               <select className={inputClass} value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>
                 <option value="missing_course">缺失课程</option>
+                <option value="course_config_error">课程配置错误</option>
                 <option value="bug">Bug</option>
                 <option value="error_report">报错</option>
                 <option value="admin_request">后台需求</option>
@@ -1551,6 +1802,28 @@ export function SupportPage() {
           {message ? <p className="mt-3 border border-ink/20 bg-paper px-3 py-2 text-sm font-medium text-forest">{message}</p> : null}
         </Card>
       </div>
+      {me?.user ? (
+        <div className="mt-5">
+          <Card>
+            <h2 className="text-xl font-semibold text-ink">我的工单</h2>
+            {mineLoading ? <p className="mt-3 text-sm text-ink/56">正在读取...</p> : null}
+            <div className="mt-4 grid gap-3">
+              {(mine?.tickets ?? []).length ? mine.tickets.map((ticket: any) => (
+                <div key={ticket.id} className="border border-ink/15 bg-chalk p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="font-semibold text-ink">{ticket.title}</p>
+                    <StatusPill status={ticket.status} />
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-ink/62">{ticket.description}</p>
+                  {ticket.adminReply ? (
+                    <p className="mt-3 border border-forest/20 bg-paper px-3 py-2 text-sm leading-6 text-forest">管理员回复：{ticket.adminReply}</p>
+                  ) : null}
+                </div>
+              )) : <p className="text-sm text-ink/56">还没有提交过工单。</p>}
+            </div>
+          </Card>
+        </div>
+      ) : null}
     </PageShell>
   );
 }
@@ -1710,6 +1983,8 @@ export function BoardPage({ boardId }: { boardId: string }) {
   const { data: posts } = useApi(isAuthed ? `/api/boards/${boardId}/open-to-team` : null, [refresh, isAuthed]);
   const { data: people } = useApi(isAuthed ? `/api/boards/${boardId}/people` : null, [refresh, isAuthed]);
   const [boardMessage, setBoardMessage] = useState("");
+  const [sectionCode, setSectionCode] = useState("1001");
+  const [sectionFilter, setSectionFilter] = useState("all");
   const [postForm, setPostForm] = useState({
     title: "",
     strengths: [] as string[],
@@ -1721,6 +1996,8 @@ export function BoardPage({ boardId }: { boardId: string }) {
 
   const board = boardData?.board;
   const course = board?.courseOffering?.course;
+  const sections = boardData?.sections ?? [];
+  const visiblePeople = (people?.people ?? []).filter((item: any) => sectionFilter === "all" || item.sectionCode === sectionFilter);
 
   useEffect(() => {
     if (course && !postForm.title) {
@@ -1728,15 +2005,26 @@ export function BoardPage({ boardId }: { boardId: string }) {
     }
   }, [course, postForm.title]);
 
+  useEffect(() => {
+    if (boardData?.myMembership?.sectionCode) setSectionCode(boardData.myMembership.sectionCode);
+  }, [boardData?.myMembership?.sectionCode]);
+
   async function joinOrLeave() {
     setBoardMessage("");
     if (boardData?.isJoined) {
       const result = await api(`/api/boards/${boardId}/leave`, { method: "DELETE" });
       setBoardMessage(result?.message ?? "已离开这个 Course Board。");
     } else {
-      const result = await api(`/api/boards/${boardId}/join`, { method: "POST" });
+      const result = await api(`/api/boards/${boardId}/join`, { method: "POST", body: JSON.stringify({ sectionCode }) });
       setBoardMessage(result?.message ?? "已加入这个 Course Board。");
     }
+    setRefresh((value) => value + 1);
+  }
+
+  async function changeSection(event: FormEvent) {
+    event.preventDefault();
+    const result = await api(`/api/boards/${boardId}/membership-section`, { method: "PATCH", body: JSON.stringify({ sectionCode }) });
+    setBoardMessage(result?.message ?? "已更新 section。");
     setRefresh((value) => value + 1);
   }
 
@@ -1801,6 +2089,32 @@ export function BoardPage({ boardId }: { boardId: string }) {
                 {boardData.isJoined ? "Leave Course Board" : "Join Course Board"}
               </button>
             </div>
+            <form onSubmit={boardData.isJoined ? changeSection : (event) => { event.preventDefault(); joinOrLeave(); }} className="mt-5 grid gap-3 border border-ink/15 bg-paper p-4">
+              <div>
+                <p className="text-sm font-semibold text-ink">Section / 班级</p>
+                <p className="mt-1 text-xs leading-5 text-ink/58">输入 10xx 格式的 section 编号。如果这门课没有多个 section/班级，默认使用 1001。Section 只用于 TEAMAKING 内部组队筛选，不代表官方选课验证。</p>
+              </div>
+              {sections.length ? (
+                <div className="flex flex-wrap gap-2">
+                  {sections.map((section: any) => (
+                    <button
+                      key={section.code}
+                      type="button"
+                      onClick={() => setSectionCode(section.code)}
+                      className={`rounded-sm border px-3 py-1.5 text-sm font-semibold ${sectionCode === section.code ? "border-ink bg-ink text-paper" : "border-ink/25 bg-chalk text-ink"}`}
+                    >
+                      {section.code} · {section.memberCount ?? 0}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div className="grid gap-2 md:grid-cols-[180px_auto]">
+                <input className={inputClass} value={sectionCode} maxLength={4} onChange={(event) => setSectionCode(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="1001" />
+                <button className="w-fit rounded-sm border border-ink/40 px-4 py-2 text-sm font-semibold">
+                  {boardData.isJoined ? "Update section" : "Join with section"}
+                </button>
+              </div>
+            </form>
             {boardMessage ? (
               <div className="mt-4 border border-ink/20 bg-paper px-3 py-2 text-sm text-ink/68">
                 <span>{boardMessage}</span>
@@ -1854,10 +2168,23 @@ export function BoardPage({ boardId }: { boardId: string }) {
               ))}
             </div>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2">
-              {(people?.people ?? []).map((item: any) => (
-                <ProfileCard key={item.id} user={item.user} />
-              ))}
+            <div className="grid gap-4">
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => setSectionFilter("all")} className={`rounded-sm px-3 py-2 text-sm font-semibold ${sectionFilter === "all" ? "bg-ink text-paper" : "border border-ink/30"}`}>All sections</button>
+                {sections.map((section: any) => (
+                  <button key={section.code} onClick={() => setSectionFilter(section.code)} className={`rounded-sm px-3 py-2 text-sm font-semibold ${sectionFilter === section.code ? "bg-ink text-paper" : "border border-ink/30"}`}>
+                    {section.code} · {section.memberCount ?? 0}
+                  </button>
+                ))}
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                {visiblePeople.map((item: any) => (
+                  <div key={item.id} className="grid gap-2">
+                    <ProfileCard user={item.user} />
+                    <span className="w-fit border border-ink/20 bg-chalk px-2 py-1 text-xs font-semibold text-ink/62">Section {item.sectionCode ?? "未选择"}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -2021,6 +2348,8 @@ export function InboxPage() {
 
 export function MatchesPage() {
   const { data, error, loading } = useApi("/api/matches");
+  const hiddenPostReasons = new Set(["same school", "open to team"]);
+  const visiblePostReasons = (reasons: string[] = []) => reasons.filter((reason) => !hiddenPostReasons.has(String(reason).trim().toLowerCase()));
 
   return (
     <PageShell title="Matches" eyebrow="Discovery" description="MVP 使用简单规则推荐，不使用 AI，也不依赖官方选课数据库。">
@@ -2032,11 +2361,13 @@ export function MatchesPage() {
             {(data?.posts ?? []).map((post: any) => (
               <div key={post.id} className="grid gap-2">
                 <TeamakingPostCard post={post} />
-                <div className="flex flex-wrap gap-2">
-                  {(post.reasons ?? []).map((reason: string) => (
-                    <SkillBadge key={reason}>{reason}</SkillBadge>
-                  ))}
-                </div>
+                {visiblePostReasons(post.reasons ?? []).length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {visiblePostReasons(post.reasons ?? []).map((reason: string) => (
+                      <SkillBadge key={reason}>{reason}</SkillBadge>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -2065,7 +2396,7 @@ export function AdminHomePage() {
   return (
     <PageShell title="Admin Dashboard" eyebrow="Admin" description="管理用户、学校、课程、课程提交、Course Boards、Teamaking Posts、Team Up Requests 和站点配置。" aside="admin">
       <div className="grid gap-4 md:grid-cols-3">
-        {["Users & Roles", "Schools & Domains", "Course Boards", "Support Tickets", "Metrics", "Site Configs", "Audit Logs"].map((item) => (
+        {["Users & Roles", "Admin Users", "Schools & Domains", "Course Boards", "Support Tickets", "Metrics", "Site Configs", "Audit Logs", "Error Events"].map((item) => (
           <Card key={item}>
             <Settings size={20} aria-hidden className="text-coral" />
             <h2 className="mt-3 font-semibold text-ink">{item}</h2>
@@ -2140,7 +2471,25 @@ export function AdminResourcePage({
   defaultActionPath?: string;
 }) {
   const [refresh, setRefresh] = useState(0);
-  const { data, error, loading } = useApi(endpoint, [refresh]);
+  const resource = endpoint.includes("support-tickets")
+    ? "support-tickets"
+    : endpoint.includes("team-up-requests")
+      ? "team-up-requests"
+      : endpoint.split("/").filter(Boolean).pop() ?? "";
+  const [courseQuery, setCourseQuery] = useState("");
+  const [courseStatusFilter, setCourseStatusFilter] = useState("all");
+  const [courseSourceFilter, setCourseSourceFilter] = useState("all");
+  const [courseTagFilter, setCourseTagFilter] = useState("");
+  const [coursePage, setCoursePage] = useState(1);
+  const courseEndpoint = `/api/admin/courses?query=${encodeURIComponent(courseQuery)}&status=${encodeURIComponent(courseStatusFilter)}&source=${encodeURIComponent(courseSourceFilter)}&tag=${encodeURIComponent(courseTagFilter)}&page=${coursePage}&pageSize=25`;
+  const [ticketQuery, setTicketQuery] = useState("");
+  const [ticketStatusFilter, setTicketStatusFilter] = useState("all");
+  const [ticketCategoryFilter, setTicketCategoryFilter] = useState("all");
+  const supportEndpoint = `/api/admin/support-tickets?query=${encodeURIComponent(ticketQuery)}&status=${encodeURIComponent(ticketStatusFilter)}&category=${encodeURIComponent(ticketCategoryFilter)}`;
+  const [errorEventQuery, setErrorEventQuery] = useState("");
+  const errorEventEndpoint = `/api/admin/error-events?query=${encodeURIComponent(errorEventQuery)}`;
+  const dataEndpoint = resource === "courses" ? courseEndpoint : resource === "support-tickets" ? supportEndpoint : resource === "error-events" ? errorEventEndpoint : endpoint;
+  const { data, error, loading } = useApi(dataEndpoint, [refresh]);
   const rows = useMemo(() => rowsFromData(data), [data]);
   const primaryRows = useMemo(() => rows[0]?.[1] ?? [], [rows]);
   const [selectedId, setSelectedId] = useState("");
@@ -2148,32 +2497,731 @@ export function AdminResourcePage({
   const [role, setRole] = useState("profile_completed_user");
   const [adminNote, setAdminNote] = useState("");
   const [textFields, setTextFields] = useState<Record<string, string>>({});
-  const [result, setResult] = useState("");
+  const [result, setResult] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
+  const [busyAction, setBusyAction] = useState("");
+  const [actionData, setActionData] = useState<any>(null);
+  const [importPreviewTab, setImportPreviewTab] = useState("coverage");
+  const [importSearch, setImportSearch] = useState("");
+  const [importPage, setImportPage] = useState(1);
+  const [importEdit, setImportEdit] = useState<{ kind: string; id: string; draft: Record<string, string | boolean>; raw: any } | null>(null);
+  const [courseDraft, setCourseDraft] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (primaryRows.length > 0 && !selectedId) setSelectedId(primaryRows[0].id ?? primaryRows[0].key ?? "");
   }, [primaryRows, selectedId]);
 
-  const resource = endpoint.includes("support-tickets")
-    ? "support-tickets"
-    : endpoint.includes("team-up-requests")
-      ? "team-up-requests"
-      : endpoint.split("/").filter(Boolean).pop() ?? "";
+  const selectedCourse = resource === "courses" ? (data?.courses ?? []).find((course: any) => course.id === selectedId) ?? data?.courses?.[0] : null;
 
-  async function runAction(path: string, method: string, body: Record<string, unknown>) {
-    setResult("");
-    const response = await api(path, { method, body: JSON.stringify(body) });
-    setResult("操作已完成。");
-    setRefresh((value) => value + 1);
+  useEffect(() => {
+    if (resource !== "courses" || !selectedCourse) return;
+    setSelectedId(selectedCourse.id);
+    setCourseDraft({
+      code: selectedCourse.code ?? "",
+      title: selectedCourse.title ?? "",
+      description: selectedCourse.description ?? "",
+      credits: selectedCourse.credits === null || selectedCourse.credits === undefined ? "" : String(selectedCourse.credits),
+      ownerUnit: JSON.stringify(selectedCourse.ownerUnit ?? {}, null, 2),
+      categoryTags: Array.isArray(selectedCourse.categoryTags) ? selectedCourse.categoryTags.join(", ") : "",
+      courseType: selectedCourse.courseType ?? "coursework",
+      status: selectedCourse.status ?? "active",
+      manualNote: selectedCourse.manualNote ?? "",
+      rawJson: JSON.stringify({
+        code: selectedCourse.code ?? "",
+        title: selectedCourse.title ?? "",
+        description: selectedCourse.description ?? "",
+        credits: selectedCourse.credits ?? "",
+        ownerUnit: selectedCourse.ownerUnit ?? {},
+        categoryTags: Array.isArray(selectedCourse.categoryTags) ? selectedCourse.categoryTags : [],
+        courseType: selectedCourse.courseType ?? "coursework",
+        status: selectedCourse.status ?? "active",
+        manualNote: selectedCourse.manualNote ?? ""
+      }, null, 2)
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resource, selectedCourse?.id, selectedCourse?.updatedAt]);
+
+  async function runAction(path: string, method: string, body: Record<string, unknown>, options: { busy?: string; success?: (response: any) => string; after?: (response: any) => void } = {}) {
+    setResult(null);
+    setBusyAction(options.busy ?? path);
+    try {
+      const response = await api(path, { method, body: JSON.stringify(body) });
+      setActionData(response);
+      setResult({ type: "success", message: options.success ? options.success(response) : response.message ?? "操作已完成。" });
+      options.after?.(response);
+      setRefresh((value) => value + 1);
+      return response;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "操作失败，请稍后再试。";
+      setResult({ type: "error", message });
+      return null;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function loadCourseImportPreview(importBatchId: string) {
+    if (!importBatchId) return;
+    setResult(null);
+    setBusyAction("load-import-diff");
+    try {
+      const response = await api(`/api/admin/course-imports/${importBatchId}`);
+      setActionData(response);
+      setImportPreviewTab("diff");
+      const summary = response.selectedBatch?.summary;
+      const counts = summary?.counts ?? response.preview?.counts ?? {};
+      setResult({ type: "success", message: `已载入差异：${summary?.cohortYears?.join(", ") || "unknown"} admission，${counts.courses ?? 0} courses，${counts.curriculumRules ?? 0} rules。` });
+    } catch (error) {
+      setResult({ type: "error", message: error instanceof Error ? error.message : "查看差异失败。" });
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  function payloadForEditing() {
+    if (textFields.payload) return textFields.payload;
+    const batchPayload = actionData?.selectedBatch?.payload;
+    return batchPayload ? JSON.stringify(batchPayload, null, 2) : "";
+  }
+
+  function startImportEdit(row: any) {
+    if (row.kind === "courses") {
+      setImportEdit({
+        kind: row.kind,
+        id: row.id,
+        raw: row.raw ?? row,
+        draft: {
+          code: row.code ?? "",
+          title: row.title ?? "",
+          credits: row.credits === null || row.credits === undefined ? "" : String(row.credits),
+          description: row.raw?.description ?? "",
+          categoryTags: Array.isArray(row.categoryTags) ? row.categoryTags.join(", ") : "",
+          sourceRefIds: Array.isArray(row.sourceRefIds) ? row.sourceRefIds.join(", ") : ""
+        }
+      });
+      return;
+    }
+    const audience = row.raw?.audience ?? {};
+    setImportEdit({
+      kind: row.kind,
+      id: row.id,
+      raw: row.raw ?? row,
+      draft: {
+        courseCode: row.courseCode ?? "",
+        classification: row.classification ?? "",
+        classificationLabel: row.classificationLabel ?? "",
+        studentAction: row.studentAction ?? "default_join",
+        allMajors: row.allMajors === true,
+        majorCodes: Array.isArray(row.majorCodes) ? row.majorCodes.join(", ") : "",
+        cohortYears: Array.isArray(row.cohortYears) ? row.cohortYears.join(", ") : "",
+        relativeTermCodes: Array.isArray(row.relativeTermCodes) ? row.relativeTermCodes.join(", ") : "",
+        sourceRefIds: Array.isArray(row.sourceRefIds) ? row.sourceRefIds.join(", ") : "",
+        confidence: row.confidence ?? "",
+        facultyCodes: Array.isArray(row.facultyCodes) ? row.facultyCodes.join(", ") : "",
+        grades: Array.isArray(audience.grades) ? audience.grades.join(", ") : ""
+      }
+    });
+  }
+
+  function applyImportEdit() {
+    try {
+      if (!importEdit) return;
+      const rawPayload = payloadForEditing();
+      const parsed = JSON.parse(rawPayload);
+      const edited = { ...(importEdit.raw ?? {}) };
+      if (importEdit.kind === "courses") {
+        edited.code = String(importEdit.draft.code ?? "").trim().toUpperCase();
+        edited.title = String(importEdit.draft.title ?? "").trim();
+        edited.description = String(importEdit.draft.description ?? "");
+        const credits = Number(importEdit.draft.credits);
+        edited.credits = Number.isFinite(credits) ? credits : undefined;
+        edited.categoryTags = String(importEdit.draft.categoryTags ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+        edited.sourceRefIds = String(importEdit.draft.sourceRefIds ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+      } else {
+        const audience = { ...(edited.audience ?? {}) };
+        edited.courseCode = String(importEdit.draft.courseCode ?? "").trim().toUpperCase();
+        edited.classification = String(importEdit.draft.classification ?? "").trim();
+        edited.classificationLabel = String(importEdit.draft.classificationLabel ?? "").trim();
+        edited.studentAction = String(importEdit.draft.studentAction ?? "default_join");
+        audience.allMajors = importEdit.draft.allMajors === true;
+        audience.majorCodes = String(importEdit.draft.majorCodes ?? "").split(",").map((item) => item.trim().toUpperCase()).filter(Boolean);
+        audience.facultyCodes = String(importEdit.draft.facultyCodes ?? "").split(",").map((item) => item.trim().toUpperCase()).filter(Boolean);
+        audience.grades = String(importEdit.draft.grades ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+        audience.cohortYears = String(importEdit.draft.cohortYears ?? "").split(",").map((item) => Number(item.trim())).filter(Number.isFinite);
+        edited.audience = audience;
+        edited.relativeTermCodes = String(importEdit.draft.relativeTermCodes ?? "").split(",").map((item) => item.trim().toUpperCase()).filter(Boolean);
+        edited.sourceRefIds = String(importEdit.draft.sourceRefIds ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+        edited.confidence = String(importEdit.draft.confidence ?? "unknown");
+      }
+      const list = Array.isArray(parsed[importEdit.kind]) ? parsed[importEdit.kind] : [];
+      const index = list.findIndex((item: any) => {
+        if (importEdit.kind === "courses") return item.code === importEdit.id;
+        return item.id === importEdit.id;
+      });
+      if (index < 0) throw new Error(`找不到要编辑的 ${importEdit.kind}: ${importEdit.id}`);
+      list[index] = edited;
+      parsed[importEdit.kind] = list;
+      setTextFields({ ...textFields, payload: JSON.stringify(parsed, null, 2) });
+      setImportEdit(null);
+      setResult({ type: "info", message: "已写入 JSON 文本，请重新点击“校验 JSON”更新预览。" });
+    } catch (error) {
+      setResult({ type: "error", message: error instanceof Error ? error.message : "编辑失败。" });
+    }
   }
 
   function selectedLabel(row: any) {
     return row.profile?.displayName ?? row.title ?? row.name ?? row.key ?? row.email ?? row.id;
   }
 
+  function courseDraftPayload(draft: Record<string, string> = courseDraft) {
+    const payload: Record<string, unknown> = {};
+    ["code", "title", "description", "credits", "ownerUnit", "categoryTags", "courseType", "status", "manualNote"].forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(draft, field)) payload[field] = draft[field];
+    });
+    return payload;
+  }
+
+  function courseRawJsonText(draft: Record<string, string> = courseDraft) {
+    return JSON.stringify(courseDraftPayload(draft), null, 2);
+  }
+
+  function coursePayloadFromRawJson(rawJson: string) {
+    const parsed = JSON.parse(rawJson);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("课程 JSON 必须是一个对象。");
+    }
+    const source = parsed as Record<string, unknown>;
+    const payload: Record<string, unknown> = {};
+    ["code", "title", "description", "credits", "courseType", "status", "manualNote"].forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(source, field)) payload[field] = source[field] === null || source[field] === undefined ? "" : String(source[field]);
+    });
+    if (Object.prototype.hasOwnProperty.call(source, "ownerUnit")) {
+      payload.ownerUnit = typeof source.ownerUnit === "string" ? source.ownerUnit : JSON.stringify(source.ownerUnit ?? {}, null, 2);
+    }
+    if (Object.prototype.hasOwnProperty.call(source, "categoryTags")) {
+      payload.categoryTags = Array.isArray(source.categoryTags) ? source.categoryTags.join(", ") : String(source.categoryTags ?? "");
+    }
+    return payload;
+  }
+
+  function renderCourseImportPreview(preview: any) {
+    if (!preview) return null;
+    const counts = preview.counts ?? {};
+    const validation = preview.validation ?? {};
+    const coverage = preview.coverage ?? {};
+    const databaseCoverage = preview.databaseCoverage ?? actionData?.databaseCoverage;
+    const tables = preview.tables ?? {};
+    const activeTable =
+      importPreviewTab === "courses"
+        ? tables.courses ?? []
+        : importPreviewTab === "rules"
+          ? tables.curriculumRules ?? []
+          : importPreviewTab === "sources"
+            ? tables.sourceRefs ?? []
+            : importPreviewTab === "offerings"
+              ? tables.offerings ?? []
+              : [];
+    const filteredTable = activeTable.filter((row: any) => JSON.stringify(row).toLowerCase().includes(importSearch.toLowerCase()));
+    const pageSize = 25;
+    const totalPages = Math.max(1, Math.ceil(filteredTable.length / pageSize));
+    const currentPage = Math.min(importPage, totalPages);
+    const pageRows = filteredTable.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+    const metricRows = [
+      ["New faculties", counts.newFaculties],
+      ["Updated faculties", counts.updatedFaculties],
+      ["New majors", counts.newMajors],
+      ["Updated majors", counts.updatedMajors],
+      ["New courses", counts.newCourses],
+      ["Updated courses", counts.updatedCourses],
+      ["New rules", counts.newRules],
+      ["Changed rules", counts.changedRules],
+      ["Retained rules", counts.retainedRules],
+      ["Rules to deactivate", counts.rulesToDeactivate],
+      ["Default-join rules", counts.defaultJoinRules],
+      ["Searchable rules", counts.searchableRules],
+      ["Offering courses", counts.offeringCourses],
+      ["Offering sections", counts.offeringSections],
+      ["Rules in term context", counts.rulesInAcademicTermContext],
+      ["Boards to activate", counts.courseBoardsToActivate],
+      ["Protected course conflicts", counts.protectedCourseConflicts],
+      ["Estimated default joins", counts.estimatedDefaultJoinUsers]
+    ];
+    const tabs = [
+      ["coverage", "Coverage"],
+      ["courses", "Courses"],
+      ["rules", "Rules"],
+      ["sources", "Sources"],
+      ["offerings", "Offerings"],
+      ["diff", "Diff"]
+    ];
+    const coverageBlocks = [
+      ["Admission years in this JSON", coverage.cohortYears],
+      ["Admission years already in DB", databaseCoverage?.cohortYears],
+      ["Classifications", coverage.classifications],
+      ["Student actions", coverage.studentActions],
+      ["Majors", coverage.majors],
+      ["Relative terms", coverage.relativeTerms]
+    ];
+    function renderCountList(values: any[]) {
+      const items = Array.isArray(values) ? values : [];
+      return (
+        <div className="max-h-56 overflow-auto pr-2">
+          {items.length ? items.map((item) => (
+            <div key={item.key} className="flex items-center justify-between gap-3 border-b border-ink/10 py-1.5 text-sm">
+              <span className="truncate text-ink/72">{item.key}</span>
+              <span className="font-semibold text-ink">{item.count}</span>
+            </div>
+          )) : <p className="text-sm text-ink/48">None</p>}
+        </div>
+      );
+    }
+    function renderDataTable(rows: any[]) {
+      const headers =
+        importPreviewTab === "courses"
+          ? ["code", "title", "credits", "status", "categoryTags", "protectedConflicts"]
+          : importPreviewTab === "rules"
+            ? ["id", "courseCode", "cohortYears", "majorCodes", "relativeTermCodes", "classification", "studentAction", "confidence"]
+            : importPreviewTab === "sources"
+              ? ["id", "title", "sourceType", "url"]
+              : ["id", "courseCode", "semesterCode", "sections", "status", "sourceRefIds"];
+      const headerLabels: Record<string, string> = {
+        cohortYears: "admissionYears",
+        semesterCode: "academicTerm",
+        courseCode: "courseCode",
+        relativeTermCodes: "relativeTerms"
+      };
+      const canEditRows = importPreviewTab === "courses" || importPreviewTab === "rules";
+      return (
+        <div className="grid gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              className={`${inputClass} md:max-w-sm`}
+              placeholder="Search code, major, classification, source..."
+              value={importSearch}
+              onChange={(event) => {
+                setImportSearch(event.target.value);
+                setImportPage(1);
+              }}
+            />
+            <span className="text-sm text-ink/56">{filteredTable.length} rows</span>
+            <button type="button" className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold" onClick={() => setImportPage(Math.max(1, currentPage - 1))}>Prev</button>
+            <span className="text-sm font-semibold text-ink">Page {currentPage} / {totalPages}</span>
+            <button type="button" className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold" onClick={() => setImportPage(Math.min(totalPages, currentPage + 1))}>Next</button>
+          </div>
+          <div className="max-h-[520px] overflow-auto border border-ink/15">
+            <table className="w-full min-w-[980px] border-collapse text-left text-xs">
+              <thead className="sticky top-0 bg-ink text-paper">
+                <tr>
+                  {headers.map((header) => <th key={header} className="px-3 py-2 font-semibold">{headerLabels[header] ?? header}</th>)}
+                  {canEditRows ? <th className="px-3 py-2 font-semibold">Edit</th> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={`${row.kind}-${row.id}`} className="border-b border-ink/10 odd:bg-chalk">
+                    {headers.map((header) => (
+                      <td key={header} className="max-w-[260px] px-3 py-2 align-top">
+                        <span className="line-clamp-3 break-words">{previewValue(row[header])}</span>
+                      </td>
+                    ))}
+                    {canEditRows ? (
+                      <td className="px-3 py-2 align-top">
+                        <button type="button" onClick={() => startImportEdit(row)} className="rounded-sm border border-ink/30 px-2 py-1 font-semibold">Edit</button>
+                      </td>
+                    ) : null}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+    function renderDiffTable() {
+      const asArray = (value: any) => Array.isArray(value) ? value : [];
+      const rows = [
+        ...asArray(preview.diff?.courses?.added).map((value: string) => ({ category: "Added course", item: value, details: "Will create a course catalog row." })),
+        ...asArray(preview.diff?.courses?.updated).map((value: string) => ({ category: "Updated course", item: value, details: "Catalog metadata differs from this JSON." })),
+        ...asArray(preview.diff?.courses?.protectedConflicts).map((item: any) => ({
+          category: "Manual override conflict",
+          item: item.code,
+          details: asArray(item.fields).join(", ")
+        })),
+        ...asArray(preview.diff?.rules?.added).map((value: string) => ({ category: "Added rule", item: value, details: "Will add an admission-year curriculum rule." })),
+        ...asArray(preview.diff?.rules?.changed).map((item: any) => ({
+          category: "Changed rule",
+          item: item.id,
+          details: asArray(item.changedFields).join(", ")
+        })),
+        ...asArray(preview.diff?.rules?.wouldDeactivate).map((value: string) => ({ category: "Rule to deactivate", item: value, details: "Active database rule is absent from this JSON." }))
+      ];
+      const filteredRows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(importSearch.toLowerCase()));
+      const diffTotalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+      const diffCurrentPage = Math.min(importPage, diffTotalPages);
+      const diffPageRows = filteredRows.slice((diffCurrentPage - 1) * pageSize, diffCurrentPage * pageSize);
+
+      return (
+        <div className="grid gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              className={`${inputClass} md:max-w-sm`}
+              placeholder="Search diff by code, rule id, category..."
+              value={importSearch}
+              onChange={(event) => {
+                setImportSearch(event.target.value);
+                setImportPage(1);
+              }}
+            />
+            <span className="text-sm text-ink/56">{filteredRows.length} changes</span>
+            <button type="button" className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold" onClick={() => setImportPage(Math.max(1, diffCurrentPage - 1))}>Prev</button>
+            <span className="text-sm font-semibold text-ink">Page {diffCurrentPage} / {diffTotalPages}</span>
+            <button type="button" className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold" onClick={() => setImportPage(Math.min(diffTotalPages, diffCurrentPage + 1))}>Next</button>
+          </div>
+          <div className="max-h-[520px] overflow-auto border border-ink/15">
+            <table className="w-full min-w-[760px] border-collapse text-left text-xs">
+              <thead className="sticky top-0 bg-ink text-paper">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">Category</th>
+                  <th className="px-3 py-2 font-semibold">Code / rule</th>
+                  <th className="px-3 py-2 font-semibold">What changed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {diffPageRows.length ? diffPageRows.map((row, index) => (
+                  <tr key={`${row.category}-${row.item}-${index}`} className="border-b border-ink/10 odd:bg-chalk">
+                    <td className="px-3 py-2 align-top font-semibold text-ink">{row.category}</td>
+                    <td className="px-3 py-2 align-top font-mono text-ink/76">{row.item}</td>
+                    <td className="px-3 py-2 align-top text-ink/64">{row.details || "No field detail available"}</td>
+                  </tr>
+                )) : (
+                  <tr>
+                    <td className="px-3 py-4 text-sm text-ink/48" colSpan={3}>No diff rows match this search.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="grid gap-5 border-2 border-ink bg-paper p-4 shadow-soft">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink/12 pb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-ink">Import Preview</h3>
+            <p className="mt-1 text-sm text-ink/58">
+              {preview.importMode === "cohort_handbook" ? "Admission-year programme handbook" : "Combined import"} · {preview.semester?.label ?? preview.semester?.code ?? "Academic term context"}
+            </p>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-ink/64">{preview.semester?.note}</p>
+          </div>
+          <span className={`rounded-sm px-3 py-1 text-xs font-semibold ${validation.ok ? "bg-forest text-white" : "bg-rust text-white"}`}>
+            {validation.ok ? "Valid" : "Invalid"}
+          </span>
+        </div>
+        <div className="grid gap-2 md:grid-cols-4">
+          {metricRows.map(([label, value]) => (
+            <div key={label as string} className="border border-ink/15 bg-chalk px-3 py-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink/48">{label}</p>
+              <p className="mt-1 text-xl font-semibold text-ink">{String(value ?? 0)}</p>
+            </div>
+          ))}
+        </div>
+        {validation.errors?.length ? (
+          <div className="border border-rust/40 bg-rust/5 p-3 text-sm text-rust">
+            <p className="font-semibold">Errors</p>
+            <ul className="mt-2 list-disc pl-5">
+              {validation.errors.slice(0, 8).map((item: string) => <li key={item}>{item}</li>)}
+            </ul>
+          </div>
+        ) : null}
+        {validation.warnings?.length ? (
+          <div className="border border-ink/20 bg-chalk p-3 text-sm text-ink/68">
+            <p className="font-semibold text-ink">Warnings</p>
+            <ul className="mt-2 list-disc pl-5">
+              {validation.warnings.slice(0, 8).map((item: string) => <li key={item}>{item}</li>)}
+            </ul>
+          </div>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {tabs.map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                setImportPreviewTab(key);
+                setImportPage(1);
+              }}
+              className={`rounded-sm px-3 py-2 text-sm font-semibold ${importPreviewTab === key ? "bg-ink text-paper" : "border border-ink/30 text-ink"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {importPreviewTab === "coverage" ? (
+          <div className="grid gap-3 md:grid-cols-3">
+            {coverageBlocks.map(([label, values]) => (
+              <div key={label as string} className="border border-ink/15 bg-chalk p-3">
+                <p className="mb-2 text-sm font-semibold text-ink">{label as string}</p>
+                {renderCountList(values as any[])}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {["courses", "rules", "sources", "offerings"].includes(importPreviewTab) ? renderDataTable(pageRows) : null}
+        {importPreviewTab === "diff" ? renderDiffTable() : null}
+        {importEdit ? (
+          <div className="border-2 border-coral bg-coral/5 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="font-semibold text-ink">Editing {importEdit.kind === "courses" ? "course" : "curriculum rule"}: {importEdit.id}</p>
+              <button type="button" className="rounded-sm border border-ink/30 px-3 py-1 text-sm font-semibold" onClick={() => setImportEdit(null)}>Close</button>
+            </div>
+            {importEdit.kind === "courses" ? (
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <Field label="Course code"><input className={inputClass} value={String(importEdit.draft.code ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, code: event.target.value } })} /></Field>
+                <Field label="Title"><input className={inputClass} value={String(importEdit.draft.title ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, title: event.target.value } })} /></Field>
+                <Field label="Credits"><input className={inputClass} value={String(importEdit.draft.credits ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, credits: event.target.value } })} /></Field>
+                <Field label="Category tags"><input className={inputClass} value={String(importEdit.draft.categoryTags ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, categoryTags: event.target.value } })} /></Field>
+                <Field label="Source refs"><input className={inputClass} value={String(importEdit.draft.sourceRefIds ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, sourceRefIds: event.target.value } })} /></Field>
+                <Field label="Description"><textarea className={inputClass} rows={3} value={String(importEdit.draft.description ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, description: event.target.value } })} /></Field>
+              </div>
+            ) : (
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <Field label="Course code"><input className={inputClass} value={String(importEdit.draft.courseCode ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, courseCode: event.target.value } })} /></Field>
+                <Field label="Classification">
+                  <select className={inputClass} value={String(importEdit.draft.classification ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, classification: event.target.value } })}>
+                    {["major_required", "major_elective", "concentration_required", "free_elective", "university_core", "bba_core", "general_education", "internship", "final_year_project", "unknown"].map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                </Field>
+                <Field label="Student action">
+                  <select className={inputClass} value={String(importEdit.draft.studentAction ?? "default_join")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, studentAction: event.target.value } })}>
+                    {["default_join", "searchable_add", "recommend_only", "hidden"].map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                </Field>
+                <Field label="Major codes"><input className={inputClass} value={String(importEdit.draft.majorCodes ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, majorCodes: event.target.value } })} /></Field>
+                <Field label="Faculty codes"><input className={inputClass} value={String(importEdit.draft.facultyCodes ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, facultyCodes: event.target.value } })} /></Field>
+                <Field label="Admission years"><input className={inputClass} value={String(importEdit.draft.cohortYears ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, cohortYears: event.target.value } })} /></Field>
+                <Field label="Relative terms"><input className={inputClass} value={String(importEdit.draft.relativeTermCodes ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, relativeTermCodes: event.target.value } })} /></Field>
+                <Field label="Confidence"><input className={inputClass} value={String(importEdit.draft.confidence ?? "")} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, confidence: event.target.value } })} /></Field>
+                <label className="flex items-center gap-2 text-sm font-semibold text-ink">
+                  <input type="checkbox" checked={importEdit.draft.allMajors === true} onChange={(event) => setImportEdit({ ...importEdit, draft: { ...importEdit.draft, allMajors: event.target.checked } })} />
+                  All majors
+                </label>
+              </div>
+            )}
+            <details className="mt-3 text-xs text-ink/58">
+              <summary className="cursor-pointer font-semibold text-ink">Advanced raw JSON preview</summary>
+              <pre className="mt-2 max-h-56 overflow-auto border border-ink/15 bg-paper p-3">{JSON.stringify(importEdit.raw, null, 2)}</pre>
+            </details>
+            <button type="button" onClick={applyImportEdit} className="mt-3 rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">Apply edit to JSON</button>
+          </div>
+        ) : null}
+        </div>
+    );
+  }
+
   function renderAdminForm() {
+    if (resource === "versions") {
+      const activeVersion = data?.activeVersion;
+      const versions = data?.versions ?? [];
+      const checkpoints = data?.checkpoints ?? [];
+      return (
+        <div className="grid gap-5">
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="border border-ink/15 bg-chalk p-4 md:col-span-2">
+              <p className="text-sm font-semibold uppercase tracking-wide text-ink/50">Active version</p>
+              <h3 className="mt-1 text-xl font-semibold text-ink">{activeVersion?.name ?? "Unknown"}</h3>
+              <p className="mt-2 text-sm text-ink/62">{activeVersion?.phase ?? "testing"} · {activeVersion?.status ?? "active"} · started {activeVersion?.startedAt ? new Date(activeVersion.startedAt).toLocaleString() : ""}</p>
+            </div>
+            <button
+              type="button"
+              disabled={Boolean(busyAction)}
+              onClick={() => runAction("/api/admin/versions/checkpoints", "POST", { label: textFields.checkpointLabel, reason: textFields.checkpointReason }, {
+                busy: "create-checkpoint",
+                success: (response) => response.message ?? "已创建检查点。"
+              })}
+              className="rounded-sm border border-ink/40 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              {busyAction === "create-checkpoint" ? "创建中..." : "创建检查点"}
+            </button>
+            <input className={inputClass} placeholder="检查点名称（可选）" value={textFields.checkpointLabel ?? ""} onChange={(event) => setTextFields({ ...textFields, checkpointLabel: event.target.value })} />
+          </div>
+
+          <form
+            className="grid gap-3 border border-rust/25 bg-rust/5 p-4 md:grid-cols-[1fr_160px_1fr_auto]"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAction("/api/admin/versions", "POST", {
+                name: textFields.versionName,
+                phase: textFields.versionPhase,
+                notes: textFields.versionNotes,
+                reason: textFields.versionReason
+              }, {
+                busy: "open-version",
+                success: (response) => response.message ?? "已开启新版本。"
+              });
+            }}
+          >
+            <div className="md:col-span-4">
+              <h3 className="text-lg font-semibold text-ink">Open a new blank version</h3>
+              <p className="mt-1 text-sm leading-6 text-ink/62">会先保存当前版本最终状态，再开启新版本。普通用户、课程、学期、导入数据不复制；管理员账号和学校邮箱域名会复制，便于继续管理。</p>
+            </div>
+            <input className={inputClass} placeholder="新版本名称，例如 2026-05 online test" value={textFields.versionName ?? ""} onChange={(event) => setTextFields({ ...textFields, versionName: event.target.value })} />
+            <select className={inputClass} value={textFields.versionPhase ?? "testing"} onChange={(event) => setTextFields({ ...textFields, versionPhase: event.target.value })}>
+              {["testing", "staging", "production"].map((item) => <option key={item}>{item}</option>)}
+            </select>
+            <input className={inputClass} placeholder="原因 / 备注" value={textFields.versionReason ?? ""} onChange={(event) => setTextFields({ ...textFields, versionReason: event.target.value })} />
+            <button disabled={Boolean(busyAction)} className="rounded-sm bg-rust px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">{busyAction === "open-version" ? "开启中..." : "开启新版本"}</button>
+          </form>
+
+          <div className="border border-ink/15">
+            <div className="border-b border-ink/10 bg-chalk px-4 py-3">
+              <h3 className="font-semibold text-ink">Versions</h3>
+            </div>
+            <div className="max-h-80 overflow-auto">
+              <table className="w-full min-w-[900px] border-collapse text-left text-sm">
+                <thead className="sticky top-0 bg-ink text-paper"><tr>{["Name", "Phase", "Status", "Users", "Schools", "Imports", "Datasets", "Started", "Ended"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+                <tbody>
+                  {versions.map((version: any) => (
+                    <tr key={version.id} className="border-b border-ink/10">
+                      <td className="px-3 py-2 font-semibold">{version.name}</td>
+                      <td className="px-3 py-2">{version.phase}</td>
+                      <td className="px-3 py-2"><StatusPill status={version.status} /></td>
+                      <td className="px-3 py-2">{version.counts?.users ?? 0}</td>
+                      <td className="px-3 py-2">{version.counts?.schools ?? 0}</td>
+                      <td className="px-3 py-2">{version.counts?.importBatches ?? 0}</td>
+                      <td className="px-3 py-2">{version.counts?.importDatasets ?? 0}</td>
+                      <td className="px-3 py-2">{version.startedAt ? new Date(version.startedAt).toLocaleString() : ""}</td>
+                      <td className="px-3 py-2">{version.endedAt ? new Date(version.endedAt).toLocaleString() : ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="border border-ink/15">
+            <div className="border-b border-ink/10 bg-chalk px-4 py-3">
+              <h3 className="font-semibold text-ink">Checkpoints</h3>
+            </div>
+            <div className="max-h-80 overflow-auto">
+              <table className="w-full min-w-[860px] border-collapse text-left text-sm">
+                <thead className="sticky top-0 bg-ink text-paper"><tr>{["Label", "Version", "Kind", "Summary", "Created", "Action"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+                <tbody>
+                  {checkpoints.map((checkpoint: any) => (
+                    <tr key={checkpoint.id} className="border-b border-ink/10">
+                      <td className="px-3 py-2 font-semibold">{checkpoint.label}</td>
+                      <td className="px-3 py-2">{checkpoint.appVersionName}</td>
+                      <td className="px-3 py-2">{checkpoint.kind}</td>
+                      <td className="max-w-[280px] truncate px-3 py-2 text-xs">{previewValue(checkpoint.summary)}</td>
+                      <td className="px-3 py-2">{checkpoint.createdAt ? new Date(checkpoint.createdAt).toLocaleString() : ""}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-2">
+                          <a className="rounded-sm border border-ink/30 px-2 py-1 text-xs font-semibold" href={checkpoint.downloadUrl}>下载</a>
+                          <button
+                            type="button"
+                            className="rounded-sm border border-rust/50 px-2 py-1 text-xs font-semibold text-rust"
+                            onClick={() => runAction(`/api/admin/versions/checkpoints/${checkpoint.id}/restore-as-new-version`, "POST", {}, {
+                              busy: `restore-${checkpoint.id}`,
+                              success: (response) => response.message ?? "已从检查点创建新版本。"
+                            })}
+                          >
+                            恢复为新版本
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (resource === "logs") {
-      return <p className="text-sm leading-6 text-ink/62">审计日志只读，管理员操作会自动写入这里。</p>;
+      const operationLogs = data?.operationLogs ?? [];
+      const auditLogs = data?.logs ?? [];
+      return (
+        <div className="grid gap-5">
+          <p className="text-sm leading-6 text-ink/62">操作日志记录写入、编辑和与他人的交互；翻页、跳转、只读浏览不会记录。</p>
+          <div className="max-h-96 overflow-auto border border-ink/15">
+            <table className="w-full min-w-[920px] border-collapse text-left text-sm">
+              <thead className="sticky top-0 bg-ink text-paper"><tr>{["Time", "Actor", "Action", "Target", "Status", "Summary"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+              <tbody>
+                {operationLogs.map((log: any) => (
+                  <tr key={log.id} className="border-b border-ink/10">
+                    <td className="px-3 py-2">{log.createdAt ? new Date(log.createdAt).toLocaleString() : ""}</td>
+                    <td className="px-3 py-2">{log.actor?.profile?.displayName ?? log.actor?.email ?? log.actorRole ?? "system"}</td>
+                    <td className="px-3 py-2 font-semibold">{log.action}</td>
+                    <td className="px-3 py-2">{log.targetType ?? ""} {log.targetId ?? ""}</td>
+                    <td className="px-3 py-2"><StatusPill status={log.status} /></td>
+                    <td className="max-w-[320px] truncate px-3 py-2 text-xs">{previewValue(log.summary)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <details className="border border-ink/15 bg-chalk p-3">
+            <summary className="cursor-pointer text-sm font-semibold text-ink">Admin audit details</summary>
+            <div className="mt-3 max-h-72 overflow-auto">
+              <table className="w-full min-w-[860px] border-collapse text-left text-xs">
+                <thead className="sticky top-0 bg-ink text-paper"><tr>{["Time", "Admin", "Action", "Target", "After"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+                <tbody>
+                  {auditLogs.map((log: any) => (
+                    <tr key={log.id} className="border-b border-ink/10">
+                      <td className="px-3 py-2">{log.createdAt ? new Date(log.createdAt).toLocaleString() : ""}</td>
+                      <td className="px-3 py-2">{log.adminUser?.profile?.displayName ?? log.adminUser?.email}</td>
+                      <td className="px-3 py-2">{log.action}</td>
+                      <td className="px-3 py-2">{log.targetType} {log.targetId}</td>
+                      <td className="max-w-[320px] truncate px-3 py-2">{previewValue(log.afterValue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      );
+    }
+
+    if (resource === "error-events") {
+      const events = data?.errorEvents ?? [];
+      const summary = data?.summary ?? {};
+      return (
+        <div className="grid gap-5">
+          <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+            <input
+              className={inputClass}
+              placeholder="搜索 errorCode / requestId / userId / path"
+              value={errorEventQuery}
+              onChange={(event) => setErrorEventQuery(event.target.value)}
+            />
+            <span className="rounded-sm border border-ink/20 px-3 py-2 text-sm font-semibold text-ink">{summary.total ?? events.length} events</span>
+          </div>
+          <div className="max-h-[560px] overflow-auto border border-ink/15">
+            <table className="w-full min-w-[1100px] border-collapse text-left text-sm">
+              <thead className="sticky top-0 bg-ink text-paper">
+                <tr>{["Time", "Code", "Request", "User", "Path", "Status", "Message"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr>
+              </thead>
+              <tbody>
+                {events.length ? events.map((event: any) => (
+                  <tr key={event.id} className="border-b border-ink/10">
+                    <td className="px-3 py-2">{event.createdAt ? new Date(event.createdAt).toLocaleString() : ""}</td>
+                    <td className="px-3 py-2 font-semibold text-rust">{event.errorCode}</td>
+                    <td className="max-w-[180px] truncate px-3 py-2 font-mono text-xs">{event.requestId}</td>
+                    <td className="max-w-[200px] truncate px-3 py-2">{event.user?.profile?.displayName ?? event.user?.email ?? event.userId ?? "anonymous"}</td>
+                    <td className="max-w-[260px] truncate px-3 py-2">{event.method} {event.path}</td>
+                    <td className="px-3 py-2">{event.status}</td>
+                    <td className="max-w-[320px] truncate px-3 py-2">{event.message}</td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={7} className="px-3 py-4 text-ink/48">没有匹配的错误事件。</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
     }
 
     if (resource === "course-submissions") {
@@ -2188,42 +3236,204 @@ export function AdminResourcePage({
     }
 
     if (resource === "course-imports") {
+      const preview = actionData?.preview ?? actionData?.validation?.preview;
+      const importBatches = data?.importBatches ?? [];
+      const selectedBatch = importBatches.find((row: any) => row.id === selectedId) ?? importBatches[0];
+      const selectedBatchId = selectedBatch?.id;
+      const readableBatchLabel = (row: any) => {
+        const years = row.cohortYears?.length ? `${row.cohortYears.join(", ")} admission` : "unknown admission";
+        const counts = row.summary?.counts ?? {};
+        const created = row.createdAt ? new Date(row.createdAt).toLocaleString() : "unknown time";
+        return `${row.name ?? "Untitled"} · ${years} · preview ${row.semesterCode ?? "no activation term"} · ${counts.curriculumRules ?? 0} rules · ${row.status} · created ${created}`;
+      };
+      const pendingCount = importBatches.filter((row: any) => row.status === "pending").length;
       return (
-        <div className="grid gap-4">
+        <div className="grid gap-5">
+          <div className="border border-ink/15 bg-chalk p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-wide text-ink/50">Admission-year configuration operations</p>
+                <h3 className="mt-1 text-xl font-semibold text-ink">导入队列与配置历史</h3>
+                <p className="mt-1 text-sm text-ink/60">每一行是一份 JSON 配置操作。批准后会写入课程目录和 admission-year 课程安排规则；旧的 approved 行是历史记录，不代表同一 JSON 被拆成多个 pending。</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <span className="rounded-sm bg-paper px-3 py-1 text-sm font-semibold text-ink">{pendingCount} pending</span>
+                <span className="rounded-sm bg-paper px-3 py-1 text-sm font-semibold text-ink">{importBatches.length} total records</span>
+              </div>
+            </div>
+            <div className="mt-4 max-h-80 overflow-auto border border-ink/10 bg-paper">
+              <table className="w-full min-w-[920px] border-collapse text-left text-sm">
+                <thead className="sticky top-0 bg-ink text-paper">
+                  <tr>
+                    {["配置名称", "Admission year", "激活预览学期", "状态", "课程目录项", "配置规则", "Warnings", "来源", "创建时间", "操作"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {importBatches.map((row: any) => {
+                    const counts = row.summary?.counts ?? {};
+                    return (
+                      <tr key={row.id} className={`border-b border-ink/10 ${selectedBatchId === row.id ? "bg-mist/60" : ""}`}>
+                        <td className="px-3 py-2 font-semibold">{row.name ?? row.sourceLabel ?? "Untitled import"}</td>
+                        <td className="px-3 py-2">{row.cohortYears?.length ? row.cohortYears.join(", ") : "Unknown"}</td>
+                        <td className="px-3 py-2">{row.semesterCode ?? "None"}</td>
+                        <td className="px-3 py-2"><StatusPill status={row.status} /></td>
+                        <td className="px-3 py-2">{counts.courses ?? 0}</td>
+                        <td className="px-3 py-2">{counts.curriculumRules ?? 0}</td>
+                        <td className="px-3 py-2">{counts.warnings ?? 0}</td>
+                        <td className="max-w-[260px] truncate px-3 py-2">{row.sourceLabel ?? row.summary?.sourceLabel ?? "Unknown source"}</td>
+                        <td className="px-3 py-2">{row.createdAt ? new Date(row.createdAt).toLocaleString() : ""}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap gap-2">
+                            <button type="button" onClick={() => { setSelectedId(row.id); loadCourseImportPreview(row.id); }} className="rounded-sm border border-ink/30 px-2 py-1 text-xs font-semibold">
+                              查看差异
+                            </button>
+                            {row.status === "pending" ? (
+                              <button
+                                type="button"
+                                disabled={Boolean(busyAction)}
+                                onClick={() => {
+                                  setSelectedId(row.id);
+                                  runAction(`/api/admin/course-imports/${row.id}/approve`, "POST", {}, {
+                                    busy: "approve-import",
+                                    success: (response) => {
+                                      const activated = response.result?.activatedBoards?.length ?? 0;
+                                      return `已批准 ${row.name ?? "配置"}：课程目录和 admission-year 配置规则已写入，激活/复用 ${activated} 个 Course Board。`;
+                                    }
+                                  });
+                                }}
+                                className="rounded-sm bg-forest px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                              >
+                                批准
+                              </button>
+                            ) : null}
+                            {row.status === "pending" ? (
+                              <button
+                                type="button"
+                                disabled={Boolean(busyAction)}
+                                onClick={() => {
+                                  const note = window.prompt("拒绝原因 / 管理备注，可留空") ?? "";
+                                  setSelectedId(row.id);
+                                  runAction(`/api/admin/course-imports/${row.id}/reject`, "POST", { adminNote: note }, {
+                                    busy: "reject-import",
+                                    success: () => `已拒绝 ${row.name ?? "该配置"}，课程目录和配置规则未改变。`
+                                  });
+                                }}
+                                className="rounded-sm border border-rust px-2 py-1 text-xs font-semibold text-rust disabled:opacity-50"
+                              >
+                                拒绝
+                              </button>
+                            ) : null}
+                            {row.dataset?.downloadUrl ? <a className="rounded-sm border border-ink/30 px-2 py-1 text-xs font-semibold" href={row.dataset.downloadUrl}>下载</a> : null}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
           <form
-            className="grid gap-3"
+            className="grid gap-3 border border-ink/15 p-4"
             onSubmit={(event) => {
               event.preventDefault();
-              runAction("/api/admin/course-imports", "POST", { payload: textFields.payload });
+              runAction("/api/admin/course-imports", "POST", { payload: textFields.payload, name: textFields.importName }, {
+                busy: "create-import",
+                success: (response) => {
+                  const summary = response.importBatch?.summary;
+                  const counts = summary?.counts ?? response.validation?.counts ?? {};
+                  const years = response.importBatch?.cohortYears?.join(", ") || summary?.cohortYears?.join(", ") || "unknown";
+                  return `已创建待审批配置：${years} admission，${counts.courses ?? 0} courses，${counts.curriculumRules ?? 0} rules。`;
+                },
+                after: (response) => {
+                  if (response.importBatch?.id) setSelectedId(response.importBatch.id);
+                  setImportPreviewTab("coverage");
+                }
+              });
             }}
           >
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-wide text-ink/50">Step 1</p>
+              <h3 className="mt-1 text-lg font-semibold text-ink">Paste and validate JSON</h3>
+              <p className="mt-1 text-sm text-ink/60">校验只读取 JSON，不写入数据库；创建待审批配置只会生成一条 pending 操作。系统会把 JSON 理解为课程目录、admission-year 配置规则和来源证据，便于之后查询、编辑、审计和回溯。</p>
+            </div>
+            <input
+              className={inputClass}
+              placeholder="本次配置名称，例如 2025 admission handbook · first full import"
+              value={textFields.importName ?? ""}
+              onChange={(event) => setTextFields({ ...textFields, importName: event.target.value })}
+            />
             <textarea
               className={`${inputClass} min-h-[220px] font-mono text-xs`}
-              placeholder='粘贴 BNBU cleaned JSON，例如 {"schemaVersion":"teamaking.bnbu_course_import.v1", ...}'
+              placeholder='粘贴 BNBU cleaned JSON，例如 {"schemaVersion":"teamaking.bnbu_course_import.v2", ...}'
               value={textFields.payload ?? ""}
               onChange={(event) => setTextFields({ ...textFields, payload: event.target.value })}
             />
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => runAction("/api/admin/course-imports/validate", "POST", { payload: textFields.payload })} className="rounded-sm border border-ink/40 px-4 py-2 text-sm font-semibold">
-                校验 JSON
+              <button
+                type="button"
+                disabled={Boolean(busyAction)}
+                onClick={() => runAction("/api/admin/course-imports/validate", "POST", { payload: textFields.payload }, {
+                  busy: "validate-import",
+                  success: (response) => {
+                    const counts = response.validation?.counts ?? {};
+                    const years = response.preview?.coverage?.cohortYears?.map((item: any) => item.key).join(", ") || "unknown";
+                    return `校验通过：${years} admission，${counts.courses ?? 0} courses，${counts.curriculumRules ?? 0} rules，${response.validation?.warnings?.length ?? 0} warnings。`;
+                  },
+                  after: () => setImportPreviewTab("coverage")
+                })}
+                className="rounded-sm border border-ink/40 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+              >
+                {busyAction === "validate-import" ? "校验中..." : "校验 JSON"}
               </button>
-              <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">创建待审批批次</button>
+              <button disabled={Boolean(busyAction)} className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">
+                {busyAction === "create-import" ? "创建中..." : "创建待审批配置"}
+              </button>
             </div>
           </form>
+          <div className="border border-ink/15 p-4">
+            <div className="mb-3">
+              <p className="text-sm font-semibold uppercase tracking-wide text-ink/50">Step 2</p>
+              <h3 className="mt-1 text-lg font-semibold text-ink">Preview, search, edit and compare</h3>
+              <p className="mt-1 text-sm text-ink/60">Diff 的基线是当前数据库 active 数据；课程目录和 admission-year 配置规则分开显示。</p>
+            </div>
+          {renderCourseImportPreview(preview)}
+          </div>
           <form
-            className="grid gap-3 md:grid-cols-[1fr_1fr_auto_auto]"
+            className="grid gap-3 border border-ink/15 p-4 md:grid-cols-[1fr_auto_1fr_auto_auto]"
             onSubmit={(event) => {
               event.preventDefault();
-              runAction(`/api/admin/course-imports/${selectedId}/approve`, "POST", {});
+              runAction(`/api/admin/course-imports/${selectedBatchId}/approve`, "POST", {}, {
+                busy: "approve-import",
+                success: (response) => {
+                  const activated = response.result?.activatedBoards?.length ?? 0;
+                  return `已批准导入：激活/复用 ${activated} 个 Course Board，课程目录和 admission-year 配置规则已写入。`;
+                }
+              });
             }}
           >
-            <select className={inputClass} value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
-              {primaryRows.map((row) => <option key={row.id} value={row.id}>{row.semesterCode ?? row.id} · {row.status}</option>)}
+            <div className="md:col-span-5">
+              <p className="text-sm font-semibold uppercase tracking-wide text-ink/50">Step 3</p>
+              <h3 className="mt-1 text-lg font-semibold text-ink">Approve or reject one pending configuration</h3>
+            </div>
+            <select className={inputClass} value={selectedBatchId ?? ""} onChange={(event) => setSelectedId(event.target.value)}>
+              {importBatches.map((row: any) => <option key={row.id} value={row.id}>{readableBatchLabel(row)}</option>)}
             </select>
+            <button type="button" onClick={() => loadCourseImportPreview(selectedBatchId)} className="rounded-sm border border-ink/40 px-4 py-2 text-sm font-semibold">
+              {busyAction === "load-import-diff" ? "载入中..." : "查看差异"}
+            </button>
             <input className={inputClass} placeholder="拒绝原因 / 管理备注" value={adminNote} onChange={(event) => setAdminNote(event.target.value)} />
-            <button className="rounded-sm bg-forest px-4 py-2 text-sm font-semibold text-white">批准导入</button>
-            <button type="button" onClick={() => runAction(`/api/admin/course-imports/${selectedId}/reject`, "POST", { adminNote })} className="rounded-sm border border-rust px-4 py-2 text-sm font-semibold text-rust">
-              拒绝
+            <button disabled={!selectedBatchId || Boolean(busyAction)} className="rounded-sm bg-forest px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busyAction === "approve-import" ? "批准中..." : "批准导入"}</button>
+            <button
+              type="button"
+              disabled={!selectedBatchId || Boolean(busyAction)}
+              onClick={() => runAction(`/api/admin/course-imports/${selectedBatchId}/reject`, "POST", { adminNote }, {
+                busy: "reject-import",
+                success: () => "已拒绝该待审批配置，数据库课程和规则未改变。"
+              })}
+              className="rounded-sm border border-rust px-4 py-2 text-sm font-semibold text-rust disabled:opacity-50"
+            >
+              {busyAction === "reject-import" ? "拒绝中..." : "拒绝"}
             </button>
           </form>
         </div>
@@ -2255,6 +3465,54 @@ export function AdminResourcePage({
       );
     }
 
+    if (resource === "admin-users") {
+      const adminUsers = data?.adminUsers ?? [];
+      return (
+        <div className="grid gap-5">
+          <form
+            className="grid gap-3 md:grid-cols-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAction("/api/admin/admin-users", "POST", {
+                email: textFields.email,
+                password: textFields.password,
+                displayName: textFields.displayName,
+                role
+              }, {
+                busy: "create-admin-user",
+                success: (response) => response.message ?? "管理员账号已创建。"
+              });
+            }}
+          >
+            <input className={inputClass} placeholder="管理员邮箱" value={textFields.email ?? ""} onChange={(event) => setTextFields({ ...textFields, email: event.target.value })} />
+            <input className={inputClass} placeholder="显示名" value={textFields.displayName ?? ""} onChange={(event) => setTextFields({ ...textFields, displayName: event.target.value })} />
+            <input className={inputClass} type="password" placeholder="初始密码" value={textFields.password ?? ""} onChange={(event) => setTextFields({ ...textFields, password: event.target.value })} />
+            <select className={inputClass} value={role} onChange={(event) => setRole(event.target.value)}>
+              {["school_admin", "course_moderator", "super_admin"].map((item) => <option key={item}>{item}</option>)}
+            </select>
+            <button disabled={Boolean(busyAction)} className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">
+              {busyAction === "create-admin-user" ? "保存中..." : "创建/重置管理员"}
+            </button>
+          </form>
+          <div className="overflow-auto border border-ink/15">
+            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+              <thead className="bg-ink text-paper"><tr>{["Email", "Display name", "Role", "Status"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+              <tbody>
+                {adminUsers.map((user: any) => (
+                  <tr key={user.id} className="border-b border-ink/10">
+                    <td className="px-3 py-2">{user.email}</td>
+                    <td className="px-3 py-2">{user.profile?.displayName ?? ""}</td>
+                    <td className="px-3 py-2"><StatusPill status={user.role} /></td>
+                    <td className="px-3 py-2"><StatusPill status={user.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
     if (resource === "schools") {
       return (
         <form
@@ -2277,47 +3535,338 @@ export function AdminResourcePage({
     }
 
     if (resource === "majors") {
+      const schools = data?.schools ?? [];
+      const selectedSchoolId = textFields.schoolId || schools[0]?.id || "";
+      const faculties = (data?.faculties ?? []).filter((faculty: any) => !selectedSchoolId || faculty.schoolId === selectedSchoolId);
+      const selectedType = textFields.type ?? "major";
       return (
         <form
-          className="grid gap-3 md:grid-cols-5"
+          className="grid gap-3 md:grid-cols-6"
           onSubmit={(event) => {
             event.preventDefault();
-            runAction("/api/admin/majors", "POST", textFields);
+            runAction("/api/admin/majors", "POST", {
+              ...textFields,
+              schoolId: selectedSchoolId,
+              facultyId: textFields.facultyId || faculties[0]?.id
+            });
           }}
         >
-          <select className={inputClass} value={textFields.type ?? "major"} onChange={(event) => setTextFields({ ...textFields, type: event.target.value })}>
+          <select className={inputClass} value={selectedType} onChange={(event) => setTextFields({ ...textFields, type: event.target.value })}>
             <option value="faculty">Faculty</option>
             <option value="major">Major</option>
             <option value="semester">Semester</option>
           </select>
-          <input className={inputClass} placeholder="schoolId" value={textFields.schoolId ?? ""} onChange={(event) => setTextFields({ ...textFields, schoolId: event.target.value })} />
+          <select className={inputClass} value={selectedSchoolId} onChange={(event) => setTextFields({ ...textFields, schoolId: event.target.value, facultyId: "" })}>
+            {schools.map((school: any) => <option key={school.id} value={school.id}>{school.shortName} · {school.name}</option>)}
+          </select>
           <input className={inputClass} placeholder="名称" value={textFields.name ?? ""} onChange={(event) => setTextFields({ ...textFields, name: event.target.value })} />
-          <input className={inputClass} placeholder="facultyId / year / term" value={textFields.facultyId ?? textFields.year ?? ""} onChange={(event) => setTextFields({ ...textFields, facultyId: event.target.value, year: event.target.value })} />
+          {selectedType === "major" ? (
+            <select className={inputClass} value={textFields.facultyId || faculties[0]?.id || ""} onChange={(event) => setTextFields({ ...textFields, facultyId: event.target.value })}>
+              {faculties.map((faculty: any) => <option key={faculty.id} value={faculty.id}>{faculty.name}</option>)}
+            </select>
+          ) : null}
+          {selectedType === "semester" ? (
+            <>
+              <input className={inputClass} placeholder="年份，例如 2025" value={textFields.year ?? ""} onChange={(event) => setTextFields({ ...textFields, year: event.target.value })} />
+              <select className={inputClass} value={textFields.term ?? "Fall"} onChange={(event) => setTextFields({ ...textFields, term: event.target.value })}>
+                {["Fall", "Spring", "Summer"].map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </>
+          ) : null}
           <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">新增结构项</button>
         </form>
       );
     }
 
     if (resource === "courses") {
+      const courses = data?.courses ?? [];
+      const pagination = data?.pagination ?? { page: 1, totalPages: 1, total: courses.length };
+      const sources = data?.filters?.sources ?? [];
+      const tags = data?.filters?.tags ?? [];
       return (
-        <form
-          className="grid gap-3 md:grid-cols-6"
-          onSubmit={(event) => {
-            event.preventDefault();
-            runAction("/api/admin/courses", "POST", textFields);
-          }}
-        >
-          <input className={inputClass} placeholder="schoolId" value={textFields.schoolId ?? ""} onChange={(event) => setTextFields({ ...textFields, schoolId: event.target.value })} />
-          <input className={inputClass} placeholder="课程代码" value={textFields.code ?? ""} onChange={(event) => setTextFields({ ...textFields, code: event.target.value })} />
-          <input className={inputClass} placeholder="课程名称" value={textFields.title ?? ""} onChange={(event) => setTextFields({ ...textFields, title: event.target.value })} />
-          <input className={inputClass} placeholder="semesterId（可选）" value={textFields.semesterId ?? ""} onChange={(event) => setTextFields({ ...textFields, semesterId: event.target.value })} />
-          <input className={inputClass} placeholder="老师 / section（可选）" value={textFields.teacherName ?? ""} onChange={(event) => setTextFields({ ...textFields, teacherName: event.target.value })} />
-          <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">新增课程</button>
-        </form>
+        <div className="grid gap-5">
+          <div className="border border-ink/15 bg-chalk p-4">
+            <h3 className="text-lg font-semibold text-ink">Course catalog search</h3>
+            <p className="mt-1 text-sm leading-6 text-ink/62">课程目录是 Course；每届学生课程安排是 curriculum rules。相同 title 可以对应不同 code，实际身份以课程代码为准。</p>
+            <div className="mt-4 grid gap-3 md:grid-cols-[1fr_160px_180px_1fr_auto_auto]">
+              <input className={inputClass} placeholder="Search code or title, e.g. Principles of" value={courseQuery} onChange={(event) => { setCourseQuery(event.target.value); setCoursePage(1); }} />
+              <select className={inputClass} value={courseStatusFilter} onChange={(event) => { setCourseStatusFilter(event.target.value); setCoursePage(1); }}>
+                {["all", "active", "inactive", "archived"].map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+              <select className={inputClass} value={courseSourceFilter} onChange={(event) => { setCourseSourceFilter(event.target.value); setCoursePage(1); }}>
+                <option value="all">all sources</option>
+                {sources.map((item: string) => <option key={item} value={item}>{item}</option>)}
+              </select>
+              <input className={inputClass} list="course-tag-options" placeholder="Filter tag" value={courseTagFilter} onChange={(event) => { setCourseTagFilter(event.target.value); setCoursePage(1); }} />
+              <datalist id="course-tag-options">{tags.map((item: string) => <option key={item} value={item} />)}</datalist>
+              <button type="button" className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold" onClick={() => setCoursePage(Math.max(1, coursePage - 1))}>Prev</button>
+              <button type="button" className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold" onClick={() => setCoursePage(Math.min(pagination.totalPages ?? 1, coursePage + 1))}>Next</button>
+            </div>
+            <p className="mt-3 text-sm font-semibold text-ink/64">Page {pagination.page ?? coursePage} / {pagination.totalPages ?? 1} · {pagination.total ?? courses.length} courses</p>
+            <div className="mt-4 max-h-[520px] overflow-auto border border-ink/10 bg-paper">
+              <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+                <thead className="sticky top-0 bg-ink text-paper">
+                  <tr>
+                    {["Code", "Title", "Credits", "Status", "Source", "Tags", "Usage", "Action"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {courses.map((course: any) => (
+                    <tr key={course.id} className={`border-b border-ink/10 ${selectedCourse?.id === course.id ? "bg-mist/60" : ""}`}>
+                      <td className="px-3 py-2 font-semibold">{course.code}</td>
+                      <td className="px-3 py-2">{course.title}</td>
+                      <td className="px-3 py-2">{course.credits ?? ""}</td>
+                      <td className="px-3 py-2"><StatusPill status={course.status} /></td>
+                      <td className="px-3 py-2">{course.source}</td>
+                      <td className="max-w-[260px] px-3 py-2 text-xs text-ink/62">{Array.isArray(course.categoryTags) ? course.categoryTags.join(", ") : ""}</td>
+                      <td className="px-3 py-2 text-xs text-ink/62">{course.usage?.totalRules ?? 0} rules · {course._count?.offerings ?? 0} offerings</td>
+                      <td className="px-3 py-2">
+                        <button type="button" className="rounded-sm border border-ink/30 px-2 py-1 text-xs font-semibold" onClick={() => setSelectedId(course.id)}>Edit</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <form
+            className="grid gap-3 border border-ink/15 p-4 md:grid-cols-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAction("/api/admin/courses", "POST", textFields, {
+                busy: "create-course",
+                success: (response) => `已新增课程：${response.course?.code} ${response.course?.title}`,
+                after: (response) => {
+                  if (response.course?.id) setSelectedId(response.course.id);
+                  setTextFields({});
+                }
+              });
+            }}
+          >
+            <div className="md:col-span-4">
+              <h3 className="text-lg font-semibold text-ink">Add course</h3>
+              <p className="mt-1 text-sm text-ink/62">默认添加到 BNBU，不需要填写内部 schoolId。</p>
+            </div>
+            <input className={inputClass} placeholder="课程代码" value={textFields.code ?? ""} onChange={(event) => setTextFields({ ...textFields, code: event.target.value })} />
+            <input className={inputClass} placeholder="课程名称" value={textFields.title ?? ""} onChange={(event) => setTextFields({ ...textFields, title: event.target.value })} />
+            <input className={inputClass} placeholder="学分" value={textFields.credits ?? ""} onChange={(event) => setTextFields({ ...textFields, credits: event.target.value })} />
+            <input className={inputClass} placeholder="标签，逗号分隔" value={textFields.categoryTags ?? ""} onChange={(event) => setTextFields({ ...textFields, categoryTags: event.target.value })} />
+            <textarea className={`${inputClass} md:col-span-3`} rows={3} placeholder="课程描述" value={textFields.description ?? ""} onChange={(event) => setTextFields({ ...textFields, description: event.target.value })} />
+            <button disabled={Boolean(busyAction)} className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">{busyAction === "create-course" ? "新增中..." : "新增课程"}</button>
+          </form>
+
+          {selectedCourse ? (
+            <div className="grid gap-4 border border-ink/15 p-4">
+              <div>
+                <h3 className="text-lg font-semibold text-ink">Edit {selectedCourse.code} · {selectedCourse.title}</h3>
+                <p className="mt-1 text-sm text-ink/62">保存后这些字段会被标记为管理员手动覆盖，后续 JSON 导入默认不覆盖它们。</p>
+              </div>
+              <form
+                className="grid gap-3 md:grid-cols-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  runAction(`/api/admin/courses/${selectedCourse.id}`, "PATCH", courseDraftPayload(), {
+                    busy: "save-course",
+                    success: (response) => `已保存课程：${response.course?.code} ${response.course?.title}`
+                  });
+                }}
+              >
+                <Field label="Code"><input className={inputClass} value={courseDraft.code ?? ""} onChange={(event) => setCourseDraft({ ...courseDraft, code: event.target.value })} /></Field>
+                <Field label="Title"><input className={inputClass} value={courseDraft.title ?? ""} onChange={(event) => setCourseDraft({ ...courseDraft, title: event.target.value })} /></Field>
+                <Field label="Credits"><input className={inputClass} value={courseDraft.credits ?? ""} onChange={(event) => setCourseDraft({ ...courseDraft, credits: event.target.value })} /></Field>
+                <Field label="Course type"><input className={inputClass} value={courseDraft.courseType ?? ""} onChange={(event) => setCourseDraft({ ...courseDraft, courseType: event.target.value })} /></Field>
+                <Field label="Status">
+                  <select className={inputClass} value={courseDraft.status ?? "active"} onChange={(event) => setCourseDraft({ ...courseDraft, status: event.target.value })}>
+                    {["active", "inactive", "archived"].map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                </Field>
+                <Field label="Category tags"><input className={inputClass} value={courseDraft.categoryTags ?? ""} onChange={(event) => setCourseDraft({ ...courseDraft, categoryTags: event.target.value })} /></Field>
+                <Field label="Owner unit JSON"><textarea className={inputClass} rows={4} value={courseDraft.ownerUnit ?? "{}"} onChange={(event) => setCourseDraft({ ...courseDraft, ownerUnit: event.target.value })} /></Field>
+                <Field label="Manual note"><textarea className={inputClass} rows={4} value={courseDraft.manualNote ?? ""} onChange={(event) => setCourseDraft({ ...courseDraft, manualNote: event.target.value })} /></Field>
+                <Field label="Description"><textarea className={inputClass} rows={4} value={courseDraft.description ?? ""} onChange={(event) => setCourseDraft({ ...courseDraft, description: event.target.value })} /></Field>
+                <div className="md:col-span-3">
+                  <button disabled={Boolean(busyAction)} className="rounded-sm bg-forest px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busyAction === "save-course" ? "保存中..." : "保存课程"}</button>
+                </div>
+              </form>
+              <div className="grid gap-4 border border-ink/15 bg-chalk p-3">
+                <div>
+                  <p className="text-sm font-semibold text-ink">Course offerings</p>
+                  <p className="mt-1 text-xs text-ink/58">Course 是课程目录；CourseOffering 是某学期开课配置，可从这里生成或复用 Course Board。</p>
+                </div>
+                <form
+                  className="grid gap-3 md:grid-cols-5"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    runAction(`/api/admin/courses/${selectedCourse.id}/offerings`, "POST", {
+                      semesterId: textFields.offeringSemesterId || data?.semesters?.[0]?.id,
+                      teacherName: textFields.offeringTeacherName,
+                      section: textFields.offeringSection,
+                      status: textFields.offeringStatus || "active",
+                      createBoard: true,
+                      boardTitle: textFields.offeringBoardTitle
+                    }, {
+                      busy: "create-offering",
+                      success: (response) => response.reused ? "已复用并更新开课配置。" : "已新增开课配置并生成 Course Board。"
+                    });
+                  }}
+                >
+                  <select className={inputClass} value={textFields.offeringSemesterId || data?.semesters?.[0]?.id || ""} onChange={(event) => setTextFields({ ...textFields, offeringSemesterId: event.target.value })}>
+                    {(data?.semesters ?? []).map((semester: any) => <option key={semester.id} value={semester.id}>{semester.name} · {semester.term}</option>)}
+                  </select>
+                  <input className={inputClass} placeholder="老师（可选）" value={textFields.offeringTeacherName ?? ""} onChange={(event) => setTextFields({ ...textFields, offeringTeacherName: event.target.value })} />
+                  <input className={inputClass} placeholder="Section（可选）" value={textFields.offeringSection ?? ""} onChange={(event) => setTextFields({ ...textFields, offeringSection: event.target.value })} />
+                  <input className={inputClass} placeholder="Board 标题（可选）" value={textFields.offeringBoardTitle ?? ""} onChange={(event) => setTextFields({ ...textFields, offeringBoardTitle: event.target.value })} />
+                  <button disabled={Boolean(busyAction)} className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">{busyAction === "create-offering" ? "保存中..." : "新增开课"}</button>
+                </form>
+                <div className="max-h-52 overflow-auto border border-ink/10 bg-paper">
+                  <table className="w-full min-w-[760px] border-collapse text-left text-xs">
+                    <thead className="bg-ink text-paper"><tr>{["Semester", "Teacher", "Section", "Boards", "Status"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+                    <tbody>
+                      {(selectedCourse.offerings ?? []).map((offering: any) => (
+                        <tr key={offering.id} className="border-b border-ink/10">
+                          <td className="px-3 py-2">{offering.semester?.name ?? ""}</td>
+                          <td className="px-3 py-2">{offering.teacherName ?? ""}</td>
+                          <td className="px-3 py-2">{offering.section ?? ""}</td>
+                          <td className="px-3 py-2">{offering.boards?.length ?? 0}</td>
+                          <td className="px-3 py-2"><StatusPill status={offering.status} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <form
+                className="grid gap-3 border border-rust/30 bg-rust/5 p-3 md:grid-cols-[1fr_1fr_auto]"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  runAction(`/api/admin/courses/${selectedCourse.id}/merge`, "POST", {
+                    targetCourseId: textFields.mergeTargetCourseId,
+                    adminNote: textFields.mergeNote
+                  }, {
+                    busy: "merge-course",
+                    success: (response) => response.message ?? "课程已合并。"
+                  });
+                }}
+              >
+                <select className={inputClass} value={textFields.mergeTargetCourseId ?? ""} onChange={(event) => setTextFields({ ...textFields, mergeTargetCourseId: event.target.value })}>
+                  <option value="">选择合并目标课程</option>
+                  {courses.filter((course: any) => course.id !== selectedCourse.id).map((course: any) => <option key={course.id} value={course.id}>{course.code} · {course.title}</option>)}
+                </select>
+                <input className={inputClass} placeholder="合并备注（可选）" value={textFields.mergeNote ?? ""} onChange={(event) => setTextFields({ ...textFields, mergeNote: event.target.value })} />
+                <button disabled={Boolean(busyAction) || !textFields.mergeTargetCourseId} className="rounded-sm border border-rust px-4 py-2 text-sm font-semibold text-rust disabled:opacity-50">{busyAction === "merge-course" ? "合并中..." : "合并并归档源课"}</button>
+              </form>
+              <details className="border border-ink/15 bg-chalk p-3">
+                <summary className="cursor-pointer text-sm font-semibold text-ink">Advanced JSON editor</summary>
+                <p className="mt-2 text-sm leading-6 text-ink/60">备用入口：只接受课程目录字段，不直接编辑内部 schoolId、rule 或 offering。</p>
+                <textarea
+                  className={`${inputClass} mt-3 font-mono text-xs`}
+                  rows={12}
+                  value={courseDraft.rawJson ?? courseRawJsonText()}
+                  onChange={(event) => setCourseDraft({ ...courseDraft, rawJson: event.target.value })}
+                />
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold"
+                    onClick={() => setCourseDraft({ ...courseDraft, rawJson: courseRawJsonText() })}
+                  >
+                    从表单生成 JSON
+                  </button>
+                  <button
+                    type="button"
+                    disabled={Boolean(busyAction)}
+                    className="rounded-sm bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:opacity-50"
+                    onClick={() => {
+                      try {
+                        const payload = coursePayloadFromRawJson(courseDraft.rawJson ?? "{}");
+                        runAction(`/api/admin/courses/${selectedCourse.id}`, "PATCH", payload, {
+                          busy: "save-course-json",
+                          success: (response) => `已通过 JSON 保存课程：${response.course?.code} ${response.course?.title}`
+                        });
+                      } catch (error) {
+                        setResult({ type: "error", message: error instanceof Error ? error.message : "课程 JSON 格式错误。" });
+                      }
+                    }}
+                  >
+                    {busyAction === "save-course-json" ? "保存中..." : "使用 JSON 保存"}
+                  </button>
+                </div>
+              </details>
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="border border-ink/15 bg-chalk p-3">
+                  <p className="text-sm font-semibold text-ink">Manual override fields</p>
+                  <p className="mt-2 text-sm text-ink/62">{Array.isArray(selectedCourse.manualOverrideFields) && selectedCourse.manualOverrideFields.length ? selectedCourse.manualOverrideFields.join(", ") : "None"}</p>
+                </div>
+                {[
+                  ["Admission years", selectedCourse.usage?.cohortYears],
+                  ["Majors", selectedCourse.usage?.majors],
+                  ["Relative terms", selectedCourse.usage?.relativeTerms],
+                  ["Academic terms", selectedCourse.usage?.academicTerms]
+                ].map(([label, values]) => (
+                  <div key={label as string} className="max-h-44 overflow-auto border border-ink/15 bg-chalk p-3">
+                    <p className="text-sm font-semibold text-ink">{label as string}</p>
+                    <div className="mt-2 grid gap-1 text-sm text-ink/62">
+                      {Array.isArray(values) && values.length ? values.slice(0, 12).map((item: any) => <p key={item.key} className="flex justify-between gap-3"><span>{item.key}</span><strong>{item.count}</strong></p>) : <p>None</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="border border-ink/15">
+                <div className="border-b border-ink/10 bg-chalk px-3 py-2">
+                  <p className="text-sm font-semibold text-ink">Academic term configuration</p>
+                  <p className="mt-1 text-xs text-ink/58">显示这门课会在真实哪个学期配置给哪年入学、哪个专业或受众的学生。</p>
+                </div>
+                <div className="max-h-72 overflow-auto">
+                  <table className="w-full min-w-[920px] border-collapse text-left text-xs">
+                    <thead className="sticky top-0 bg-ink text-paper"><tr>{["Academic term", "Admission", "Audience", "Relative term", "Classification", "Action", "Rule"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+                    <tbody>
+                      {(selectedCourse.usage?.academicTermRows ?? []).length ? (selectedCourse.usage?.academicTermRows ?? []).map((row: any) => (
+                        <tr key={`${row.ruleId}-${row.entryYear}-${row.audience}-${row.relativeTermCode}`} className="border-b border-ink/10">
+                          <td className="px-3 py-2 font-semibold">{row.academicTermLabel}</td>
+                          <td className="px-3 py-2">{row.entryYear} {row.entryTerm}</td>
+                          <td className="px-3 py-2">{row.audience}</td>
+                          <td className="px-3 py-2">{row.relativeTermCode}</td>
+                          <td className="px-3 py-2">{row.classification}</td>
+                          <td className="px-3 py-2">{row.studentAction}</td>
+                          <td className="px-3 py-2">{row.externalId}</td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td className="px-3 py-4 text-sm text-ink/48" colSpan={7}>No academic term configuration rows for this course.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="max-h-72 overflow-auto border border-ink/15">
+                <table className="w-full min-w-[820px] border-collapse text-left text-xs">
+                  <thead className="sticky top-0 bg-ink text-paper"><tr>{["Rule", "Admission", "Major", "Term", "Classification", "Action"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+                  <tbody>
+                    {(selectedCourse.usage?.rules ?? []).map((rule: any) => (
+                      <tr key={rule.id} className="border-b border-ink/10">
+                        <td className="px-3 py-2">{rule.externalId}</td>
+                        <td className="px-3 py-2">{rule.cohortYears?.join(", ")}</td>
+                        <td className="px-3 py-2">{rule.allMajors ? "ALL" : rule.majorCodes?.join(", ")}</td>
+                        <td className="px-3 py-2">{rule.relativeTermCodes?.join(", ")}</td>
+                        <td className="px-3 py-2">{rule.classification}</td>
+                        <td className="px-3 py-2">{rule.studentAction}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+        </div>
       );
     }
 
     if (resource === "boards") {
+      const offerings = data?.offerings ?? [];
+      const selectedOfferingId = textFields.courseOfferingId || offerings[0]?.id || "";
+      const offeringLabel = (offering: any) => `${offering.course?.code ?? ""} ${offering.course?.title ?? ""} · ${offering.semester?.name ?? ""}${offering.section ? ` · ${offering.section}` : ""}`;
       return (
         <div className="grid gap-5">
           <form
@@ -2325,14 +3874,16 @@ export function AdminResourcePage({
             onSubmit={(event) => {
               event.preventDefault();
               runAction("/api/admin/boards", "POST", {
-                courseOfferingId: textFields.courseOfferingId,
+                courseOfferingId: selectedOfferingId,
                 title: textFields.title,
                 rules: textFields.rules,
                 status
               });
             }}
           >
-            <input className={inputClass} placeholder="courseOfferingId" value={textFields.courseOfferingId ?? ""} onChange={(event) => setTextFields({ ...textFields, courseOfferingId: event.target.value })} />
+            <select className={inputClass} value={selectedOfferingId} onChange={(event) => setTextFields({ ...textFields, courseOfferingId: event.target.value })}>
+              {offerings.map((offering: any) => <option key={offering.id} value={offering.id}>{offeringLabel(offering)}</option>)}
+            </select>
             <input className={inputClass} placeholder="Course Board 标题" value={textFields.title ?? ""} onChange={(event) => setTextFields({ ...textFields, title: event.target.value })} />
             <input className={inputClass} placeholder="规则文案（可选）" value={textFields.rules ?? ""} onChange={(event) => setTextFields({ ...textFields, rules: event.target.value })} />
             <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">新增 Course Board</button>
@@ -2358,7 +3909,7 @@ export function AdminResourcePage({
     }
 
     if (resource === "teamaking-posts" || resource === "team-up-requests") {
-      const statusOptions = resource === "teamaking-posts" ? ["open", "paused", "closed", "expired"] : ["reported", "archived"];
+      const statusOptions = resource === "teamaking-posts" ? ["open", "paused", "closed", "expired"] : ["reported", "closed", "deleted"];
       const path = resource === "teamaking-posts" ? `/api/admin/teamaking-posts/${selectedId}` : `/api/admin/team-up-requests/${selectedId}`;
       return (
         <form
@@ -2380,24 +3931,115 @@ export function AdminResourcePage({
     }
 
     if (resource === "support-tickets") {
+      const tickets = data?.tickets ?? [];
+      const summary = data?.summary ?? {};
+      const selectedTicket = tickets.find((ticket: any) => ticket.id === selectedId) ?? tickets[0];
+      const categoryLabels: Record<string, string> = {
+        missing_course: "缺失课程",
+        course_config_error: "课程配置错误",
+        bug: "Bug",
+        error_report: "报错",
+        admin_request: "后台需求",
+        other: "其他"
+      };
+      const ticketStatusValue = ["open", "in_progress", "resolved", "closed"].includes(status) ? status : selectedTicket?.status ?? "open";
+      const selectTicket = (ticket: any) => {
+        setSelectedId(ticket.id);
+        setStatus(ticket.status ?? "open");
+        setAdminNote(ticket.adminNote ?? "");
+        setTextFields({ ...textFields, adminReply: ticket.adminReply ?? "" });
+      };
       return (
-        <form
-          className="grid gap-3 md:grid-cols-[1fr_160px_1fr_1fr_auto]"
-          onSubmit={(event) => {
-            event.preventDefault();
-            runAction(`/api/admin/support-tickets/${selectedId}`, "PATCH", { status, adminNote, adminReply: textFields.adminReply });
-          }}
-        >
-          <select className={inputClass} value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
-            {primaryRows.map((row) => <option key={row.id} value={row.id}>{selectedLabel(row)}</option>)}
-          </select>
-          <select className={inputClass} value={status} onChange={(event) => setStatus(event.target.value)}>
-            {["open", "in_progress", "resolved", "closed"].map((item) => <option key={item}>{item}</option>)}
-          </select>
-          <input className={inputClass} placeholder="管理员备注" value={adminNote} onChange={(event) => setAdminNote(event.target.value)} />
-          <input className={inputClass} placeholder="给用户的回复" value={textFields.adminReply ?? ""} onChange={(event) => setTextFields({ ...textFields, adminReply: event.target.value })} />
-          <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">更新工单</button>
-        </form>
+        <div className="grid gap-5">
+          <div className="grid gap-3 md:grid-cols-4">
+            {[
+              ["全部工单", summary.total ?? tickets.length],
+              ["当前显示", summary.visible ?? tickets.length],
+              ["待处理", summary.byStatus?.open ?? 0],
+              ["处理中", summary.byStatus?.in_progress ?? 0]
+            ].map(([label, value]) => (
+              <div key={label as string} className="border border-ink/15 bg-chalk px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-ink/48">{label as string}</p>
+                <p className="mt-1 text-2xl font-semibold text-ink">{String(value ?? 0)}</p>
+              </div>
+            ))}
+          </div>
+          <div className="grid gap-3 md:grid-cols-[1fr_180px_180px]">
+            <input
+              className={inputClass}
+              placeholder="搜索标题、描述、邮箱、课程代码或备注"
+              value={ticketQuery}
+              onChange={(event) => setTicketQuery(event.target.value)}
+            />
+            <select className={inputClass} value={ticketCategoryFilter} onChange={(event) => setTicketCategoryFilter(event.target.value)}>
+              <option value="all">全部类型</option>
+              {Object.entries(categoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+            <select className={inputClass} value={ticketStatusFilter} onChange={(event) => setTicketStatusFilter(event.target.value)}>
+              {["all", "open", "in_progress", "resolved", "closed"].map((item) => <option key={item} value={item}>{item === "all" ? "全部状态" : item}</option>)}
+            </select>
+          </div>
+          <div className="max-h-[420px] overflow-auto border border-ink/15">
+            <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+              <thead className="sticky top-0 bg-ink text-paper">
+                <tr>{["类型", "状态", "标题", "提交人", "创建时间", "更新时间", "操作"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr>
+              </thead>
+              <tbody>
+                {tickets.length ? tickets.map((ticket: any) => (
+                  <tr key={ticket.id} className={`border-b border-ink/10 ${selectedTicket?.id === ticket.id ? "bg-mist/60" : ""}`}>
+                    <td className="px-3 py-2 font-semibold">{categoryLabels[ticket.category] ?? ticket.category}</td>
+                    <td className="px-3 py-2"><StatusPill status={ticket.status} /></td>
+                    <td className="max-w-[280px] truncate px-3 py-2">{ticket.title}</td>
+                    <td className="max-w-[220px] truncate px-3 py-2">{ticket.submittedBy?.profile?.displayName ?? ticket.email ?? ticket.submittedBy?.email ?? "未登录用户"}</td>
+                    <td className="px-3 py-2">{ticket.createdAt ? new Date(ticket.createdAt).toLocaleString() : ""}</td>
+                    <td className="px-3 py-2">{ticket.updatedAt ? new Date(ticket.updatedAt).toLocaleString() : ""}</td>
+                    <td className="px-3 py-2">
+                      <button type="button" className="rounded-sm border border-ink/30 px-2 py-1 text-xs font-semibold" onClick={() => selectTicket(ticket)}>查看 / 处理</button>
+                    </td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={7} className="px-3 py-4 text-ink/48">没有符合筛选条件的工单。</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {selectedTicket ? (
+            <div className="grid gap-4 border border-ink/15 bg-chalk p-4 lg:grid-cols-[1fr_1fr]">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-wide text-ink/48">Selected ticket</p>
+                <h3 className="mt-1 text-lg font-semibold text-ink">{categoryLabels[selectedTicket.category] ?? selectedTicket.category} · {selectedTicket.title}</h3>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink/70">{selectedTicket.description}</p>
+                {selectedTicket.relatedUrl ? <p className="mt-2 text-sm text-ink/58">相关页面：{selectedTicket.relatedUrl}</p> : null}
+                <p className="mt-2 text-sm text-ink/58">联系：{selectedTicket.email ?? selectedTicket.submittedBy?.email ?? "未提供"}</p>
+              </div>
+              <form
+                className="grid gap-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  runAction(`/api/admin/support-tickets/${selectedTicket.id}`, "PATCH", { status: ticketStatusValue, adminNote, adminReply: textFields.adminReply }, {
+                    busy: "save-ticket",
+                    success: (response) => `已更新工单：${response.ticket?.title ?? selectedTicket.title}`
+                  });
+                }}
+              >
+                <Field label="状态">
+                  <select className={inputClass} value={ticketStatusValue} onChange={(event) => setStatus(event.target.value)}>
+                    {["open", "in_progress", "resolved", "closed"].map((item) => <option key={item}>{item}</option>)}
+                  </select>
+                </Field>
+                <Field label="管理员备注">
+                  <textarea className={inputClass} rows={4} value={adminNote} onChange={(event) => setAdminNote(event.target.value)} placeholder="内部处理记录，不直接展示给用户" />
+                </Field>
+                <Field label="给用户的回复">
+                  <textarea className={inputClass} rows={4} value={textFields.adminReply ?? ""} onChange={(event) => setTextFields({ ...textFields, adminReply: event.target.value })} placeholder="需要回传给用户时填写" />
+                </Field>
+                <button disabled={Boolean(busyAction)} className="w-fit rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">
+                  {busyAction === "save-ticket" ? "保存中..." : "保存工单处理结果"}
+                </button>
+              </form>
+            </div>
+          ) : null}
+        </div>
       );
     }
 
@@ -2431,7 +4073,7 @@ export function AdminResourcePage({
     <PageShell title={title} eyebrow="Admin" description={description} aside="admin">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       <div className="grid gap-5">
-        {rows.map(([key, rows]) => (
+        {!["course-imports", "courses", "versions", "logs", "support-tickets"].includes(resource) ? rows.map(([key, rows]) => (
           <Card key={key}>
             <div className="mb-3 flex items-center justify-between gap-3">
               <h2 className="text-xl font-semibold text-ink">{key}</h2>
@@ -2466,12 +4108,185 @@ export function AdminResourcePage({
               </table>
             </div>
           </Card>
-        ))}
+        )) : null}
         <Card>
           <h2 className="text-xl font-semibold text-ink">无代码管理操作</h2>
           <p className="mt-2 text-sm leading-6 text-ink/62">使用表单、下拉框和按钮完成管理，不需要手写接口路径或 JSON。</p>
+          {result ? (
+            <div className={`mt-4 border px-3 py-2 text-sm font-medium ${
+              result.type === "error"
+                ? "border-rust/40 bg-rust/5 text-rust"
+                : result.type === "info"
+                  ? "border-gold/40 bg-gold/10 text-ink"
+                  : "border-forest/30 bg-forest/10 text-forest"
+            }`}>
+              {result.message}
+            </div>
+          ) : null}
           <div className="mt-4">{renderAdminForm()}</div>
-          {result ? <p className="mt-4 border border-ink/20 bg-paper px-3 py-2 text-sm font-medium text-forest">{result}</p> : null}
+        </Card>
+      </div>
+    </PageShell>
+  );
+}
+
+export function CrawlerPortalPage() {
+  const [refresh, setRefresh] = useState(0);
+  const { data, error, loading } = useApi("/api/crawler/options", [refresh]);
+  const { data: jobsData } = useApi("/api/crawler/jobs", [refresh]);
+  const [form, setForm] = useState<Record<string, string>>({
+    name: "",
+    target: "programme_handbook",
+    handbookUrl: "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm",
+    cohorts: "2025,2024",
+    academicYear: "2026",
+    term: "Spring",
+    limit: "all",
+    outputMode: "download",
+    instruction: "爬取 2025 和 2024 admission 的 programme handbook，输出 2026 Spring 的课程配置 JSON。"
+  });
+  const [result, setResult] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const jobs = jobsData?.jobs ?? [];
+    if (!jobs.some((job: any) => job.status === "running")) return;
+    const timer = window.setTimeout(() => setRefresh((value) => value + 1), 2000);
+    return () => window.clearTimeout(timer);
+  }, [jobsData, refresh]);
+
+  async function startJob(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setResult(null);
+    try {
+      const response = await api("/api/crawler/jobs", { method: "POST", body: JSON.stringify(form) });
+      setResult({ type: "success", message: response.message ?? `已启动任务：${response.job?.id}` });
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setResult({ type: "error", message: error instanceof Error ? error.message : "启动爬虫失败。" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const jobs = jobsData?.jobs ?? [];
+  const outputs = jobsData?.outputs ?? data?.outputs ?? [];
+  const targets = data?.targets ?? [];
+
+  return (
+    <PageShell
+      title="BNBU Crawler Portal"
+      eyebrow="Crawler"
+      aside="none"
+      description="独立爬虫入口：输入范围、来源网页和自然语言说明，生成可下载 cleaned JSON。下载后再到主系统管理员端粘贴、命名、校验和审批导入。"
+    >
+      {loading ? <LoadingState /> : <ErrorBox message={error} />}
+      <div className="grid gap-5">
+        <Card>
+          <h2 className="text-xl font-semibold text-ink">Crawl request</h2>
+          <p className="mt-2 text-sm leading-6 text-ink/62">当前可执行目标是 programme handbook。它按 admission year 生成四年课程安排；Academic year / term 只用于预览“如果现在激活 Course Board，应匹配哪一批规则”，不是课程安排本身的分类方式。</p>
+          {result ? (
+            <div className={`mt-4 border px-3 py-2 text-sm font-medium ${
+              result.type === "error" ? "border-rust/40 bg-rust/5 text-rust" : "border-forest/30 bg-forest/10 text-forest"
+            }`}>
+              {result.message}
+            </div>
+          ) : null}
+          <form className="mt-4 grid gap-4" onSubmit={startJob}>
+            <Field label="Job name" help="给本次任务起一个可读名称；不填时系统会用 admission years 自动生成。">
+              <input className={inputClass} placeholder="例如 2025+2024 admission handbook full crawl" value={form.name ?? ""} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+            </Field>
+            <Field label="自然语言说明">
+              <textarea className={inputClass} rows={4} value={form.instruction ?? ""} onChange={(event) => setForm({ ...form, instruction: event.target.value })} />
+            </Field>
+            <div className="grid gap-3 md:grid-cols-3">
+              {targets.map((target: any) => (
+                <label key={target.value} className={`border border-ink/15 p-3 text-sm ${target.supported ? "bg-paper" : "bg-chalk opacity-60"}`}>
+                  <span className="flex items-center gap-2 font-semibold text-ink">
+                    <input type="radio" name="target" value={target.value} checked={(form.target ?? "programme_handbook") === target.value} disabled={!target.supported} onChange={(event) => setForm({ ...form, target: event.target.value })} />
+                    {target.label}
+                  </span>
+                  <span className="mt-2 block leading-5 text-ink/60">{target.description}</span>
+                </label>
+              ))}
+            </div>
+            <div className="grid gap-3 md:grid-cols-4">
+              <Field label="Handbook URL"><input className={inputClass} value={form.handbookUrl ?? ""} onChange={(event) => setForm({ ...form, handbookUrl: event.target.value })} /></Field>
+              <Field label="Admission years"><input className={inputClass} value={form.cohorts ?? ""} onChange={(event) => setForm({ ...form, cohorts: event.target.value })} /></Field>
+              <Field label="Programme codes"><input className={inputClass} placeholder="ACCT,MCOM 可留空" value={form.programmes ?? ""} onChange={(event) => setForm({ ...form, programmes: event.target.value })} /></Field>
+              <Field label="Faculty codes"><input className={inputClass} placeholder="FBM,FHSS 可留空" value={form.facultyCodes ?? ""} onChange={(event) => setForm({ ...form, facultyCodes: event.target.value })} /></Field>
+              <Field label="Activation preview year" help="用于预览 Course Board 激活，不改变 admission-year 课程安排。"><input className={inputClass} value={form.academicYear ?? ""} onChange={(event) => setForm({ ...form, academicYear: event.target.value })} /></Field>
+              <Field label="Activation preview term" help="Fall/Spring 只用于计算当前学期会命中哪些 relative terms；课程安排仍按 admission year 存储。">
+                <select className={inputClass} value={form.term ?? "Spring"} onChange={(event) => setForm({ ...form, term: event.target.value })}>
+                  {["Spring", "Fall"].map((item) => <option key={item}>{item}</option>)}
+                </select>
+              </Field>
+              <Field label="Limit"><input className={inputClass} value={form.limit ?? "all"} onChange={(event) => setForm({ ...form, limit: event.target.value })} /></Field>
+              <Field label="Output mode">
+                <select className={inputClass} value={form.outputMode ?? "download"} onChange={(event) => setForm({ ...form, outputMode: event.target.value })}>
+                  <option value="download">download-only storage</option>
+                  <option value="git_import_json">course_imports/bnbu</option>
+                </select>
+              </Field>
+            </div>
+            <button disabled={busy} className="w-fit rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">
+              {busy ? "启动中..." : "启动爬虫"}
+            </button>
+          </form>
+        </Card>
+
+        <Card>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-xl font-semibold text-ink">Jobs</h2>
+            <button type="button" onClick={() => setRefresh((value) => value + 1)} className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold">刷新</button>
+          </div>
+          <div className="mt-4 max-h-80 overflow-auto border border-ink/15">
+            <table className="w-full min-w-[820px] border-collapse text-left text-sm">
+              <thead className="sticky top-0 bg-ink text-paper"><tr>{["Job", "Status", "Admission years", "Activation preview", "Started", "Result", "Log"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+              <tbody>
+                {jobs.length ? jobs.map((job: any) => (
+                  <tr key={job.id} className="border-b border-ink/10">
+                    <td className="px-3 py-2">
+                      <p className="font-semibold">{job.name ?? job.id}</p>
+                      <p className="mt-1 text-xs text-ink/48">{job.id}</p>
+                    </td>
+                    <td className="px-3 py-2"><StatusPill status={job.status} /></td>
+                    <td className="px-3 py-2">{job.input?.cohorts?.join?.(", ") ?? ""}</td>
+                    <td className="px-3 py-2">{job.input?.semesterCode ?? "not set"}</td>
+                    <td className="px-3 py-2">{job.startedAt ? new Date(job.startedAt).toLocaleString() : ""}</td>
+                    <td className="max-w-[260px] px-3 py-2 text-xs text-ink/64">
+                      {job.errorMessage ? <span className="text-rust">{job.errorMessage}</span> : job.status === "completed" ? "Completed" : "Waiting for output"}
+                    </td>
+                    <td className="max-w-[360px] px-3 py-2"><pre className="max-h-32 overflow-auto whitespace-pre-wrap text-xs">{(job.logs ?? []).join("").slice(-4000)}</pre></td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={7} className="px-3 py-4 text-ink/50">No crawler jobs yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <Card>
+          <h2 className="text-xl font-semibold text-ink">Download outputs</h2>
+          <div className="mt-4 max-h-80 overflow-auto border border-ink/15">
+            <table className="w-full min-w-[780px] border-collapse text-left text-sm">
+              <thead className="sticky top-0 bg-ink text-paper"><tr>{["File", "Size", "Modified", "Action"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+              <tbody>
+                {outputs.length ? outputs.map((file: any) => (
+                  <tr key={file.storageKey} className="border-b border-ink/10">
+                    <td className="px-3 py-2 font-semibold">{file.name}</td>
+                    <td className="px-3 py-2">{formatFileSize(file.size)}</td>
+                    <td className="px-3 py-2">{file.modifiedAt ? new Date(file.modifiedAt).toLocaleString() : ""}</td>
+                    <td className="px-3 py-2"><a className="rounded-sm border border-ink/30 px-3 py-1.5 text-xs font-semibold" href={file.downloadUrl}>下载 JSON</a></td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={4} className="px-3 py-4 text-ink/50">No outputs yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </Card>
       </div>
     </PageShell>

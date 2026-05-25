@@ -11,6 +11,8 @@ export const demoAccounts: Record<
     role: string;
     displayName: string;
     grade: string;
+    entryYear: number;
+    entryTerm: string;
     faculty: string;
     major: string;
     bio: string;
@@ -22,6 +24,8 @@ export const demoAccounts: Record<
     role: "profile_completed_user",
     displayName: "Mia Chen",
     grade: "Year 2",
+    entryYear: 2025,
+    entryTerm: "Fall",
     faculty: "Faculty of Humanities and Social Sciences",
     major: "Media and Communication",
     bio: "演示账号：擅长研究、学术写作和 slides 结构。",
@@ -32,6 +36,8 @@ export const demoAccounts: Record<
     role: "profile_completed_user",
     displayName: "Leo Wang",
     grade: "Year 1",
+    entryYear: 2025,
+    entryTerm: "Fall",
     faculty: "Faculty of Science and Technology",
     major: "Computer Science",
     bio: "演示账号：擅长 coding、数据处理和 demo 搭建。",
@@ -42,6 +48,8 @@ export const demoAccounts: Record<
     role: "school_admin",
     displayName: "Ava Li",
     grade: "Year 2",
+    entryYear: 2025,
+    entryTerm: "Fall",
     faculty: "Faculty of Business and Management",
     major: "Marketing",
     bio: "演示管理员账号：用于验收无代码后台。",
@@ -131,6 +139,8 @@ export function demoUserForAccount(account?: string | null) {
       headline: key === "cs" ? "Prototype builder for course projects" : key === "admin" ? "School admin demo account" : "Research and presentation collaborator",
       bio: selected.bio,
       grade: selected.grade,
+      entryYear: selected.entryYear,
+      entryTerm: selected.entryTerm,
       facultyId: faculty.id,
       majorId: major.id,
       outputTags: key === "cs" ? ["prototype", "code demo", "data cleaning"] : ["research brief", "slides", "presentation"],

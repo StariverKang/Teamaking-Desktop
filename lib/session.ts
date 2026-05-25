@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/http";
+import { ERROR_CODES } from "@/lib/error-codes";
 import { DEMO_SESSION_PREFIX, demoUserForAccount, isDemoAccessEnabled } from "@/lib/demo-data";
 
 export const SESSION_COOKIE = "teamaking_session";
@@ -36,6 +37,7 @@ export async function getCurrentUser() {
   return prisma.user.findUnique({
     where: { id: userId },
     include: {
+      appVersion: true,
       school: true,
       profile: { include: { faculty: true, major: true } },
       contactInfo: true,
@@ -47,13 +49,13 @@ export async function getCurrentUser() {
 export async function requireUser() {
   const user = await getCurrentUser();
   if (!user) {
-    throw new ApiError(401, "请先完成学校邮箱登录。");
+    throw new ApiError(401, "请先完成学校邮箱登录。", ERROR_CODES.API_UNAUTHORIZED);
   }
   if ("status" in user && user.status === "banned") {
-    throw new ApiError(403, "这个账号已被封禁，请联系管理员。");
+    throw new ApiError(403, "这个账号已被封禁，请联系管理员。", ERROR_CODES.AUTH_ACCOUNT_RESTRICTED);
   }
   if ("suspendedUntil" in user && user.suspendedUntil && new Date(user.suspendedUntil).getTime() > Date.now()) {
-    throw new ApiError(403, "这个账号当前处于限时禁止操作状态，请稍后再试。");
+    throw new ApiError(403, "这个账号当前处于限时禁止操作状态，请稍后再试。", ERROR_CODES.AUTH_ACCOUNT_RESTRICTED);
   }
 
   return user;
@@ -66,7 +68,7 @@ export function isAdminRole(role: string) {
 export async function requireAdmin() {
   const user = await requireUser();
   if (!isAdminRole(user.role)) {
-    throw new ApiError(403, "当前账号没有管理后台权限。");
+    throw new ApiError(403, "当前账号没有管理后台权限。", ERROR_CODES.AUTH_ADMIN_LOGIN_REQUIRED);
   }
 
   return user;

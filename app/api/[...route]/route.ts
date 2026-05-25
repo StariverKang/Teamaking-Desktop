@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { ApiError, assertString, created, handleApi, ok, optionalString, readBody, stringArray } from "@/lib/http";
+import { ERROR_CODES, type ErrorCode } from "@/lib/error-codes";
 import { getCurrentUser, isAdminRole, requireAdmin, requireUser, setDemoSessionCookie, setSessionCookie } from "@/lib/session";
 import { sendVerificationEmail, shouldExposeVerificationCode } from "@/lib/email";
 import { hashPassword, verifyPassword } from "@/lib/password";
-import { allowedRequestTransitions } from "@/lib/constants";
+import { allowedRequestTransitions, teamUpInterestStatuses } from "@/lib/constants";
 import { contactSnapshot, defaultContactVisibility } from "@/lib/contact";
+import { getActiveAppVersion, getActiveAppVersionId, getActiveSchool } from "@/lib/app-version";
 import {
   bnbuClassificationLabels,
   membershipSourceForClassification,
   normalizedRuleStudentAction,
+  relativeTermCodesForRule,
   validateBnbuCourseImportPayload
 } from "@/lib/bnbu-course-import";
 import {
@@ -48,13 +55,16 @@ import {
 import {
   extractReadableText,
   fileExtensionOf,
+  hasAcceptableMimeForExtension,
   isAllowedProfileFile,
+  isRiskyProfileFile,
   parseResumeText,
   portfolioTypeOptions,
   previewKindForFile,
   profileUploadPurposeOptions,
   safeUploadName
 } from "@/lib/profile-assets";
+import { storeProfileUpload } from "@/lib/upload-storage";
 
 type RouteContext = {
   params: {
@@ -70,6 +80,7 @@ const profileInclude = {
 };
 
 const userInclude = {
+  appVersion: true,
   school: true,
   profile: { include: profileInclude },
   contactInfo: true,
@@ -116,6 +127,8 @@ function publicUser(user: any, contactContext?: Parameters<typeof contactSnapsho
     id: user.id,
     email: user.email,
     role: user.role,
+    status: user.status,
+    suspendedUntil: user.suspendedUntil,
     isEmailVerified: user.isEmailVerified,
     onboardingCompleted: user.onboardingCompleted,
     school: user.school,
@@ -160,9 +173,78 @@ function toJson(value: unknown) {
   return JSON.parse(JSON.stringify(value ?? null));
 }
 
+async function persistErrorEvent(
+  request: NextRequest,
+  error: {
+    requestId: string;
+    errorCode: ErrorCode;
+    message: string;
+    status: number;
+    stackDigest?: string;
+    metadata?: unknown;
+  }
+) {
+  try {
+    const [appVersionId, user] = await Promise.all([
+      getActiveAppVersionId().catch(() => "legacy"),
+      getCurrentUser().catch(() => null)
+    ]);
+    await prisma.errorEvent.create({
+      data: {
+        appVersionId,
+        requestId: error.requestId,
+        errorCode: error.errorCode,
+        message: error.message,
+        status: error.status,
+        path: request.nextUrl.pathname,
+        method: request.method,
+        userId: user?.id ?? null,
+        actorRole: user?.role ?? null,
+        stackDigest: error.stackDigest,
+        metadata: toJson(error.metadata ?? {})
+      }
+    });
+  } catch (logError) {
+    console.error("Failed to persist API error event", logError);
+  }
+}
+
+async function operationLog(input: {
+  actorUserId?: string | null;
+  actorRole?: string | null;
+  action: string;
+  targetType?: string | null;
+  targetId?: string | null;
+  method?: string | null;
+  path?: string | null;
+  status?: string;
+  summary?: unknown;
+  metadata?: unknown;
+  appVersionId?: string;
+}) {
+  const appVersionId = input.appVersionId ?? (await getActiveAppVersionId());
+  await prisma.operationLog.create({
+    data: {
+      appVersionId,
+      actorUserId: input.actorUserId ?? null,
+      actorRole: input.actorRole ?? null,
+      action: input.action,
+      targetType: input.targetType ?? null,
+      targetId: input.targetId ?? null,
+      method: input.method ?? null,
+      path: input.path ?? null,
+      status: input.status ?? "success",
+      summary: toJson(input.summary ?? {}),
+      metadata: toJson(input.metadata ?? {})
+    }
+  });
+}
+
 async function writeAudit(adminUserId: string, action: string, targetType: string, targetId?: string | null, beforeValue?: unknown, afterValue?: unknown) {
+  const appVersionId = await getActiveAppVersionId();
   await prisma.adminAuditLog.create({
     data: {
+      appVersionId,
       adminUserId,
       action,
       targetType,
@@ -170,6 +252,15 @@ async function writeAudit(adminUserId: string, action: string, targetType: strin
       beforeValue: beforeValue === undefined ? undefined : toJson(beforeValue),
       afterValue: afterValue === undefined ? undefined : toJson(afterValue)
     }
+  });
+  await operationLog({
+    appVersionId,
+    actorUserId: adminUserId,
+    actorRole: "admin",
+    action,
+    targetType,
+    targetId,
+    summary: { targetType, targetId }
   });
 }
 
@@ -183,7 +274,13 @@ async function getBoardForUser(boardId: string) {
           semester: true
         }
       },
-      memberships: true
+      memberships: true,
+      sections: {
+        include: {
+          members: { where: { status: "active" }, select: { id: true } }
+        },
+        orderBy: { code: "asc" }
+      }
     }
   });
 
@@ -217,8 +314,40 @@ function enrichPost(post: any) {
   };
 }
 
-function publicPortfolioItems(items: any[] = [], ownerId: string, viewerId?: string | null) {
-  return items.filter((item) => ownerId === viewerId || item.visibility !== "private");
+async function shareActiveBoard(ownerId: string, viewerId: string) {
+  const membership = await prisma.courseBoardMembership.findFirst({
+    where: {
+      userId: ownerId,
+      status: "active",
+      board: {
+        status: "active",
+        memberships: {
+          some: {
+            userId: viewerId,
+            status: "active"
+          }
+        }
+      }
+    },
+    select: { id: true }
+  });
+  return Boolean(membership);
+}
+
+async function publicPortfolioItems(items: any[] = [], owner: any, viewer: any) {
+  if (!owner?.id || !viewer?.id) return [];
+  if (owner.id === viewer.id) return items;
+
+  const isVerifiedSameSchool = Boolean(owner.schoolId && viewer.schoolId && owner.schoolId === viewer.schoolId && viewer.isEmailVerified);
+  const needsSharedBoard = items.some((item) => item.visibility === "same_course_board");
+  const hasSharedBoard = needsSharedBoard ? await shareActiveBoard(owner.id, viewer.id) : false;
+
+  return items.filter((item) => {
+    if (item.visibility === "private") return false;
+    if (item.visibility === "same_course_board") return hasSharedBoard;
+    if (item.visibility === "same_school" || item.visibility === "public") return isVerifiedSameSchool;
+    return false;
+  });
 }
 
 async function contactContextForViewer(ownerId: string, viewer: any, postId?: string) {
@@ -266,7 +395,7 @@ async function publicUserForViewer(user: any, viewer: any, postId?: string) {
   const context = await contactContextForViewer(user.id, viewer, postId);
   return {
     ...publicUser(user, context),
-    portfolioItems: publicPortfolioItems(user.portfolioItems ?? [], user.id, viewer.id)
+    portfolioItems: await publicPortfolioItems(user.portfolioItems ?? [], user, viewer)
   };
 }
 
@@ -278,7 +407,7 @@ async function enrichPostForViewer(post: any, viewer: any) {
     user: {
       ...post.user,
       contactInfo: post.user?.contactInfo ? contactSnapshot(post.user.contactInfo, context) : null,
-      portfolioItems: publicPortfolioItems(post.user?.portfolioItems ?? [], post.userId, viewer.id)
+      portfolioItems: await publicPortfolioItems(post.user?.portfolioItems ?? [], post.user, viewer)
     },
     portfolioEvidenceCount: portfolioIds.length,
     contactInfo: post.user?.contactInfo ? contactSnapshot(post.user.contactInfo, context) : {}
@@ -288,22 +417,23 @@ async function enrichPostForViewer(post: any, viewer: any) {
 async function schoolDomainForEmail(email: string) {
   const domain = emailDomain(email);
   if (!domain) return null;
+  const appVersionId = await getActiveAppVersionId();
 
   const existing = await prisma.schoolEmailDomain.findFirst({
-    where: { domain, status: "active" },
+    where: { domain, status: "active", school: { appVersionId } },
     include: { school: true }
   });
 
   if (existing) return existing;
 
   const school = await prisma.school.upsert({
-    where: { shortName: "TEAMAKING" },
+    where: { appVersionId_shortName: { appVersionId, shortName: "TEAMAKING" } },
     update: { name: "TEAMAKING", status: "active" },
-    create: { name: "TEAMAKING", shortName: "TEAMAKING", status: "active" }
+    create: { appVersionId, name: "TEAMAKING", shortName: "TEAMAKING", status: "active" }
   });
 
   return prisma.schoolEmailDomain.upsert({
-    where: { domain },
+    where: { schoolId_domain: { schoolId: school.id, domain } },
     update: { schoolId: school.id, status: "active" },
     create: { schoolId: school.id, domain, status: "active" },
     include: { school: true }
@@ -318,8 +448,9 @@ async function upsertVerifiedUser(input: {
   displayName?: string;
   passwordHash?: string;
 }) {
+  const appVersionId = await getActiveAppVersionId();
   const user = await prisma.user.upsert({
-    where: { email: input.email },
+    where: { appVersionId_email: { appVersionId, email: input.email } },
     update: {
       schoolId: input.schoolId,
       ...(input.role ? { role: input.role } : {}),
@@ -330,6 +461,7 @@ async function upsertVerifiedUser(input: {
       ...(input.onboardingCompleted !== undefined ? { onboardingCompleted: input.onboardingCompleted } : {})
     },
     create: {
+      appVersionId,
       email: input.email,
       schoolId: input.schoolId,
       passwordHash: input.passwordHash,
@@ -373,8 +505,9 @@ type VerificationPurpose = "register" | "reset_password" | "login";
 async function supportedSchoolDomainForEmail(email: string) {
   const domain = emailDomain(email);
   if (!domain) return null;
+  const appVersionId = await getActiveAppVersionId();
   return prisma.schoolEmailDomain.findFirst({
-    where: { domain, status: "active" },
+    where: { domain, status: "active", school: { appVersionId } },
     include: { school: true }
   });
 }
@@ -383,10 +516,56 @@ function generateVerificationCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+async function recordAuthEvent(input: {
+  email: string;
+  action: string;
+  purpose: string;
+  success: boolean;
+  metadata?: unknown;
+}) {
+  await prisma.authEvent.create({
+    data: {
+      appVersionId: await getActiveAppVersionId(),
+      email: input.email.toLowerCase(),
+      action: input.action,
+      purpose: input.purpose,
+      success: input.success,
+      metadata: toJson(input.metadata ?? {})
+    }
+  });
+}
+
+async function assertVerificationCooldown(email: string, purpose: VerificationPurpose) {
+  const appVersionId = await getActiveAppVersionId();
+  const since = new Date(Date.now() - 2 * 60 * 1000);
+  const recent = await prisma.authEvent.findFirst({
+    where: {
+      appVersionId,
+      email: email.toLowerCase(),
+      action: "verification_send",
+      purpose,
+      success: true,
+      createdAt: { gt: since }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+
+  if (recent) {
+    throw new ApiError(429, "同一邮箱发送验证码后需要等待 2 分钟。", ERROR_CODES.AUTH_VERIFICATION_COOLDOWN, {
+      email,
+      purpose,
+      retryAfterSeconds: Math.max(1, Math.ceil((recent.createdAt.getTime() + 2 * 60 * 1000 - Date.now()) / 1000))
+    });
+  }
+}
+
 async function createVerification(email: string, purpose: VerificationPurpose, schoolName?: string) {
+  await assertVerificationCooldown(email, purpose);
   const code = generateVerificationCode();
+  const appVersionId = await getActiveAppVersionId();
   await prisma.emailVerification.create({
     data: {
+      appVersionId,
       email,
       code,
       purpose,
@@ -400,13 +579,16 @@ async function createVerification(email: string, purpose: VerificationPurpose, s
     purpose,
     schoolName
   });
+  await recordAuthEvent({ email, action: "verification_send", purpose, success: true, metadata: { schoolName } });
 
   return code;
 }
 
 async function consumeVerification(email: string, code: string, purpose: VerificationPurpose) {
+  const appVersionId = await getActiveAppVersionId();
   const verification = await prisma.emailVerification.findFirst({
     where: {
+      appVersionId,
       email,
       code,
       purpose,
@@ -417,7 +599,7 @@ async function consumeVerification(email: string, code: string, purpose: Verific
   });
 
   if (!verification) {
-    throw new ApiError(400, "验证码无效或已过期。");
+    throw new ApiError(400, "验证码无效或已过期。", ERROR_CODES.AUTH_VERIFICATION_INVALID, { email, purpose });
   }
 
   await prisma.emailVerification.update({
@@ -436,63 +618,81 @@ function passwordHashFor(password: string) {
 
 function assertAccountCanLogin(user: any) {
   if (user.status === "banned") {
-    throw new ApiError(403, "这个账号已被封禁，请联系管理员。");
+    throw new ApiError(403, "这个账号已被封禁，请联系管理员。", ERROR_CODES.AUTH_ACCOUNT_RESTRICTED);
   }
 
   if (user.suspendedUntil && new Date(user.suspendedUntil).getTime() > Date.now()) {
-    throw new ApiError(403, "这个账号当前处于限时禁止操作状态，请稍后再试。");
+    throw new ApiError(403, "这个账号当前处于限时禁止操作状态，请稍后再试。", ERROR_CODES.AUTH_ACCOUNT_RESTRICTED);
+  }
+}
+
+function restrictedAccountRedirect(user: any) {
+  if (user.status === "banned") return "/account-restricted";
+  if (user.suspendedUntil && new Date(user.suspendedUntil).getTime() > Date.now()) return "/account-restricted";
+  return null;
+}
+
+async function assertLoginFailureBudget(email: string) {
+  const appVersionId = await getActiveAppVersionId();
+  const failedAttempts = await prisma.authEvent.count({
+    where: {
+      appVersionId,
+      email: email.toLowerCase(),
+      action: "password_login",
+      purpose: "login",
+      success: false,
+      createdAt: { gt: new Date(Date.now() - 60 * 60 * 1000) }
+    }
+  });
+
+  if (failedAttempts >= 5) {
+    throw new ApiError(429, "这个邮箱 1 小时内登录失败次数过多，请稍后再试。", ERROR_CODES.AUTH_LOGIN_RATE_LIMIT, {
+      email,
+      failedAttempts,
+      windowMinutes: 60
+    });
   }
 }
 
 async function ensureSystemIsActive(root?: string) {
-  if (!root || ["auth", "admin", "demo"].includes(root)) return;
+  if (!root || ["auth", "admin", "demo", "support-tickets"].includes(root)) return;
 
   const config = await prisma.siteConfig.findUnique({ where: { key: "system_status" } });
   const value = config?.value && typeof config.value === "object" && !Array.isArray(config.value) ? (config.value as Record<string, unknown>) : null;
 
   if (value?.status === "paused") {
-    throw new ApiError(503, typeof value.message === "string" && value.message ? value.message : "系统当前处于维护暂停状态，请稍后再试。");
+    throw new ApiError(503, typeof value.message === "string" && value.message ? value.message : "系统当前处于维护暂停状态，请稍后再试。", ERROR_CODES.API_SYSTEM_PAUSED);
   }
 }
 
 async function handleAuth(method: string, path: string[], request: NextRequest) {
-  if (method === "POST" && path[1] === "developer-login") {
-    const configuredEmail = process.env.DEVELOPER_LOGIN_EMAIL?.trim().toLowerCase();
-    const configuredPassword = process.env.DEVELOPER_LOGIN_PASSWORD;
-
-    if (!configuredEmail || !configuredPassword) {
-      throw new ApiError(503, "开发者登录尚未配置。");
-    }
-
+  if (method === "POST" && (path[1] === "admin-login" || path[1] === "developer-login")) {
     const body = await readBody(request);
     const email = assertString(body.email, "email").toLowerCase();
     const password = assertString(body.password, "password");
-
-    if (email !== configuredEmail || password !== configuredPassword) {
-      throw new ApiError(401, "开发者账号或密码不正确。");
-    }
-
-    const schoolDomain = await schoolDomainForEmail(email);
-    if (!schoolDomain) {
-      throw new ApiError(400, "请输入有效的开发者邮箱。");
-    }
-
-    const fullUser = await upsertVerifiedUser({
-      email,
-      schoolId: schoolDomain.schoolId,
-      role: process.env.DEVELOPER_LOGIN_ROLE || "school_admin",
-      onboardingCompleted: true,
-      displayName: process.env.DEVELOPER_LOGIN_DISPLAY_NAME || "TEAMAKING Developer"
+    await assertLoginFailureBudget(email);
+    const appVersionId = await getActiveAppVersionId();
+    const user = await prisma.user.findUnique({
+      where: { appVersionId_email: { appVersionId, email } },
+      include: userInclude
     });
 
-    const response = ok({ user: publicUser(fullUser) });
-    setSessionCookie(response, fullUser.id);
+    if (!user || !isAdminRole(user.role) || !verifyPassword(password, user.passwordHash)) {
+      await recordAuthEvent({ email, action: "password_login", purpose: "login", success: false, metadata: { route: "admin-login" } });
+      throw new ApiError(401, "管理员账号或密码不正确。", ERROR_CODES.AUTH_ADMIN_LOGIN_INVALID, { email });
+    }
+
+    assertAccountCanLogin(user);
+    await recordAuthEvent({ email, action: "password_login", purpose: "login", success: true, metadata: { route: "admin-login" } });
+    const response = ok({ user: publicUser(user) });
+    setSessionCookie(response, user.id);
     return response;
   }
 
   if (method === "POST" && path[1] === "register" && path[2] === "send-code") {
     const body = await readBody(request);
     const email = assertString(body.email, "email").toLowerCase();
+    const appVersionId = await getActiveAppVersionId();
     const schoolDomain = await supportedSchoolDomainForEmail(email);
 
     if (!schoolDomain) {
@@ -500,7 +700,7 @@ async function handleAuth(method: string, path: string[], request: NextRequest) 
     }
 
     const existingUser = await prisma.user.findUnique({
-      where: { email },
+      where: { appVersionId_email: { appVersionId, email } },
       select: { id: true, passwordHash: true }
     });
 
@@ -520,6 +720,7 @@ async function handleAuth(method: string, path: string[], request: NextRequest) 
   if (method === "POST" && path[1] === "register" && path[2] === "complete") {
     const body = await readBody(request);
     const email = assertString(body.email, "email").toLowerCase();
+    const appVersionId = await getActiveAppVersionId();
     const code = assertString(body.code, "code");
     const password = assertString(body.password, "password");
     const schoolDomain = await supportedSchoolDomainForEmail(email);
@@ -529,7 +730,7 @@ async function handleAuth(method: string, path: string[], request: NextRequest) 
     }
 
     const existingUser = await prisma.user.findUnique({
-      where: { email },
+      where: { appVersionId_email: { appVersionId, email } },
       select: { id: true, passwordHash: true }
     });
 
@@ -545,24 +746,29 @@ async function handleAuth(method: string, path: string[], request: NextRequest) 
       passwordHash: passwordHashFor(password)
     });
 
-    const response = ok({ user: publicUser(fullUser) });
-    setSessionCookie(response, fullUser.id);
-    return response;
+    return ok({
+      user: publicUser(fullUser),
+      redirectPath: "/login",
+      message: "注册已完成，请使用刚设置的密码登录。"
+    });
   }
 
   if (method === "POST" && path[1] === "password-login") {
     const body = await readBody(request);
     const email = assertString(body.email, "email").toLowerCase();
     const password = assertString(body.password, "password");
-    const user = await prisma.user.findUnique({ where: { email }, include: userInclude });
+    const appVersionId = await getActiveAppVersionId();
+    await assertLoginFailureBudget(email);
+    const user = await prisma.user.findUnique({ where: { appVersionId_email: { appVersionId, email } }, include: userInclude });
 
     if (!user || !verifyPassword(password, user.passwordHash)) {
-      throw new ApiError(401, "邮箱或密码不正确。");
+      await recordAuthEvent({ email, action: "password_login", purpose: "login", success: false });
+      throw new ApiError(401, "邮箱或密码不正确。", ERROR_CODES.AUTH_LOGIN_INVALID_CREDENTIALS, { email });
     }
 
-    assertAccountCanLogin(user);
-
-    const response = ok({ user: publicUser(user) });
+    await recordAuthEvent({ email, action: "password_login", purpose: "login", success: true });
+    const redirectPath = restrictedAccountRedirect(user);
+    const response = ok({ user: publicUser(user), redirectPath });
     setSessionCookie(response, user.id);
     return response;
   }
@@ -570,8 +776,9 @@ async function handleAuth(method: string, path: string[], request: NextRequest) 
   if (method === "POST" && path[1] === "password-reset" && path[2] === "send-code") {
     const body = await readBody(request);
     const email = assertString(body.email, "email").toLowerCase();
+    const appVersionId = await getActiveAppVersionId();
     const user = await prisma.user.findUnique({
-      where: { email },
+      where: { appVersionId_email: { appVersionId, email } },
       include: { school: true }
     });
 
@@ -589,9 +796,10 @@ async function handleAuth(method: string, path: string[], request: NextRequest) 
   if (method === "POST" && path[1] === "password-reset" && path[2] === "complete") {
     const body = await readBody(request);
     const email = assertString(body.email, "email").toLowerCase();
+    const appVersionId = await getActiveAppVersionId();
     const code = assertString(body.code, "code");
     const password = assertString(body.password, "password");
-    const before = await prisma.user.findUnique({ where: { email }, include: userInclude });
+    const before = await prisma.user.findUnique({ where: { appVersionId_email: { appVersionId, email } }, include: userInclude });
 
     if (!before || !before.passwordHash) {
       throw new ApiError(404, "找不到已注册账号，请先注册。");
@@ -600,7 +808,7 @@ async function handleAuth(method: string, path: string[], request: NextRequest) 
     await consumeVerification(email, code, "reset_password");
 
     const user = await prisma.user.update({
-      where: { email },
+      where: { appVersionId_email: { appVersionId, email } },
       data: { passwordHash: passwordHashFor(password) },
       include: userInclude
     });
@@ -626,14 +834,15 @@ async function handleAuth(method: string, path: string[], request: NextRequest) 
 
 async function ensureDemoUser(account: string) {
   const selected = demoAccounts[normalizeDemoAccount(account)];
+  const appVersionId = await getActiveAppVersionId();
   const school = await prisma.school.upsert({
-    where: { shortName: "BNBU" },
+    where: { appVersionId_shortName: { appVersionId, shortName: "BNBU" } },
     update: { name: "BNBU", status: "active" },
-    create: { name: "BNBU", shortName: "BNBU", status: "active" }
+    create: { appVersionId, name: "BNBU", shortName: "BNBU", status: "active" }
   });
 
   await prisma.schoolEmailDomain.upsert({
-    where: { domain: "mail.bnbu.edu.cn" },
+    where: { schoolId_domain: { schoolId: school.id, domain: "mail.bnbu.edu.cn" } },
     update: { schoolId: school.id, status: "active" },
     create: { schoolId: school.id, domain: "mail.bnbu.edu.cn", status: "active" }
   });
@@ -651,7 +860,7 @@ async function ensureDemoUser(account: string) {
   });
 
   const user = await prisma.user.upsert({
-    where: { email: selected.email },
+    where: { appVersionId_email: { appVersionId, email: selected.email } },
     update: {
       schoolId: school.id,
       role: selected.role,
@@ -659,6 +868,7 @@ async function ensureDemoUser(account: string) {
       onboardingCompleted: true
     },
     create: {
+      appVersionId,
       email: selected.email,
       schoolId: school.id,
       role: selected.role,
@@ -673,6 +883,8 @@ async function ensureDemoUser(account: string) {
       displayName: selected.displayName,
       bio: selected.bio,
       grade: selected.grade,
+      entryYear: 2025,
+      entryTerm: "Fall",
       facultyId: faculty.id,
       majorId: major.id,
       openToBeDiscovered: true
@@ -682,6 +894,8 @@ async function ensureDemoUser(account: string) {
       displayName: selected.displayName,
       bio: selected.bio,
       grade: selected.grade,
+      entryYear: 2025,
+      entryTerm: "Fall",
       facultyId: faculty.id,
       majorId: major.id,
       openToBeDiscovered: true,
@@ -766,12 +980,16 @@ async function handleOnboarding(method: string, request: NextRequest) {
     const facultyId = assertString(body.facultyId, "facultyId");
     const majorId = assertString(body.majorId, "majorId");
     const displayName = optionalString(body.displayName) ?? user.profile?.displayName ?? user.email.split("@")[0];
+    const entryYear = typeof body.entryYear === "number" && Number.isFinite(body.entryYear) ? Math.trunc(body.entryYear) : undefined;
+    const entryTerm = optionalString(body.entryTerm);
 
     const profile = await prisma.userProfile.upsert({
       where: { userId: user.id },
       update: {
         displayName,
         grade,
+        entryYear,
+        entryTerm,
         facultyId,
         majorId,
         openToBeDiscovered: true
@@ -780,6 +998,8 @@ async function handleOnboarding(method: string, request: NextRequest) {
         userId: user.id,
         displayName,
         grade,
+        entryYear,
+        entryTerm,
         facultyId,
         majorId,
         openToBeDiscovered: true
@@ -794,6 +1014,16 @@ async function handleOnboarding(method: string, request: NextRequest) {
       }
     });
 
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "onboarding.complete",
+      targetType: "UserProfile",
+      targetId: profile.id,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { grade, entryYear, entryTerm, facultyId, majorId }
+    });
     return ok({ profile });
   }
 
@@ -826,6 +1056,10 @@ function portfolioPayload(body: Record<string, unknown>, existing?: any) {
     fileSize: typeof body.fileSize === "number" ? body.fileSize : existing?.fileSize,
     fileExtension,
     storageKey: optionalString(body.storageKey) ?? existing?.storageKey,
+    storageMode: optionalString(body.storageMode) ?? existing?.storageMode,
+    storageProvider: optionalString(body.storageProvider) ?? existing?.storageProvider,
+    objectKey: optionalString(body.objectKey) ?? existing?.objectKey,
+    scanStatus: optionalString(body.scanStatus) ?? existing?.scanStatus ?? "not_scanned",
     fileUrl: optionalString(body.fileUrl) ?? existing?.fileUrl,
     externalUrl: optionalString(body.externalUrl) ?? existing?.externalUrl,
     previewKind,
@@ -836,6 +1070,31 @@ function portfolioPayload(body: Record<string, unknown>, existing?: any) {
     visibility: optionalString(body.visibility) ?? existing?.visibility ?? "same_school",
     isPinned
   };
+}
+
+async function resumeBufferFromUrl(resumeUrl: string) {
+  if (resumeUrl.startsWith("data:")) {
+    const base64 = resumeUrl.split(",")[1] ?? "";
+    return Buffer.from(base64, "base64");
+  }
+
+  if (resumeUrl.startsWith("/uploads/") || resumeUrl.startsWith("uploads/")) {
+    const normalized = resumeUrl.startsWith("/") ? resumeUrl : `/${resumeUrl}`;
+    const publicRoot = path.resolve(process.cwd(), "public", "uploads");
+    const absolutePath = path.resolve(process.cwd(), "public", `.${normalized}`);
+    if (!absolutePath.startsWith(`${publicRoot}${path.sep}`)) throw new ApiError(403, "简历文件路径不允许重新解析。");
+    return readFile(absolutePath);
+  }
+
+  if (/^https?:\/\//i.test(resumeUrl)) {
+    const response = await fetch(resumeUrl);
+    if (!response.ok) throw new ApiError(400, `无法读取简历 URL：${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > 30 * 1024 * 1024) throw new ApiError(400, "简历文件超过 30MB，无法重新解析。");
+    return buffer;
+  }
+
+  throw new ApiError(400, "当前简历 URL 不是可重新解析的文件地址。");
 }
 
 async function handleProfile(method: string, path: string[], request: NextRequest) {
@@ -858,6 +1117,16 @@ async function handleProfile(method: string, path: string[], request: NextReques
       where: { senderId_receiverId: { senderId: user.id, receiverId } },
       update: { status: "pending" },
       create: { senderId: user.id, receiverId, status: "pending" }
+    });
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "follow_requests.create",
+      targetType: "FollowRequest",
+      targetId: requestRow.id,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { receiverId }
     });
     return created({ request: requestRow });
   }
@@ -891,6 +1160,13 @@ async function handleProfile(method: string, path: string[], request: NextReques
           return ok({ message: "本地视觉演示模式已模拟删除作品/证明材料。" });
         }
       }
+      if (method === "POST" && path[2] === "reparse-resume") {
+        const resumeText = user.profile?.resumeParsedData && typeof user.profile.resumeParsedData === "object" && "rawText" in user.profile.resumeParsedData
+          ? String((user.profile.resumeParsedData as Record<string, unknown>).rawText ?? "")
+          : "";
+        const resumeParsedData = parseResumeText(resumeText, user.profile?.resumeFileName ?? "demo-resume.txt");
+        return ok({ resumeParsedData, message: "本地视觉演示模式已模拟重新整理简历。" });
+      }
       if (method === "GET") return ok({ user: publicUser(user), contactInfo: user.contactInfo, portfolioItems: demoPortfolioItems(user.id.replace("demo-user-", "")) });
       if (method === "PATCH") return ok({ profile: { ...user.profile, ...(await readBody(request)) }, message: "本地视觉演示模式已模拟保存 Profile。" });
     }
@@ -916,6 +1192,16 @@ async function handleProfile(method: string, path: string[], request: NextReques
             ...portfolioPayload(body)
           }
         });
+        await operationLog({
+          actorUserId: user.id,
+          actorRole: user.role,
+          action: "portfolio_items.create",
+          targetType: "PortfolioItem",
+          targetId: portfolioItem.id,
+          method,
+          path: request.nextUrl.pathname,
+          summary: { title: portfolioItem.title, type: portfolioItem.type }
+        });
         return created({ portfolioItem });
       }
 
@@ -927,13 +1213,65 @@ async function handleProfile(method: string, path: string[], request: NextReques
           where: { id: path[3] },
           data: portfolioPayload(body, existing)
         });
+        await operationLog({
+          actorUserId: user.id,
+          actorRole: user.role,
+          action: "portfolio_items.patch",
+          targetType: "PortfolioItem",
+          targetId: portfolioItem.id,
+          method,
+          path: request.nextUrl.pathname,
+          summary: { title: portfolioItem.title, type: portfolioItem.type }
+        });
         return ok({ portfolioItem });
       }
 
       if (method === "DELETE" && path[3]) {
         await prisma.portfolioItem.deleteMany({ where: { id: path[3], userId: user.id } });
+        await operationLog({
+          actorUserId: user.id,
+          actorRole: user.role,
+          action: "portfolio_items.delete",
+          targetType: "PortfolioItem",
+          targetId: path[3],
+          method,
+          path: request.nextUrl.pathname
+        });
         return ok({ message: "作品或证明材料已删除。" });
       }
+    }
+
+    if (method === "POST" && path[2] === "reparse-resume") {
+      const fullUser = await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+        include: { profile: true }
+      });
+      const resumeUrl = fullUser.profile?.resumeUrl;
+      const resumeFileName = fullUser.profile?.resumeFileName ?? "resume";
+      if (!resumeUrl) throw new ApiError(400, "当前 Profile 还没有简历 URL。");
+      const buffer = await resumeBufferFromUrl(resumeUrl);
+      const parsedText = await extractReadableText(resumeFileName, buffer);
+      const resumeParsedData = parseResumeText(parsedText, resumeFileName);
+      const profile = await prisma.userProfile.update({
+        where: { userId: user.id },
+        data: { resumeParsedData: toJson(resumeParsedData) }
+      });
+      await operationLog({
+        actorUserId: user.id,
+        actorRole: user.role,
+        action: "profile.resume.reparse",
+        targetType: "UserProfile",
+        targetId: profile.id,
+        method,
+        path: request.nextUrl.pathname,
+        summary: {
+          resumeFileName,
+          parser: resumeParsedData.parser,
+          skills: resumeParsedData.skills,
+          sections: Object.keys(resumeParsedData.sections ?? {})
+        }
+      });
+      return ok({ resumeParsedData, message: "简历已重新整理。" });
     }
 
     if (method === "GET") {
@@ -959,6 +1297,8 @@ async function handleProfile(method: string, path: string[], request: NextReques
           headline: optionalString(body.headline),
           bio: optionalString(body.bio) ?? "",
           grade: optionalString(body.grade),
+          entryYear: typeof body.entryYear === "number" && Number.isFinite(body.entryYear) ? Math.trunc(body.entryYear) : null,
+          entryTerm: optionalString(body.entryTerm),
           facultyId: optionalString(body.facultyId),
           majorId: optionalString(body.majorId),
           outputTags: stringArray(body.outputTags),
@@ -976,6 +1316,8 @@ async function handleProfile(method: string, path: string[], request: NextReques
           headline: optionalString(body.headline),
           bio: optionalString(body.bio) ?? "",
           grade: optionalString(body.grade),
+          entryYear: typeof body.entryYear === "number" && Number.isFinite(body.entryYear) ? Math.trunc(body.entryYear) : null,
+          entryTerm: optionalString(body.entryTerm),
           facultyId: optionalString(body.facultyId),
           majorId: optionalString(body.majorId),
           outputTags: stringArray(body.outputTags),
@@ -1029,6 +1371,16 @@ async function handleProfile(method: string, path: string[], request: NextReques
         }
       }
 
+      await operationLog({
+        actorUserId: user.id,
+        actorRole: user.role,
+        action: "profile.patch",
+        targetType: "UserProfile",
+        targetId: profile.id,
+        method,
+        path: request.nextUrl.pathname,
+        summary: { displayName: profile.displayName, grade: profile.grade, entryYear: profile.entryYear, entryTerm: profile.entryTerm }
+      });
       return ok({ profile });
     }
   }
@@ -1108,6 +1460,16 @@ async function handleContactInfo(method: string, request: NextRequest) {
       }
     });
 
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "contact_info.patch",
+      targetType: "ContactInfo",
+      targetId: contactInfo.id,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { visibilitySettings: contactInfo.visibilitySettings }
+    });
     return ok({ contactInfo });
   }
 
@@ -1156,10 +1518,13 @@ async function handleCourses(method: string, path: string[], request: NextReques
           status: "active",
           studentAction: { in: ["default_join", "recommend_only"] }
         },
-        include: { course: { include: courseInclude } },
+        include: { semester: true, course: { include: courseInclude } },
         orderBy: [{ studentAction: "asc" }, { classification: "asc" }]
       });
-      const matchedRules = rules.filter((rule) => curriculumRuleMatchesUser(rule, user));
+      const matchedRules = rules.filter((rule) => {
+        if (!curriculumRuleMatchesUser(rule, user, currentSemester)) return false;
+        return rule.course.offerings.some((offering) => offering.semesterId === currentSemester.id && offering.status !== "cancelled");
+      });
       if (matchedRules.length) {
         const seenCourseIds = new Set<string>();
         return ok({
@@ -1300,7 +1665,7 @@ async function handleBoards(method: string, path: string[], request: NextRequest
     const user = await requireUser();
     if (isDemoUser(user)) {
       const board = demoBoardById(boardId);
-      return ok({ board, isJoined: true, memberCount: demoPeople(boardId).length });
+      return ok({ board, isJoined: true, memberCount: demoPeople(boardId).length, sections: [{ code: "1001", memberCount: demoPeople(boardId).length }], myMembership: { sectionCode: "1001" } });
     }
 
     const board = await getBoardForUser(boardId);
@@ -1309,7 +1674,20 @@ async function handleBoards(method: string, path: string[], request: NextRequest
     const isJoined = user
       ? activeMemberships.some((membership) => membership.userId === user.id)
       : false;
-    return ok({ board, isJoined, memberCount: activeMemberships.length });
+    const myMembership = activeMemberships.find((membership) => membership.userId === user.id) ?? null;
+    const sectionCounts = new Map<string, number>();
+    activeMemberships.forEach((membership) => {
+      if (membership.sectionCode) sectionCounts.set(membership.sectionCode, (sectionCounts.get(membership.sectionCode) ?? 0) + 1);
+    });
+    const sections = board.sections
+      .map((section) => ({
+        id: section.id,
+        code: section.code,
+        source: section.source,
+        memberCount: sectionCounts.get(section.code) ?? section.members.length
+      }))
+      .sort((a, b) => a.code.localeCompare(b.code));
+    return ok({ board, isJoined, memberCount: activeMemberships.length, myMembership, sections });
   }
 
   if (method === "POST" && path[2] === "join") {
@@ -1321,22 +1699,68 @@ async function handleBoards(method: string, path: string[], request: NextRequest
       });
     }
 
+    const body = await readBody(request);
+    const sectionCode = normalizeSectionCode(body.sectionCode);
     const board = await getBoardForUser(boardId);
-    const membership = await prisma.courseBoardMembership.upsert({
-      where: { userId_boardId: { userId: user.id, boardId } },
-      update: { status: "active", source: "manual", leftAt: null },
-      create: {
-        userId: user.id,
-        boardId,
-        source: "manual",
-        status: "active"
-      }
+    assertSameSchool(user, board.courseOffering.course.schoolId);
+    const membership = await prisma.$transaction(async (tx) => {
+      const section = await findOrCreateBoardSection(tx, boardId, sectionCode, user.id);
+      return tx.courseBoardMembership.upsert({
+        where: { userId_boardId: { userId: user.id, boardId } },
+        update: { status: "active", source: "manual", sectionId: section.id, sectionCode, leftAt: null },
+        create: {
+          userId: user.id,
+          boardId,
+          sectionId: section.id,
+          sectionCode,
+          source: "manual",
+          status: "active"
+        }
+      });
     });
 
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "course_board.join",
+      targetType: "CourseBoard",
+      targetId: boardId,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { sectionCode, membershipId: membership.id }
+    });
     return ok({
       membership,
-      message: `你已加入 ${board.title}。Course People 只代表平台内自选加入，不代表官方选课名单。`
+      message: `你已加入 ${board.title} 的 ${sectionCode} section。Course People 只代表平台内自选加入，不代表官方选课名单。`
     });
+  }
+
+  if (method === "PATCH" && path[2] === "membership-section") {
+    const user = await requireUser();
+    const body = await readBody(request);
+    const sectionCode = normalizeSectionCode(body.sectionCode);
+    const board = await getBoardForUser(boardId);
+    assertSameSchool(user, board.courseOffering.course.schoolId);
+    const existing = await prisma.courseBoardMembership.findUnique({ where: { userId_boardId: { userId: user.id, boardId } } });
+    if (!existing || existing.status !== "active") throw new ApiError(403, "请先加入这个 Course Board，再选择 section。");
+    const membership = await prisma.$transaction(async (tx) => {
+      const section = await findOrCreateBoardSection(tx, boardId, sectionCode, user.id);
+      return tx.courseBoardMembership.update({
+        where: { userId_boardId: { userId: user.id, boardId } },
+        data: { sectionId: section.id, sectionCode }
+      });
+    });
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "course_board.section.change",
+      targetType: "CourseBoardMembership",
+      targetId: membership.id,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { boardId, sectionCode }
+    });
+    return ok({ membership, message: `已切换到 ${sectionCode} section。` });
   }
 
   if (method === "DELETE" && path[2] === "leave") {
@@ -1354,6 +1778,16 @@ async function handleBoards(method: string, path: string[], request: NextRequest
         where: { userId_boardId: { userId: user.id, boardId } },
         data: { status: "opted_out", leftAt: new Date() }
       });
+      await operationLog({
+        actorUserId: user.id,
+        actorRole: user.role,
+        action: "course_board.leave",
+        targetType: "CourseBoard",
+        targetId: boardId,
+        method,
+        path: request.nextUrl.pathname,
+        summary: { source: membership.source, status: "opted_out" }
+      });
       return ok({
         message: "已退出这个默认加入的 Course Board。若这是课程配置错误，可在 Support Tickets 提交 course_config_error 工单反馈。"
       });
@@ -1363,6 +1797,16 @@ async function handleBoards(method: string, path: string[], request: NextRequest
       where: { userId: user.id, boardId }
     });
 
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "course_board.leave",
+      targetType: "CourseBoard",
+      targetId: boardId,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { source: membership?.source ?? "manual", status: "deleted" }
+    });
     return ok({ message: "已离开这个 Course Board。" });
   }
 
@@ -1404,6 +1848,7 @@ async function handleBoards(method: string, path: string[], request: NextRequest
     const members = await prisma.courseBoardMembership.findMany({
       where: { boardId, status: "active" },
       include: {
+        section: true,
         user: {
           include: {
             profile: { include: profileInclude },
@@ -1448,6 +1893,16 @@ async function handleBoards(method: string, path: string[], request: NextRequest
       }
     });
 
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "teamaking_posts.create",
+      targetType: "TeamakingPost",
+      targetId: post.id,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { boardId, title: post.title }
+    });
     return created({ post });
   }
 
@@ -1562,6 +2017,16 @@ async function handleTeamakingPosts(method: string, path: string[], request: Nex
       data: updateData
     });
 
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "teamaking_posts.patch",
+      targetType: "TeamakingPost",
+      targetId: post.id,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { status: post.status, title: post.title }
+    });
     return ok({ post });
   }
 
@@ -1578,6 +2043,16 @@ async function handleTeamakingPosts(method: string, path: string[], request: Nex
     }
 
     await prisma.teamakingPost.delete({ where: { id: postId } });
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "teamaking_posts.delete",
+      targetType: "TeamakingPost",
+      targetId: postId,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { boardId: existing.boardId }
+    });
     return ok({ message: "Teamaking Post 已删除。" });
   }
 
@@ -1632,6 +2107,16 @@ async function handleTeamakingPosts(method: string, path: string[], request: Nex
       ? await prisma.teamUpRequest.update({ where: { id: existing.id }, data: requestData })
       : await prisma.teamUpRequest.create({ data: requestData });
 
+    await operationLog({
+      actorUserId: sender.id,
+      actorRole: sender.role,
+      action: existing ? "team_up_requests.resend" : "team_up_requests.create",
+      targetType: "TeamUpRequest",
+      targetId: requestRow.id,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { postId, receiverId: post.userId }
+    });
     return created({ request: requestRow });
   }
 
@@ -1684,14 +2169,27 @@ async function handleTeamUpRequests(method: string, path: string[], request: Nex
 
     const allowed = allowedRequestTransitions[existing.status] ?? [];
     if (!allowed.includes(nextStatus) && !isAdminRole(user.role)) {
-      throw new ApiError(400, `不允许从 ${existing.status} 变更为 ${nextStatus}。`);
+      throw new ApiError(400, `不允许从 ${existing.status} 变更为 ${nextStatus}。`, ERROR_CODES.TEAMUP_INVALID_TRANSITION, {
+        from: existing.status,
+        to: nextStatus
+      });
     }
 
-  const updated = await prisma.teamUpRequest.update({
+    const updated = await prisma.teamUpRequest.update({
       where: { id: requestId },
       data: { status: nextStatus }
     });
 
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "team_up_requests.status.patch",
+      targetType: "TeamUpRequest",
+      targetId: updated.id,
+      method,
+      path: request.nextUrl.pathname,
+      summary: { from: existing.status, to: nextStatus }
+    });
     return ok({ request: updated });
   }
 
@@ -1737,9 +2235,24 @@ async function handleTeamUpInterests(method: string, path: string[]) {
     if (action === "report" && interest.senderId !== user.id && interest.receiverId !== user.id) throw new ApiError(403, "不能举报不属于你的 TeamUp Interest。");
 
     const nextStatus = action === "mutual" ? "mutual" : action === "refuse" ? "refused" : action === "withdraw" ? "withdrawn" : "reported";
+    const allowed = allowedRequestTransitions[interest.status] ?? [];
+    if (!allowed.includes(nextStatus)) {
+      throw new ApiError(400, `不允许从 ${interest.status} 变更为 ${nextStatus}。`, ERROR_CODES.TEAMUP_INVALID_TRANSITION, {
+        from: interest.status,
+        to: nextStatus
+      });
+    }
     const updated = await prisma.teamUpRequest.update({
       where: { id: interest.id },
       data: { status: nextStatus }
+    });
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: `team_up_interests.${action}`,
+      targetType: "TeamUpRequest",
+      targetId: updated.id,
+      summary: { from: interest.status, to: nextStatus }
     });
     return ok({ interest: updated });
   }
@@ -1774,6 +2287,14 @@ async function handleFollowRequests(method: string, path: string[]) {
     if ((action === "accept" || action === "refuse") && existing.receiverId !== user.id) throw new ApiError(403, "只有接收者可以处理关注申请。");
     const status = action === "accept" ? "accepted" : action === "refuse" ? "refused" : "withdrawn";
     const requestRow = await prisma.followRequest.update({ where: { id: existing.id }, data: { status } });
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: `follow_requests.${action}`,
+      targetType: "FollowRequest",
+      targetId: requestRow.id,
+      summary: { from: existing.status, to: status }
+    });
     return ok({ request: requestRow });
   }
 
@@ -1787,7 +2308,7 @@ async function handleMatches() {
       posts: demoPosts().map((post, index) => ({
         ...post,
         score: index === 0 ? 90 : 62,
-        reasons: index === 0 ? ["Joined the same course board", "Open to Team"] : ["Same school", "Cross-major collaboration"]
+        reasons: index === 0 ? ["Joined the same course board"] : ["Cross-major collaboration"]
       })),
       users: demoPeople().map((membership, index) => ({
         user: publicUser(membership.user),
@@ -1846,8 +2367,7 @@ async function handleMatches() {
       ...enrichPost(post),
       score: boardIds.includes(post.boardId) ? 90 : 60,
       reasons: [
-        ...(boardIds.includes(post.boardId) ? ["Joined the same course board"] : ["Same school"]),
-        "Open to Team",
+        ...(boardIds.includes(post.boardId) ? ["Joined the same course board"] : []),
         ...(post.user.profile?.majorId === user.profile?.majorId ? ["Same major"] : [])
       ]
     })),
@@ -1867,6 +2387,17 @@ async function handleMatches() {
 }
 
 async function handleSupportTickets(method: string, request: NextRequest) {
+  if (method === "GET") {
+    const user = await getCurrentUser();
+    if (!user) throw new ApiError(401, "请先登录后查看自己的工单。", ERROR_CODES.API_UNAUTHORIZED);
+    const tickets = await prisma.supportTicket.findMany({
+      where: { submittedByUserId: user.id },
+      orderBy: { createdAt: "desc" },
+      take: 100
+    });
+    return ok({ tickets });
+  }
+
   if (method === "POST") {
     let user = null;
     try {
@@ -1876,7 +2407,7 @@ async function handleSupportTickets(method: string, request: NextRequest) {
     }
     const body = await readBody(request);
     const category = optionalString(body.category) ?? "other";
-    const allowedCategories = ["bug", "missing_course", "error_report", "admin_request", "other"];
+    const allowedCategories = ["bug", "missing_course", "course_config_error", "error_report", "admin_request", "other"];
 
     const ticketData = {
         submittedByUserId: user?.id,
@@ -1890,6 +2421,16 @@ async function handleSupportTickets(method: string, request: NextRequest) {
 
     try {
       const ticket = await prisma.supportTicket.create({ data: ticketData });
+      await operationLog({
+        actorUserId: user?.id ?? null,
+        actorRole: user?.role ?? "anonymous",
+        action: "support_tickets.create",
+        targetType: "SupportTicket",
+        targetId: ticket.id,
+        method,
+        path: request.nextUrl.pathname,
+        summary: { category: ticket.category, title: ticket.title }
+      });
       return created({ ticket, message: "工单已提交。管理员会在后台处理，缺失课程、bug、报错都走这里。" });
     } catch {
       return created({
@@ -1913,66 +2454,58 @@ async function handleUploads(method: string, request: NextRequest) {
   const purpose = typeof purposeRaw === "string" && profileUploadPurposeOptions().includes(purposeRaw) ? purposeRaw : "portfolio";
 
   if (!(file instanceof File)) {
-    throw new ApiError(400, "请上传一个文件。");
+    throw new ApiError(400, "请上传一个文件。", ERROR_CODES.UPLOAD_FILE_REQUIRED);
   }
 
   if (file.size > 30 * 1024 * 1024) {
-    throw new ApiError(400, "单个文件暂时限制为 30MB。");
+    throw new ApiError(400, "单个文件暂时限制为 30MB。", ERROR_CODES.UPLOAD_FILE_TOO_LARGE, { size: file.size });
   }
 
-  if (!isAllowedProfileFile(file.name)) {
-    throw new ApiError(400, `暂不支持这个文件后缀：${fileExtensionOf(file.name) || "unknown"}`);
+  if (!isAllowedProfileFile(file.name) || isRiskyProfileFile(file.name)) {
+    throw new ApiError(400, `暂不支持这个文件后缀：${fileExtensionOf(file.name) || "unknown"}`, ERROR_CODES.UPLOAD_EXTENSION_BLOCKED, {
+      fileName: file.name
+    });
+  }
+
+  const contentType = file.type || "application/octet-stream";
+  if (!hasAcceptableMimeForExtension(file.name, contentType)) {
+    throw new ApiError(400, "文件类型和后缀不匹配，请检查后重新上传。", ERROR_CODES.UPLOAD_MIME_MISMATCH, {
+      fileName: file.name,
+      contentType
+    });
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
   const safeName = safeUploadName(file.name);
   const parsedText = await extractReadableText(file.name, buffer);
   const resumeParsedData = purpose === "resume" ? parseResumeText(parsedText, file.name) : undefined;
-  const shouldUseInlineStorage = process.env.VERCEL === "1" || process.env.UPLOAD_STORAGE_MODE === "inline";
-
-  if (shouldUseInlineStorage) {
-    if (file.size > 4 * 1024 * 1024) {
-      throw new ApiError(400, "线上测试环境暂时只支持 4MB 以内的文件上传；较大文件后续会接入对象存储。");
-    }
-
-    return created({
-      upload: {
-        fileUrl: `data:${file.type || "application/octet-stream"};base64,${buffer.toString("base64")}`,
-        storageKey: `inline/${user.id}/${safeName}`,
-        fileName: file.name,
-        fileMimeType: file.type || "application/octet-stream",
-        fileSize: file.size,
-        fileExtension: fileExtensionOf(file.name),
-        previewKind: previewKindForFile(file.name),
-        parsedText,
-        resumeParsedData,
-        purpose,
-        storageMode: "inline_data_url"
-      }
+  const stored = await storeProfileUpload({
+    buffer,
+    userId: user.id,
+    safeName,
+    contentType
+  }).catch((error) => {
+    throw new ApiError(500, "文件保存失败，请稍后再试。", ERROR_CODES.UPLOAD_STORAGE_FAILED, {
+      fileName: file.name,
+      message: error instanceof Error ? error.message : String(error)
     });
-  }
-
-  const relativeDir = `/uploads/${user.id}`;
-  const storageKey = `${relativeDir}/${safeName}`;
-  const targetDir = `${process.cwd()}/public${relativeDir}`;
-  const targetPath = `${process.cwd()}/public${storageKey}`;
-  const fs = await import("node:fs/promises");
-
-  await fs.mkdir(targetDir, { recursive: true });
-  await fs.writeFile(targetPath, buffer);
+  });
 
   const upload = {
-    fileUrl: storageKey,
-    storageKey,
+    fileUrl: stored.fileUrl,
+    storageKey: stored.storageKey,
     fileName: file.name,
-    fileMimeType: file.type || "application/octet-stream",
+    fileMimeType: contentType,
     fileSize: file.size,
     fileExtension: fileExtensionOf(file.name),
     previewKind: previewKindForFile(file.name),
     parsedText,
     resumeParsedData,
     purpose,
-    storageMode: "local_public_uploads"
+    storageMode: stored.storageMode,
+    storageProvider: stored.storageProvider,
+    objectKey: stored.objectKey,
+    scanStatus: "basic_checked"
   };
 
   return created({ upload });
@@ -1994,13 +2527,82 @@ function textValues(value: unknown) {
   return Array.isArray(value) ? value.map(textValue).filter(Boolean) : [];
 }
 
-function curriculumRuleMatchesUser(rule: any, user: any) {
+function academicTermOffset(term?: string | null) {
+  const normalized = (term ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.includes("spring") || normalized === "s2" || normalized.includes("semester 2")) return 0;
+  if (normalized.includes("fall") || normalized.includes("autumn") || normalized === "s1" || normalized.includes("semester 1")) return 1;
+  return null;
+}
+
+function academicTermIndex(year?: number | null, term?: string | null) {
+  const offset = academicTermOffset(term);
+  if (!year || offset === null) return null;
+  return year * 2 + offset;
+}
+
+function relativeTermCodeForProfile(profile: any, semester: any) {
+  const entryYear = typeof profile?.entryYear === "number" ? profile.entryYear : null;
+  const entryTerm = textValue(profile?.entryTerm);
+  const semesterYear = typeof semester?.year === "number" ? semester.year : null;
+  const semesterTerm = textValue(semester?.term);
+  const entryIndex = academicTermIndex(entryYear, entryTerm);
+  const semesterIndex = academicTermIndex(semesterYear, semesterTerm);
+  if (entryIndex === null || semesterIndex === null) return null;
+  const diff = semesterIndex - entryIndex;
+  if (diff < 0) return null;
+  const year = Math.floor(diff / 2) + 1;
+  const term = (diff % 2) + 1;
+  return `Y${year}S${term}`;
+}
+
+function relativeTermCodeForEntry(entryYear: number, entryTerm: string, semester: any) {
+  return relativeTermCodeForProfile({ entryYear, entryTerm }, semester);
+}
+
+function academicTermForRelativeTermCode(entryYear: number, entryTerm: string, relativeTermCode: string) {
+  const match = /^Y(\d+)S([12])$/i.exec(relativeTermCode.trim());
+  const entryIndex = academicTermIndex(entryYear, entryTerm);
+  if (!match || entryIndex === null) return null;
+  const yearOffset = Number(match[1]) - 1;
+  const termOffset = Number(match[2]) - 1;
+  const targetIndex = entryIndex + yearOffset * 2 + termOffset;
+  const academicYear = Math.floor(targetIndex / 2);
+  const term = targetIndex % 2 === 1 ? "Fall" : "Spring";
+  return {
+    code: `${academicYear}-${term}`,
+    year: academicYear,
+    term,
+    label: `${academicYear} ${term}`
+  };
+}
+
+function ruleMatchesAcademicTermContext(rule: Record<string, unknown>, semester: any) {
+  const relativeTermCodes = relativeTermCodesForRule(rule);
+  if (!relativeTermCodes.length) return false;
+  const cohortYears = cohortYearsForRule(rule);
+  if (!cohortYears.length) return false;
+  return cohortYears.some((cohortYear) => {
+    const code = relativeTermCodeForEntry(cohortYear, "Fall", semester);
+    return code ? relativeTermCodes.includes(code) : false;
+  });
+}
+
+function curriculumRuleMatchesUser(rule: any, user: any, semesterOverride?: any) {
   const audience = isPlainRecord(rule.audience) ? rule.audience : {};
   const profile = user.profile;
   if (!profile) return false;
 
+  const relativeTermCodes = Array.isArray(rule.relativeTermCodes)
+    ? textValues(rule.relativeTermCodes).map((code) => code.toUpperCase())
+    : relativeTermCodesForRule(rule);
+  if (relativeTermCodes.length) {
+    const userRelativeTermCode = relativeTermCodeForProfile(profile, semesterOverride ?? rule.semester);
+    if (!userRelativeTermCode || !relativeTermCodes.includes(userRelativeTermCode)) return false;
+  }
+
   const grades = textValues(audience.grades);
-  if (grades.length && !grades.includes(profile.grade)) return false;
+  if (!relativeTermCodes.length && grades.length && !grades.includes(profile.grade)) return false;
   if (audience.allMajors === true) return true;
 
   const majorCodes = textValues(audience.majorCodes);
@@ -2015,7 +2617,296 @@ function curriculumRuleMatchesUser(rule: any, user: any) {
 }
 
 function numberValue(value: unknown) {
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function firstItems(items: string[], limit = 8) {
+  return items.slice(0, limit);
+}
+
+function numberValues(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number" && Number.isFinite(item)) : [];
+}
+
+function audienceForRule(rule: Record<string, unknown>) {
+  return isPlainRecord(rule.audience) ? rule.audience : {};
+}
+
+function cohortYearsForRule(rule: Record<string, unknown>) {
+  return numberValues(audienceForRule(rule).cohortYears);
+}
+
+function countRows<T extends Record<string, unknown>>(rows: T[], keyOf: (row: T) => string | string[] | undefined) {
+  const counts = new Map<string, number>();
+  rows.forEach((row) => {
+    const keys = keyOf(row);
+    const normalizedKeys = Array.isArray(keys) ? keys : keys ? [keys] : ["Unspecified"];
+    normalizedKeys.forEach((key) => counts.set(key, (counts.get(key) ?? 0) + 1));
+  });
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+function stableJson(value: unknown) {
+  return JSON.stringify(value ?? null);
+}
+
+function payloadHash(value: unknown) {
+  return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
+}
+
+function uniqueSortedNumbers(values: number[]) {
+  return [...new Set<number>(values)].sort((a, b) => b - a);
+}
+
+function importCohortYearsFromPayload(payload: Record<string, unknown>, preview?: any) {
+  const fromCoverage = Array.isArray(preview?.coverage?.cohortYears)
+    ? preview.coverage.cohortYears.map((item: any) => Number(item.key)).filter((item: number) => Number.isFinite(item))
+    : [];
+  if (fromCoverage.length) return uniqueSortedNumbers(fromCoverage);
+  const topLevel = numberValues(payload.cohortYears);
+  if (topLevel.length) return uniqueSortedNumbers(topLevel);
+  return uniqueSortedNumbers(records(payload.curriculumRules).flatMap(cohortYearsForRule));
+}
+
+function sourceLabelForImport(payload: Record<string, unknown>, cohortYears: number[]) {
+  const firstSource = records(payload.sourceRefs)[0];
+  if (firstSource) return textValue(firstSource.title) || textValue(firstSource.url) || `${cohortYears.join(", ") || "Unknown"} admission import`;
+  return `${cohortYears.join(", ") || "Unknown"} admission import`;
+}
+
+function buildCourseImportBatchSummary(payload: Record<string, unknown>, preview: any) {
+  const validation = preview?.validation ?? validateBnbuCourseImportPayload(payload);
+  const counts = preview?.counts ?? {};
+  const cohortYears = importCohortYearsFromPayload(payload, preview);
+  const semesterInput = isPlainRecord(payload.semester) ? payload.semester : {};
+  const sourceLabel = sourceLabelForImport(payload, cohortYears);
+  return {
+    schemaVersion: validation.schemaVersion ?? textValue(payload.schemaVersion),
+    semesterCode: validation.semesterCode ?? textValue(semesterInput.code),
+    semesterLabel: textValue(semesterInput.name),
+    cohortYears,
+    importMode: preview?.importMode ?? (records(payload.offerings).length ? "combined_with_offerings" : "cohort_handbook"),
+    sourceLabel,
+    generatedAt: textValue(payload.generatedAt),
+    counts: {
+      faculties: validation.counts?.faculties ?? records(payload.faculties).length,
+      majors: validation.counts?.majors ?? records(payload.majors).length,
+      courses: validation.counts?.courses ?? records(payload.courses).length,
+      offerings: validation.counts?.offerings ?? records(payload.offerings).length,
+      curriculumRules: validation.counts?.curriculumRules ?? records(payload.curriculumRules).length,
+      warnings: validation.warnings?.length ?? 0,
+      errors: validation.errors?.length ?? 0,
+      newCourses: counts.newCourses ?? 0,
+      updatedCourses: counts.updatedCourses ?? 0,
+      newRules: counts.newRules ?? 0,
+      changedRules: counts.changedRules ?? 0,
+      retainedRules: counts.retainedRules ?? 0,
+      rulesToDeactivate: counts.rulesToDeactivate ?? 0,
+      boardsToActivate: counts.courseBoardsToActivate ?? 0
+    },
+    warnings: validation.warnings ?? [],
+    errors: validation.errors ?? []
+  };
+}
+
+function jsonArray(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+function summarizeCourseImportBatch(batch: any, includePayload = false) {
+  const summary = isPlainRecord(batch.summary) ? batch.summary : {};
+  const fallbackValidation = isPlainRecord(batch.validationSummary) ? batch.validationSummary : {};
+  const fallbackPreview = isPlainRecord(fallbackValidation.preview) ? fallbackValidation.preview : {};
+  const fallbackCoverage = isPlainRecord(fallbackPreview.coverage) ? fallbackPreview.coverage : {};
+  const fallbackPayload = isPlainRecord(batch.payload) ? batch.payload : {};
+  const inferredPayloadCohorts = Object.keys(fallbackPayload).length ? importCohortYearsFromPayload(fallbackPayload, fallbackPreview) : [];
+  const cohortYears = numberValues(batch.cohortYears).length
+    ? numberValues(batch.cohortYears)
+    : numberValues(summary.cohortYears).length
+      ? numberValues(summary.cohortYears)
+      : numberValues(jsonArray(fallbackCoverage.cohortYears).map((item) => (isPlainRecord(item) ? item.key : item))).length
+        ? numberValues(jsonArray(fallbackCoverage.cohortYears).map((item) => (isPlainRecord(item) ? item.key : item)))
+        : inferredPayloadCohorts;
+  const counts = isPlainRecord(summary.counts) ? summary.counts : {};
+  const fallbackCounts = isPlainRecord(fallbackValidation.counts) ? fallbackValidation.counts : {};
+  const fallbackPreviewCounts = isPlainRecord(fallbackPreview.counts) ? fallbackPreview.counts : {};
+  const summarized = {
+    id: batch.id,
+    name: batch.name || batch.dataset?.name,
+    datasetId: batch.datasetId,
+    dataset: batch.dataset
+      ? {
+          id: batch.dataset.id,
+          name: batch.dataset.name,
+          status: batch.dataset.status,
+          originalFileName: batch.dataset.originalFileName,
+          originalSize: batch.dataset.originalSize,
+          createdAt: batch.dataset.createdAt,
+          downloadUrl: `/api/admin/course-import-datasets/${batch.dataset.id}/download`
+        }
+      : null,
+    schoolId: batch.schoolId,
+    school: batch.school,
+    schemaVersion: batch.schemaVersion,
+    semesterCode: batch.semesterCode,
+    cohortYears,
+    payloadHash: batch.payloadHash,
+    sourceLabel:
+      batch.sourceLabel ||
+      textValue(batch.dataset?.sourceLabel) ||
+      textValue(summary.sourceLabel) ||
+      (Object.keys(fallbackPayload).length ? sourceLabelForImport(fallbackPayload, cohortYears) : `${cohortYears.join(", ") || "Unknown"} admission import`),
+    status: batch.status,
+    summary: {
+      ...summary,
+      cohortYears,
+      counts: {
+        faculties: Number(counts.faculties ?? fallbackCounts.faculties ?? 0),
+        majors: Number(counts.majors ?? fallbackCounts.majors ?? 0),
+        courses: Number(counts.courses ?? fallbackCounts.courses ?? 0),
+        offerings: Number(counts.offerings ?? fallbackCounts.offerings ?? 0),
+        curriculumRules: Number(counts.curriculumRules ?? fallbackCounts.curriculumRules ?? 0),
+        warnings: Number(counts.warnings ?? jsonArray(fallbackValidation.warnings).length),
+        errors: Number(counts.errors ?? jsonArray(fallbackValidation.errors).length),
+        newCourses: Number(counts.newCourses ?? fallbackPreviewCounts.newCourses ?? 0),
+        updatedCourses: Number(counts.updatedCourses ?? fallbackPreviewCounts.updatedCourses ?? 0),
+        newRules: Number(counts.newRules ?? fallbackPreviewCounts.newRules ?? 0),
+        changedRules: Number(counts.changedRules ?? fallbackPreviewCounts.changedRules ?? 0),
+        retainedRules: Number(counts.retainedRules ?? fallbackPreviewCounts.retainedRules ?? 0),
+        rulesToDeactivate: Number(counts.rulesToDeactivate ?? fallbackPreviewCounts.rulesToDeactivate ?? 0),
+        boardsToActivate: Number(counts.boardsToActivate ?? fallbackPreviewCounts.courseBoardsToActivate ?? 0)
+      }
+    },
+    approvedByUserId: batch.approvedByUserId,
+    approvedAt: batch.approvedAt,
+    rejectedByUserId: batch.rejectedByUserId,
+    rejectedAt: batch.rejectedAt,
+    adminNote: batch.adminNote,
+    createdAt: batch.createdAt,
+    updatedAt: batch.updatedAt
+  };
+  return includePayload ? { ...summarized, payload: batch.payload, validationSummary: batch.validationSummary } : summarized;
+}
+
+function hasOverlappingNumber(values: number[], candidates: number[]) {
+  const candidateSet = new Set(candidates);
+  return values.some((value) => candidateSet.has(value));
+}
+
+function parseCommaText(value: unknown) {
+  if (Array.isArray(value)) return value.map(textValue).filter(Boolean);
+  return textValue(value).split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function parseJsonObject(value: unknown) {
+  if (isPlainRecord(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return isPlainRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function courseUsageSummary(course: any) {
+  const rules = Array.isArray(course.curriculumRules) ? course.curriculumRules : [];
+  const rows: any[] = rules.map((rule: any) => {
+    const audience = isPlainRecord(rule.audience) ? rule.audience : {};
+    return {
+      id: rule.id,
+      externalId: rule.externalId,
+      semester: rule.semester,
+      classification: rule.classification,
+      studentAction: rule.studentAction,
+      cohortYears: numberValues(audience.cohortYears),
+      entryTerm: textValue(audience.entryTerm) || "Fall",
+      majorCodes: textValues(audience.majorCodes),
+      facultyCodes: textValues(audience.facultyCodes),
+      allMajors: audience.allMajors === true,
+      relativeTermCodes: textValues(rule.relativeTermCodes),
+      sourceRefIds: textValues(rule.sourceRefIds)
+    };
+  });
+  const academicTermRows = rows.flatMap((row) => {
+    const audienceCodes = row.allMajors
+      ? ["ALL majors"]
+      : row.majorCodes.length
+        ? row.majorCodes
+        : row.facultyCodes.length
+          ? row.facultyCodes.map((code: string) => `Faculty ${code}`)
+          : ["Unspecified"];
+    return row.cohortYears.flatMap((entryYear: number) =>
+      row.relativeTermCodes.flatMap((relativeTermCode: string) => {
+        const academicTerm = academicTermForRelativeTermCode(entryYear, row.entryTerm, relativeTermCode);
+        return audienceCodes.map((audienceCode: string) => ({
+          ruleId: row.id,
+          externalId: row.externalId,
+          entryYear,
+          entryTerm: row.entryTerm,
+          audience: audienceCode,
+          relativeTermCode,
+          academicTermCode: academicTerm?.code ?? null,
+          academicTermLabel: academicTerm?.label ?? "Unknown",
+          classification: row.classification,
+          studentAction: row.studentAction
+        }));
+      })
+    );
+  }).sort((a, b) =>
+    String(a.academicTermCode ?? "").localeCompare(String(b.academicTermCode ?? "")) ||
+    String(a.entryYear).localeCompare(String(b.entryYear)) ||
+    a.audience.localeCompare(b.audience) ||
+    a.relativeTermCode.localeCompare(b.relativeTermCode)
+  );
+  return {
+    totalRules: rows.length,
+    cohortYears: countRows(rows, (row) => row.cohortYears.map(String)),
+    majors: countRows(rows, (row) => row.majorCodes.length ? row.majorCodes : row.allMajors ? "ALL" : "Unspecified"),
+    relativeTerms: countRows(rows, (row) => row.relativeTermCodes.length ? row.relativeTermCodes : "Unspecified"),
+    academicTerms: countRows(academicTermRows, (row) => row.academicTermLabel),
+    classifications: countRows(rows, (row) => row.classification),
+    academicTermRows: academicTermRows.slice(0, 200),
+    rules: rows.slice(0, 80)
+  };
+}
+
+function serializeAdminCourse(course: any) {
+  return {
+    ...course,
+    usage: courseUsageSummary(course)
+  };
+}
+
+function normalizeSectionCode(value: unknown) {
+  const code = textValue(value) || "1001";
+  if (!/^10\d{2}$/.test(code)) {
+    throw new ApiError(400, "Section 必须是 10xx 格式；如果课程没有多个 section，请使用默认 1001。");
+  }
+  return code;
+}
+
+async function findOrCreateBoardSection(tx: any, boardId: string, sectionCode: string, userId?: string | null, source = "student_created") {
+  const existing = await tx.courseBoardSection.findUnique({
+    where: { boardId_code: { boardId, code: sectionCode } }
+  });
+  if (existing) return existing;
+  return tx.courseBoardSection.create({
+    data: {
+      boardId,
+      code: sectionCode,
+      source,
+      createdByUserId: userId ?? null
+    }
+  });
 }
 
 function courseImportPayloadFromBody(body: Record<string, unknown>) {
@@ -2025,11 +2916,1620 @@ function courseImportPayloadFromBody(body: Record<string, unknown>) {
       const parsed = JSON.parse(candidate);
       if (isPlainRecord(parsed)) return parsed;
     } catch {
-      throw new ApiError(400, "payload 不是合法 JSON。");
+      throw new ApiError(400, "payload 不是合法 JSON。", ERROR_CODES.COURSE_IMPORT_INVALID_JSON);
     }
   }
   if (isPlainRecord(candidate)) return candidate;
-  throw new ApiError(400, "payload must be a JSON object.");
+  throw new ApiError(400, "payload must be a JSON object.", ERROR_CODES.COURSE_IMPORT_INVALID_JSON);
+}
+
+const importArtifactDir = path.join(process.cwd(), "storage", "course_import_artifacts");
+const crawlerOutputDir = path.join(process.cwd(), "storage", "crawler_outputs");
+const crawlerScriptCandidates = [
+  path.join(process.cwd(), "scripts", "bnbu-crawler", "run-handbook-preview.mjs"),
+  path.join(process.cwd(), "local_bnbu_course_pipeline", "run_handbook_preview.mjs")
+];
+const crawlerJobs = new Map<string, any>();
+const crawlerStaleMs = 30 * 60 * 1000;
+
+function timestampFilePrefix(date = new Date()) {
+  return date.toISOString().replace(/[:.]/g, "-");
+}
+
+function safeFilePart(value: string) {
+  return value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "course-import";
+}
+
+async function writeImportArtifact(payload: Record<string, unknown>, name: string) {
+  await mkdir(importArtifactDir, { recursive: true });
+  const fileName = `${timestampFilePrefix()}_${safeFilePart(name)}.teamaking.json`;
+  const storageKey = path.join("storage", "course_import_artifacts", fileName);
+  const absolutePath = path.join(process.cwd(), storageKey);
+  const content = `${JSON.stringify(payload, null, 2)}\n`;
+  await writeFile(absolutePath, content, "utf8");
+  return { fileName, storageKey, size: Buffer.byteLength(content, "utf8") };
+}
+
+function jsonDownloadResponse(payload: unknown, filename: string) {
+  return new NextResponse(`${JSON.stringify(payload, null, 2)}\n`, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${safeFilePart(filename).replace(/\.json$/i, "")}.json"`
+    }
+  });
+}
+
+async function readStoredJson(storageKey?: string | null) {
+  if (!storageKey) throw new ApiError(404, "找不到可下载文件。");
+  const absolutePath = path.resolve(process.cwd(), storageKey);
+  const allowedRoots = [importArtifactDir, crawlerOutputDir, path.join(process.cwd(), "course_imports", "bnbu")].map((item) => path.resolve(item));
+  const allowed = allowedRoots.some((root) => absolutePath === root || absolutePath.startsWith(`${root}${path.sep}`));
+  if (!allowed || !absolutePath.endsWith(".json")) throw new ApiError(403, "文件路径不允许下载。");
+  return readFile(absolutePath, "utf8");
+}
+
+async function listCrawlerOutputs() {
+  const dirs = [crawlerOutputDir, path.join(process.cwd(), "course_imports", "bnbu")];
+  const files: any[] = [];
+  for (const dir of dirs) {
+    await mkdir(dir, { recursive: true });
+    const names = await readdir(dir).catch(() => []);
+    for (const name of names.filter((item) => item.endsWith(".teamaking.json") || item.endsWith(".json"))) {
+      const absolutePath = path.join(dir, name);
+      const info = await stat(absolutePath).catch(() => null);
+      if (!info?.isFile()) continue;
+      const storageKey = path.relative(process.cwd(), absolutePath);
+      files.push({
+        name,
+        storageKey,
+        size: info.size,
+        modifiedAt: info.mtime.toISOString(),
+        downloadUrl: `/api/crawler/outputs/${encodeURIComponent(Buffer.from(storageKey).toString("base64url"))}/download`
+      });
+    }
+  }
+  return files.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+}
+
+function crawlerCsv(value: unknown) {
+  return textValue(value).split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function parseCrawlerInstruction(value: unknown) {
+  const instruction = textValue(value);
+  const lower = instruction.toLowerCase();
+  const urls = instruction.match(/https?:\/\/[^\s，。)）]+/g) ?? [];
+  const years = [...new Set(instruction.match(/\b20\d{2}\b/g) ?? [])];
+  const upperCodes = [...new Set(instruction.match(/\b[A-Z]{2,6}\b/g) ?? [])]
+    .filter((code) => !["BNBU", "PDF", "HTML", "HTTP", "HTTPS", "URL", "JSON", "SPRING", "FALL"].includes(code));
+  const limitMatch = lower.match(/(?:limit|前|first|top)\s*[:=]?\s*(\d{1,3})/i) ?? instruction.match(/(\d{1,3})\s*(?:个|份|programmes|majors|专业)/i);
+  const termMatch =
+    instruction.match(/\b(20\d{2})\s*[- ]?\s*(Spring|Fall)\b/i) ??
+    instruction.match(/\b(20\d{2})\s*(春|秋|上|下)/);
+  const term = termMatch ? (/spring|春|下/i.test(termMatch[2]) ? "Spring" : "Fall") : "";
+  const academicYear = termMatch?.[1] ?? "";
+  return {
+    handbookUrl: urls.find((url) => /programme_handbook|handbook/i.test(url)) ?? urls[0] ?? "",
+    cohorts: academicYear && term ? years.filter((year) => year !== academicYear).join(",") : years.join(","),
+    programmes: upperCodes.join(","),
+    limit: /全部|所有|all/i.test(instruction) ? "all" : limitMatch?.[1] ?? "",
+    academicYear,
+    term,
+    target: lower.includes("syllabus") || lower.includes("teamwork") || instruction.includes("组队")
+      ? "syllabus_teamwork"
+      : lower.includes("offering") || lower.includes("course board") || instruction.includes("开课")
+        ? "semester_offerings"
+        : "programme_handbook"
+  };
+}
+
+async function crawlerScriptPath() {
+  for (const candidate of crawlerScriptCandidates) {
+    const info = await stat(candidate).catch(() => null);
+    if (info?.isFile()) return candidate;
+  }
+  throw new ApiError(500, "没有找到 BNBU crawler runner。请确认 scripts/bnbu-crawler/run-handbook-preview.mjs 已部署。");
+}
+
+function normalizeCrawlerJobInput(body: Record<string, unknown>) {
+  const natural = parseCrawlerInstruction(body.instruction);
+  const academicYear = textValue(body.academicYear) || natural.academicYear || "2026";
+  const term = textValue(body.term) || natural.term || "Spring";
+  const cohorts = crawlerCsv(body.cohorts || natural.cohorts || "2025,2024");
+  const outputMode = textValue(body.outputMode) || "download";
+  const requestedName = optionalString(body.name) ?? optionalString(body.jobName);
+  return {
+    name: requestedName,
+    target: textValue(body.target) || natural.target || "programme_handbook",
+    handbookUrl:
+      textValue(body.handbookUrl) ||
+      natural.handbookUrl ||
+      "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm",
+    cohorts,
+    programmes: crawlerCsv(body.programmes || body.programmeCodes || natural.programmes).join(","),
+    facultyCodes: crawlerCsv(body.facultyCodes).join(","),
+    programmeName: textValue(body.programmeName),
+    facultyName: textValue(body.facultyName),
+    limit: textValue(body.limit) || natural.limit || "all",
+    academicYear,
+    term,
+    semesterCode: textValue(body.semesterCode) || `${academicYear}-${term}`,
+    semesterName: textValue(body.semesterName) || `${academicYear} ${term}`,
+    outputMode
+  };
+}
+
+function defaultCrawlerJobName(input: any) {
+  const years = Array.isArray(input.cohorts) && input.cohorts.length ? input.cohorts.join(", ") : "unknown admission";
+  return `${years} admission programme handbook`;
+}
+
+function serializeCrawlerJob(job: any) {
+  const input = isPlainRecord(job.input) ? job.input : {};
+  const logs = Array.isArray(job.logs) ? job.logs.map(textValue) : [];
+  const outputs = Array.isArray(job.outputs) ? job.outputs : [];
+  return {
+    id: job.id,
+    name: job.name,
+    target: job.target,
+    status: job.status,
+    input,
+    command: job.command,
+    logs,
+    outputs,
+    errorMessage: job.errorMessage,
+    exitCode: job.exitCode,
+    startedAt: job.startedAt?.toISOString?.() ?? job.startedAt,
+    finishedAt: job.finishedAt?.toISOString?.() ?? job.finishedAt,
+    createdAt: job.createdAt?.toISOString?.() ?? job.createdAt,
+    updatedAt: job.updatedAt?.toISOString?.() ?? job.updatedAt
+  };
+}
+
+async function persistCrawlerJob(job: any) {
+  await prisma.crawlerJob.update({
+    where: { id: job.id },
+    data: {
+      status: job.status,
+      input: toJson(job.input),
+      command: job.command,
+      logs: toJson(job.logs ?? []),
+      outputs: toJson(job.outputs ?? []),
+      errorMessage: job.errorMessage ?? null,
+      exitCode: job.exitCode ?? null,
+      finishedAt: job.finishedAt ? new Date(job.finishedAt) : null
+    }
+  }).catch(() => null);
+}
+
+async function markStaleCrawlerJobs(appVersionId: string) {
+  const staleDate = new Date(Date.now() - crawlerStaleMs);
+  await prisma.crawlerJob.updateMany({
+    where: {
+      appVersionId,
+      status: "running",
+      updatedAt: { lt: staleDate }
+    },
+    data: {
+      status: "failed",
+      errorMessage: "任务长时间没有更新，可能是开发服务器重启、进程被终止，或网络/PDF 下载中断。请重新启动任务。",
+      finishedAt: new Date()
+    }
+  }).catch(() => null);
+}
+
+async function listCrawlerJobs(appVersionId: string) {
+  await markStaleCrawlerJobs(appVersionId);
+  const jobs = await prisma.crawlerJob.findMany({
+    where: { appVersionId },
+    orderBy: { startedAt: "desc" },
+    take: 50
+  });
+  return jobs.map(serializeCrawlerJob);
+}
+
+async function startCrawlerJob(body: Record<string, unknown>, admin: any) {
+  const input = normalizeCrawlerJobInput(body);
+  if (input.target !== "programme_handbook") {
+    throw new ApiError(400, "当前 crawler runner 已支持 programme_handbook。semester offerings / syllabus teamwork 已在 UI 预留，等官方来源确认后再接解析器。");
+  }
+  if (!input.cohorts.length) throw new ApiError(400, "至少填写一个 admission year，例如 2025 或 2025,2024。");
+  await mkdir(crawlerOutputDir, { recursive: true });
+  const script = await crawlerScriptPath();
+  const appVersionId = await getActiveAppVersionId();
+  const jobName = input.name || defaultCrawlerJobName(input);
+  const outDir = input.outputMode === "git_import_json" ? "course_imports/bnbu" : path.relative(process.cwd(), crawlerOutputDir);
+  const args = [
+    script,
+    `--handbookUrl=${input.handbookUrl}`,
+    `--cohorts=${input.cohorts.join(",")}`,
+    `--limit=${input.limit}`,
+    `--semesterCode=${input.semesterCode}`,
+    `--semesterName=${input.semesterName}`,
+    `--academicYear=${input.academicYear}`,
+    `--term=${input.term}`,
+    `--outDir=${outDir}`
+  ];
+  if (input.programmes) args.push(`--programmes=${input.programmes}`);
+  if (input.facultyCodes) args.push(`--facultyCodes=${input.facultyCodes}`);
+  if (input.programmeName) args.push(`--programmeName=${input.programmeName}`);
+  if (input.facultyName) args.push(`--facultyName=${input.facultyName}`);
+  const command = ["node", ...args].map((item) => (item.includes(" ") ? JSON.stringify(item) : item)).join(" ");
+  const createdJob = await prisma.crawlerJob.create({
+    data: {
+      appVersionId,
+      name: jobName,
+      target: input.target,
+      status: "running",
+      input: toJson(input),
+      command,
+      logs: toJson([`Starting ${input.target} crawl at ${new Date().toISOString()}\n`]),
+      outputs: toJson([]),
+      createdByUserId: admin.id
+    }
+  });
+  const job: any = {
+    id: createdJob.id,
+    name: jobName,
+    input,
+    status: "running",
+    target: input.target,
+    command,
+    logs: [`Starting ${input.target} crawl at ${new Date().toISOString()}\n`],
+    startedAt: createdJob.startedAt.toISOString(),
+    finishedAt: null,
+    exitCode: null,
+    errorMessage: null,
+    outputs: []
+  };
+  crawlerJobs.set(createdJob.id, job);
+  const child = spawn(process.execPath, args, { cwd: process.cwd(), env: process.env });
+  child.stdout.on("data", (chunk) => {
+    job.logs.push(chunk.toString());
+    void persistCrawlerJob(job);
+  });
+  child.stderr.on("data", (chunk) => {
+    const text = chunk.toString();
+    job.logs.push(text);
+    job.errorMessage = text.trim().split("\n").slice(-1)[0] || job.errorMessage;
+    void persistCrawlerJob(job);
+  });
+  child.on("error", (error) => {
+    job.status = "failed";
+    job.finishedAt = new Date().toISOString();
+    job.errorMessage = error.message;
+    job.logs.push(`\n${error.stack || error.message}\n`);
+    void persistCrawlerJob(job);
+  });
+  child.on("close", async (code) => {
+    job.exitCode = code;
+    job.status = code === 0 ? "completed" : "failed";
+    job.finishedAt = new Date().toISOString();
+    job.outputs = await listCrawlerOutputs();
+    if (code !== 0 && !job.errorMessage) {
+      const tail = (job.logs ?? []).join("").trim().split("\n").filter(Boolean).slice(-1)[0];
+      job.errorMessage = tail || `Crawler exited with code ${code}`;
+    }
+    job.logs.push(`\nFinished with exit code ${code} at ${job.finishedAt}\n`);
+    await persistCrawlerJob(job);
+    await operationLog({
+      actorUserId: admin.id,
+      actorRole: admin.role,
+      action: "crawler.jobs.finish",
+      targetType: "CrawlerJob",
+      targetId: job.id,
+      status: job.status === "completed" ? "success" : "failed",
+      summary: { name: job.name, input, exitCode: code, errorMessage: job.errorMessage }
+    });
+  });
+  await operationLog({
+    actorUserId: admin.id,
+    actorRole: admin.role,
+    action: "crawler.jobs.start",
+    targetType: "CrawlerJob",
+    targetId: job.id,
+    summary: { name: job.name, input }
+  });
+  return serializeCrawlerJob({ ...createdJob, input, logs: job.logs, outputs: [], command, errorMessage: null, status: "running" });
+}
+
+function datasetRowId(row: Record<string, unknown>, fallback: string) {
+  return textValue(row.id) || textValue(row.code) || fallback;
+}
+
+async function createCourseImportDataset(input: {
+  payload: Record<string, unknown>;
+  name: string;
+  adminUserId: string;
+  schoolId?: string;
+  preview: any;
+}) {
+  const validation = input.preview.validation ?? validateBnbuCourseImportPayload(input.payload);
+  const summary = buildCourseImportBatchSummary(input.payload, input.preview);
+  const cohortYears = importCohortYearsFromPayload(input.payload, input.preview);
+  const hash = payloadHash(input.payload);
+  const artifact = await writeImportArtifact(input.payload, input.name);
+  const appVersionId = await getActiveAppVersionId();
+  const sourceRefs = records(input.payload.sourceRefs);
+  const faculties = records(input.payload.faculties);
+  const majors = records(input.payload.majors);
+  const courses = records(input.payload.courses);
+  const curriculumRules = records(input.payload.curriculumRules);
+  const offerings = records(input.payload.offerings);
+
+  return prisma.courseImportDataset.create({
+    data: {
+      appVersionId,
+      schoolId: input.schoolId,
+      name: input.name,
+      schemaVersion: validation.schemaVersion ?? textValue(input.payload.schemaVersion) ?? "teamaking.bnbu_course_import.v2",
+      semesterCode: validation.semesterCode,
+      cohortYears: toJson(cohortYears),
+      sourceLabel: summary.sourceLabel,
+      payloadHash: hash,
+      status: "validated",
+      summary: toJson(summary),
+      validationSummary: toJson({ ...validation, preview: input.preview }),
+      originalFileName: artifact.fileName,
+      originalStorageKey: artifact.storageKey,
+      originalSize: artifact.size,
+      createdByUserId: input.adminUserId,
+      sourceRefs: {
+        create: sourceRefs.map((row, index) => ({
+          externalId: datasetRowId(row, `source-${index + 1}`),
+          title: textValue(row.title),
+          url: textValue(row.url),
+          sourceType: textValue(row.sourceType),
+          raw: toJson(row)
+        }))
+      },
+      faculties: {
+        create: faculties.map((row) => ({
+          code: textValue(row.code),
+          name: textValue(row.name),
+          raw: toJson(row)
+        })).filter((row) => row.code)
+      },
+      majors: {
+        create: majors.map((row) => ({
+          code: textValue(row.code),
+          name: textValue(row.name),
+          facultyCode: textValue(row.facultyCode),
+          degreeType: textValue(row.degreeType),
+          raw: toJson(row)
+        })).filter((row) => row.code)
+      },
+      courses: {
+        create: courses.map((row) => ({
+          code: textValue(row.code),
+          title: textValue(row.title),
+          credits: numberValue(row.credits),
+          categoryTags: toJson(Array.isArray(row.categoryTags) ? row.categoryTags : []),
+          ownerUnit: toJson(isPlainRecord(row.ownerUnit) ? row.ownerUnit : {}),
+          raw: toJson(row)
+        })).filter((row) => row.code)
+      },
+      rules: {
+        create: curriculumRules.map((row, index) => ({
+          externalId: datasetRowId(row, `rule-${index + 1}`),
+          courseCode: textValue(row.courseCode),
+          classification: textValue(row.classification),
+          studentAction: textValue(row.studentAction),
+          audience: toJson(isPlainRecord(row.audience) ? row.audience : {}),
+          relativeTermCodes: toJson(Array.isArray(row.relativeTermCodes) ? row.relativeTermCodes : []),
+          sourceRefIds: toJson(Array.isArray(row.sourceRefIds) ? row.sourceRefIds : []),
+          raw: toJson(row)
+        })).filter((row) => row.externalId && row.courseCode)
+      },
+      offerings: {
+        create: offerings.map((row, index) => ({
+          externalId: datasetRowId(row, `offering-${index + 1}`),
+          courseCode: textValue(row.courseCode),
+          semesterCode: textValue(row.semesterCode),
+          sections: toJson(Array.isArray(row.sections) ? row.sections : []),
+          raw: toJson(row)
+        })).filter((row) => row.externalId && row.courseCode)
+      }
+    },
+    include: {
+      school: true,
+      sourceRefs: true,
+      faculties: true,
+      majors: true,
+      courses: true,
+      rules: true,
+      offerings: true
+    }
+  });
+}
+
+async function payloadFromDataset(datasetId: string) {
+  const dataset = await prisma.courseImportDataset.findUnique({
+    where: { id: datasetId },
+    include: {
+      school: { include: { domains: true } },
+      sourceRefs: true,
+      faculties: true,
+      majors: true,
+      courses: true,
+      rules: true,
+      offerings: true
+    }
+  });
+  if (!dataset) throw new ApiError(404, "找不到这个导入数据集。");
+  return {
+    schemaVersion: dataset.schemaVersion,
+    generatedAt: dataset.createdAt.toISOString(),
+    school: dataset.school ? { shortName: dataset.school.shortName, name: dataset.school.name, emailDomain: dataset.school.domains?.[0]?.domain } : { shortName: "BNBU" },
+    semester: {
+      code: dataset.semesterCode,
+      name: dataset.semesterCode,
+      academicYear: Number(String(dataset.semesterCode ?? "").match(/20\d{2}/)?.[0] ?? new Date().getFullYear()),
+      term: String(dataset.semesterCode ?? "").includes("Fall") ? "Fall" : "Spring",
+      isCurrentCandidate: false
+    },
+    sourceRefs: dataset.sourceRefs.map((row) => row.raw),
+    faculties: dataset.faculties.map((row) => row.raw),
+    majors: dataset.majors.map((row) => row.raw),
+    courses: dataset.courses.map((row) => row.raw),
+    offerings: dataset.offerings.map((row) => row.raw),
+    curriculumRules: dataset.rules.map((row) => row.raw)
+  };
+}
+
+async function versionSnapshotChunks(appVersionId: string) {
+  const [users, schools, importBatches, datasets, operationLogs, auditLogs, errorEvents, supportTickets, posts, teamUps, follows, configs] = await Promise.all([
+    prisma.user.findMany({
+      where: { appVersionId },
+      include: {
+        profile: true,
+        contactInfo: true,
+        skills: true,
+        memberships: true,
+        submittedCourses: true,
+        portfolioItems: true
+      },
+      orderBy: { createdAt: "asc" }
+    }),
+    prisma.school.findMany({
+      where: { appVersionId },
+      include: {
+        domains: true,
+        faculties: true,
+        majors: true,
+        semesters: true,
+        courses: {
+          include: {
+            mappings: true,
+            curriculumRules: true,
+            offerings: {
+              include: {
+                syllabusMetadata: true,
+                boards: { include: { sections: true } }
+              }
+            }
+          }
+        },
+        importBatches: true
+      },
+      orderBy: { createdAt: "asc" }
+    }),
+    prisma.courseImportBatch.findMany({ where: { appVersionId }, orderBy: { createdAt: "asc" } }),
+    prisma.courseImportDataset.findMany({
+      where: { appVersionId },
+      include: { sourceRefs: true, faculties: true, majors: true, courses: true, rules: true, offerings: true },
+      orderBy: { createdAt: "asc" }
+    }),
+    prisma.operationLog.findMany({ where: { appVersionId }, orderBy: { createdAt: "asc" }, take: 5000 }),
+    prisma.adminAuditLog.findMany({ where: { appVersionId }, orderBy: { createdAt: "asc" }, take: 5000 }),
+    prisma.errorEvent.findMany({ where: { appVersionId }, orderBy: { createdAt: "asc" }, take: 5000 }),
+    prisma.supportTicket.findMany({ where: { submittedBy: { appVersionId } }, orderBy: { createdAt: "asc" } }),
+    prisma.teamakingPost.findMany({ where: { user: { appVersionId } }, orderBy: { createdAt: "asc" } }),
+    prisma.teamUpRequest.findMany({ where: { sender: { appVersionId } }, orderBy: { createdAt: "asc" } }),
+    prisma.followRequest.findMany({ where: { sender: { appVersionId } }, orderBy: { createdAt: "asc" } }),
+    prisma.siteConfig.findMany({ orderBy: { key: "asc" } })
+  ]);
+  return [
+    { name: "users", data: users },
+    { name: "schools_and_course_catalog", data: schools },
+    { name: "course_import_batches", data: importBatches },
+    { name: "course_import_datasets", data: datasets },
+    { name: "teamaking_posts", data: posts },
+    { name: "team_up_requests", data: teamUps },
+    { name: "follow_requests", data: follows },
+    { name: "support_tickets", data: supportTickets },
+    { name: "site_configs", data: configs },
+    { name: "operation_logs", data: operationLogs },
+    { name: "admin_audit_logs", data: auditLogs },
+    { name: "error_events", data: errorEvents }
+  ];
+}
+
+async function createVersionCheckpoint(input: {
+  appVersionId?: string;
+  label: string;
+  kind?: string;
+  reason?: string;
+  triggeredByUserId?: string;
+}) {
+  const appVersionId = input.appVersionId ?? (await getActiveAppVersionId());
+  const chunks = await versionSnapshotChunks(appVersionId);
+  return prisma.versionCheckpoint.create({
+    data: {
+      appVersionId,
+      label: input.label,
+      kind: input.kind ?? "operation",
+      reason: input.reason,
+      triggeredByUserId: input.triggeredByUserId,
+      summary: toJson(Object.fromEntries(chunks.map((chunk) => [chunk.name, Array.isArray(chunk.data) ? chunk.data.length : 0]))),
+      chunks: {
+        create: chunks.map((chunk) => ({
+          name: chunk.name,
+          rowCount: Array.isArray(chunk.data) ? chunk.data.length : 0,
+          data: toJson(chunk.data)
+        }))
+      }
+    },
+    include: { chunks: true }
+  });
+}
+
+function chunkArray(chunks: any[], name: string) {
+  const data = chunks.find((chunk) => chunk.name === name)?.data;
+  return Array.isArray(data) ? data : [];
+}
+
+function dateOrNull(value: unknown) {
+  if (!value) return null;
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateOrUndefined(value: unknown) {
+  return dateOrNull(value) ?? undefined;
+}
+
+async function restoreCheckpointAsNewVersion(checkpointId: string, admin: any) {
+  const checkpoint = await prisma.versionCheckpoint.findUnique({
+    where: { id: checkpointId },
+    include: { chunks: true, appVersion: true }
+  });
+  if (!checkpoint) throw new ApiError(404, "找不到这个版本检查点。", ERROR_CODES.CHECKPOINT_NOT_FOUND);
+
+  const restored = await prisma.$transaction(async (tx) => {
+    await tx.appVersion.updateMany({
+      where: { status: "active" },
+      data: { status: "closed", endedAt: new Date() }
+    });
+    const version = await tx.appVersion.create({
+      data: {
+        name: `Restored: ${checkpoint.label}`,
+        phase: checkpoint.appVersion.phase,
+        status: "active",
+        notes: `Restored from checkpoint ${checkpoint.id}`,
+        createdByUserId: admin.id
+      }
+    });
+
+    const schoolMap = new Map<string, string>();
+    const facultyMap = new Map<string, string>();
+    const majorMap = new Map<string, string>();
+    const semesterMap = new Map<string, string>();
+    const courseMap = new Map<string, string>();
+    const offeringMap = new Map<string, string>();
+    const boardMap = new Map<string, string>();
+    const sectionMap = new Map<string, string>();
+    const userMap = new Map<string, string>();
+    const postMap = new Map<string, string>();
+
+    for (const school of chunkArray(checkpoint.chunks, "schools_and_course_catalog")) {
+      const createdSchool = await tx.school.create({
+        data: {
+          appVersionId: version.id,
+          name: school.name,
+          shortName: school.shortName,
+          status: school.status ?? "active"
+        }
+      });
+      schoolMap.set(school.id, createdSchool.id);
+
+      for (const domain of school.domains ?? []) {
+        await tx.schoolEmailDomain.create({
+          data: { schoolId: createdSchool.id, domain: domain.domain, status: domain.status ?? "active" }
+        });
+      }
+      for (const faculty of school.faculties ?? []) {
+        const createdFaculty = await tx.faculty.create({
+          data: { schoolId: createdSchool.id, code: faculty.code ?? null, name: faculty.name }
+        });
+        facultyMap.set(faculty.id, createdFaculty.id);
+      }
+      for (const major of school.majors ?? []) {
+        const facultyId = facultyMap.get(major.facultyId);
+        if (!facultyId) continue;
+        const createdMajor = await tx.major.create({
+          data: {
+            schoolId: createdSchool.id,
+            facultyId,
+            code: major.code ?? null,
+            name: major.name,
+            degreeType: major.degreeType ?? "undergraduate"
+          }
+        });
+        majorMap.set(major.id, createdMajor.id);
+      }
+      for (const semester of school.semesters ?? []) {
+        const createdSemester = await tx.semester.create({
+          data: {
+            schoolId: createdSchool.id,
+            code: semester.code ?? null,
+            name: semester.name,
+            year: Number(semester.year),
+            term: semester.term,
+            isCurrent: Boolean(semester.isCurrent)
+          }
+        });
+        semesterMap.set(semester.id, createdSemester.id);
+      }
+      for (const course of school.courses ?? []) {
+        const createdCourse = await tx.course.create({
+          data: {
+            schoolId: createdSchool.id,
+            code: course.code,
+            title: course.title,
+            description: course.description ?? "",
+            credits: course.credits ?? null,
+            ownerUnit: toJson(course.ownerUnit ?? {}),
+            categoryTags: toJson(course.categoryTags ?? []),
+            sourceRefIds: toJson(course.sourceRefIds ?? []),
+            manualOverrideFields: toJson(course.manualOverrideFields ?? []),
+            manualNote: course.manualNote ?? null,
+            courseType: course.courseType ?? "coursework",
+            status: course.status ?? "active",
+            source: course.source ?? "checkpoint_restore",
+            mergedIntoCourseId: course.mergedIntoCourseId ? courseMap.get(course.mergedIntoCourseId) ?? null : null,
+            mergedAt: dateOrNull(course.mergedAt),
+            mergeNote: course.mergeNote ?? null
+          }
+        });
+        courseMap.set(course.id, createdCourse.id);
+      }
+      for (const course of school.courses ?? []) {
+        const courseId = courseMap.get(course.id);
+        if (!courseId) continue;
+        for (const mapping of course.mappings ?? []) {
+          const majorId = majorMap.get(mapping.majorId);
+          if (!majorId) continue;
+          await tx.courseMajorMapping.create({
+            data: {
+              courseId,
+              majorId,
+              recommendedGrade: mapping.recommendedGrade,
+              isRequired: Boolean(mapping.isRequired),
+              isDefaultRecommended: mapping.isDefaultRecommended !== false
+            }
+          }).catch(() => null);
+        }
+        for (const rule of course.curriculumRules ?? []) {
+          const semesterId = semesterMap.get(rule.semesterId);
+          if (!semesterId) continue;
+          await tx.courseCurriculumRule.create({
+            data: {
+              courseId,
+              semesterId,
+              externalId: rule.externalId,
+              classification: rule.classification,
+              classificationLabel: rule.classificationLabel ?? null,
+              studentAction: rule.studentAction,
+              audience: toJson(rule.audience ?? {}),
+              relativeTermCodes: toJson(rule.relativeTermCodes ?? []),
+              ownerUnit: toJson(rule.ownerUnit ?? {}),
+              sourceRefIds: toJson(rule.sourceRefIds ?? []),
+              confidence: rule.confidence ?? "unknown",
+              status: rule.status ?? "active",
+              raw: toJson(rule.raw ?? {})
+            }
+          }).catch(() => null);
+        }
+        for (const offering of course.offerings ?? []) {
+          const semesterId = semesterMap.get(offering.semesterId);
+          if (!semesterId) continue;
+          const createdOffering = await tx.courseOffering.create({
+            data: {
+              courseId,
+              semesterId,
+              teacherName: offering.teacherName ?? null,
+              section: offering.section ?? null,
+              sourceRefIds: toJson(offering.sourceRefIds ?? []),
+              status: offering.status ?? "active"
+            }
+          });
+          offeringMap.set(offering.id, createdOffering.id);
+          if (offering.syllabusMetadata) {
+            await tx.courseSyllabusMetadata.create({
+              data: {
+                courseOfferingId: createdOffering.id,
+                teamworkRequirement: offering.syllabusMetadata.teamworkRequirement ?? "unknown",
+                teamworkSummary: offering.syllabusMetadata.teamworkSummary ?? null,
+                evidenceSourceRefIds: toJson(offering.syllabusMetadata.evidenceSourceRefIds ?? []),
+                confidence: offering.syllabusMetadata.confidence ?? "unknown",
+                raw: toJson(offering.syllabusMetadata.raw ?? {})
+              }
+            });
+          }
+          for (const board of offering.boards ?? []) {
+            const createdBoard = await tx.courseBoard.create({
+              data: {
+                courseOfferingId: createdOffering.id,
+                title: board.title,
+                status: board.status ?? "active",
+                rules: board.rules ?? undefined,
+                openFrom: dateOrNull(board.openFrom),
+                openUntil: dateOrNull(board.openUntil)
+              }
+            });
+            boardMap.set(board.id, createdBoard.id);
+            for (const section of board.sections ?? []) {
+              const createdSection = await tx.courseBoardSection.create({
+                data: {
+                  boardId: createdBoard.id,
+                  code: section.code,
+                  source: section.source ?? "checkpoint_restore"
+                }
+              });
+              sectionMap.set(section.id, createdSection.id);
+            }
+          }
+        }
+      }
+    }
+
+    for (const user of chunkArray(checkpoint.chunks, "users")) {
+      const schoolId = user.schoolId ? schoolMap.get(user.schoolId) : null;
+      const createdUser = await tx.user.create({
+        data: {
+          appVersionId: version.id,
+          email: user.email,
+          schoolId,
+          role: user.role ?? "verified_user",
+          passwordHash: user.passwordHash ?? null,
+          status: user.status ?? "active",
+          suspendedUntil: dateOrNull(user.suspendedUntil),
+          adminNote: user.adminNote ?? null,
+          isEmailVerified: Boolean(user.isEmailVerified),
+          onboardingCompleted: Boolean(user.onboardingCompleted)
+        }
+      });
+      userMap.set(user.id, createdUser.id);
+      if (user.profile) {
+        await tx.userProfile.create({
+          data: {
+            userId: createdUser.id,
+            displayName: user.profile.displayName,
+            nickname: user.profile.nickname ?? null,
+            avatarUrl: user.profile.avatarUrl ?? null,
+            backgroundImageUrl: user.profile.backgroundImageUrl ?? null,
+            headline: user.profile.headline ?? null,
+            bio: user.profile.bio ?? "",
+            grade: user.profile.grade ?? null,
+            entryYear: user.profile.entryYear ?? null,
+            entryTerm: user.profile.entryTerm ?? null,
+            facultyId: user.profile.facultyId ? facultyMap.get(user.profile.facultyId) ?? null : null,
+            majorId: user.profile.majorId ? majorMap.get(user.profile.majorId) ?? null : null,
+            outputTags: toJson(user.profile.outputTags ?? []),
+            resumeUrl: user.profile.resumeUrl ?? null,
+            resumeFileName: user.profile.resumeFileName ?? null,
+            resumeParsedData: toJson(user.profile.resumeParsedData ?? {}),
+            openToBeDiscovered: user.profile.openToBeDiscovered !== false,
+            visibilitySettings: toJson(user.profile.visibilitySettings ?? {})
+          }
+        });
+      }
+      if (user.contactInfo) {
+        await tx.contactInfo.create({
+          data: {
+            userId: createdUser.id,
+            schoolEmail: user.contactInfo.schoolEmail ?? user.email,
+            wechatId: user.contactInfo.wechatId ?? null,
+            wechatQrImageUrl: user.contactInfo.wechatQrImageUrl ?? null,
+            linkedinUrl: user.contactInfo.linkedinUrl ?? null,
+            personalEmail: user.contactInfo.personalEmail ?? null,
+            visibilitySettings: toJson(user.contactInfo.visibilitySettings ?? defaultContactVisibility)
+          }
+        });
+      }
+      for (const portfolio of user.portfolioItems ?? []) {
+        await tx.portfolioItem.create({
+          data: {
+            userId: createdUser.id,
+            title: portfolio.title,
+            type: portfolio.type,
+            relatedCourseId: portfolio.relatedCourseId ? courseMap.get(portfolio.relatedCourseId) ?? null : null,
+            semesterText: portfolio.semesterText ?? null,
+            myRole: portfolio.myRole ?? null,
+            contributionDescription: portfolio.contributionDescription ?? "",
+            isGroupWork: Boolean(portfolio.isGroupWork),
+            fileName: portfolio.fileName ?? null,
+            fileMimeType: portfolio.fileMimeType ?? null,
+            fileSize: portfolio.fileSize ?? null,
+            fileExtension: portfolio.fileExtension ?? null,
+            storageKey: portfolio.storageKey ?? null,
+            storageMode: portfolio.storageMode ?? null,
+            storageProvider: portfolio.storageProvider ?? null,
+            objectKey: portfolio.objectKey ?? null,
+            scanStatus: portfolio.scanStatus ?? "not_scanned",
+            fileUrl: portfolio.fileUrl ?? null,
+            externalUrl: portfolio.externalUrl ?? null,
+            previewKind: portfolio.previewKind ?? "link",
+            outcome: portfolio.outcome ?? null,
+            reflection: portfolio.reflection ?? null,
+            parsedText: portfolio.parsedText ?? null,
+            metadata: toJson(portfolio.metadata ?? {}),
+            visibility: portfolio.visibility ?? "same_school",
+            isPinned: Boolean(portfolio.isPinned)
+          }
+        });
+      }
+      for (const membership of user.memberships ?? []) {
+        const boardId = boardMap.get(membership.boardId);
+        if (!boardId) continue;
+        await tx.courseBoardMembership.create({
+          data: {
+            userId: createdUser.id,
+            boardId,
+            sectionId: membership.sectionId ? sectionMap.get(membership.sectionId) ?? null : null,
+            sectionCode: membership.sectionCode ?? null,
+            source: membership.source ?? "checkpoint_restore",
+            status: membership.status ?? "active",
+            originRuleId: membership.originRuleId ?? null,
+            joinedAt: dateOrUndefined(membership.joinedAt),
+            leftAt: dateOrNull(membership.leftAt)
+          }
+        }).catch(() => null);
+      }
+      for (const submission of user.submittedCourses ?? []) {
+        const mappedSchoolId = submission.schoolId ? schoolMap.get(submission.schoolId) : schoolId;
+        if (!mappedSchoolId) continue;
+        await tx.userSubmittedCourse.create({
+          data: {
+            submittedByUserId: createdUser.id,
+            schoolId: mappedSchoolId,
+            code: submission.code,
+            title: submission.title,
+            teacherName: submission.teacherName ?? null,
+            semesterText: submission.semesterText ?? null,
+            status: submission.status ?? "pending",
+            adminNote: submission.adminNote ?? null,
+            matchedCourseId: submission.matchedCourseId ? courseMap.get(submission.matchedCourseId) ?? null : null
+          }
+        });
+      }
+    }
+
+    for (const post of chunkArray(checkpoint.chunks, "teamaking_posts")) {
+      const boardId = boardMap.get(post.boardId);
+      const userId = userMap.get(post.userId);
+      const offeringId = offeringMap.get(post.courseOfferingId);
+      if (!boardId || !userId || !offeringId) continue;
+      const createdPost = await tx.teamakingPost.create({
+        data: {
+          boardId,
+          userId,
+          courseOfferingId: offeringId,
+          title: post.title,
+          status: post.status ?? "open",
+          strengths: toJson(post.strengths ?? []),
+          contributionTypes: toJson(post.contributionTypes ?? []),
+          expectedOutcome: post.expectedOutcome,
+          portfolioItemIds: toJson([]),
+          showWechatId: Boolean(post.showWechatId),
+          showWechatQr: Boolean(post.showWechatQr),
+          showLinkedin: Boolean(post.showLinkedin),
+          showPersonalEmail: Boolean(post.showPersonalEmail),
+          visibility: post.visibility ?? "same_course_board",
+          expiresAt: dateOrNull(post.expiresAt)
+        }
+      });
+      postMap.set(post.id, createdPost.id);
+    }
+    for (const request of chunkArray(checkpoint.chunks, "team_up_requests")) {
+      const postId = postMap.get(request.postId);
+      const senderId = userMap.get(request.senderId);
+      const receiverId = userMap.get(request.receiverId);
+      if (!postId || !senderId || !receiverId) continue;
+      await tx.teamUpRequest.create({
+        data: {
+          postId,
+          senderId,
+          receiverId,
+          message: request.message,
+          senderContribution: request.senderContribution,
+          senderContactSnapshot: toJson(request.senderContactSnapshot ?? {}),
+          receiverContactSnapshot: toJson(request.receiverContactSnapshot ?? {}),
+          status: request.status ?? "sent"
+        }
+      }).catch(() => null);
+    }
+    for (const request of chunkArray(checkpoint.chunks, "follow_requests")) {
+      const senderId = userMap.get(request.senderId);
+      const receiverId = userMap.get(request.receiverId);
+      if (!senderId || !receiverId) continue;
+      await tx.followRequest.create({
+        data: { senderId, receiverId, status: request.status ?? "pending" }
+      }).catch(() => null);
+    }
+    for (const ticket of chunkArray(checkpoint.chunks, "support_tickets")) {
+      await tx.supportTicket.create({
+        data: {
+          submittedByUserId: ticket.submittedByUserId ? userMap.get(ticket.submittedByUserId) ?? null : null,
+          email: ticket.email ?? null,
+          category: ticket.category ?? "other",
+          title: ticket.title,
+          description: ticket.description,
+          relatedUrl: ticket.relatedUrl ?? null,
+          status: ticket.status ?? "open",
+          adminNote: ticket.adminNote ?? null,
+          adminReply: ticket.adminReply ?? null,
+          adminRepliedAt: dateOrNull(ticket.adminRepliedAt)
+        }
+      });
+    }
+    for (const config of chunkArray(checkpoint.chunks, "site_configs")) {
+      await tx.siteConfig.upsert({
+        where: { key: config.key },
+        update: { value: toJson(config.value ?? {}), updatedByUserId: userMap.get(admin.id) ?? admin.id },
+        create: { key: config.key, value: toJson(config.value ?? {}), updatedByUserId: userMap.get(admin.id) ?? admin.id }
+      });
+    }
+
+    return {
+      version,
+      mappedCounts: {
+        schools: schoolMap.size,
+        courses: courseMap.size,
+        offerings: offeringMap.size,
+        boards: boardMap.size,
+        users: userMap.size,
+        posts: postMap.size
+      }
+    };
+  }, { timeout: 30000 });
+
+  await operationLog({
+    appVersionId: restored.version.id,
+    actorUserId: admin.id,
+    actorRole: admin.role,
+    action: "admin.versions.restore_as_new_version",
+    targetType: "VersionCheckpoint",
+    targetId: checkpoint.id,
+    summary: restored.mappedCounts
+  });
+  return { checkpoint, ...restored };
+}
+
+function summarizeVersion(version: any) {
+  const counts = version._count ?? {};
+  return {
+    id: version.id,
+    name: version.name,
+    phase: version.phase,
+    status: version.status,
+    notes: version.notes,
+    startedAt: version.startedAt,
+    endedAt: version.endedAt,
+    createdAt: version.createdAt,
+    updatedAt: version.updatedAt,
+    counts: {
+      users: counts.users ?? 0,
+      schools: counts.schools ?? 0,
+      importBatches: counts.importBatches ?? 0,
+      importDatasets: counts.importDatasets ?? 0,
+      checkpoints: counts.checkpoints ?? 0,
+      operationLogs: counts.operationLogs ?? 0
+    }
+  };
+}
+
+async function mergeCourses(sourceCourseId: string, targetCourseId: string, adminUserId: string, adminNote?: string) {
+  if (sourceCourseId === targetCourseId) {
+    throw new ApiError(400, "源课程和目标课程不能相同。", ERROR_CODES.COURSE_MERGE_INVALID);
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const [source, target] = await Promise.all([
+      tx.course.findUnique({ where: { id: sourceCourseId } }),
+      tx.course.findUnique({ where: { id: targetCourseId } })
+    ]);
+    if (!source || !target) throw new ApiError(404, "找不到源课程或目标课程。", ERROR_CODES.COURSE_MERGE_INVALID);
+    if (source.schoolId !== target.schoolId) {
+      throw new ApiError(400, "只能合并同一学校下的课程。", ERROR_CODES.COURSE_MERGE_INVALID, { sourceCourseId, targetCourseId });
+    }
+
+    const summary = {
+      offeringsMoved: 0,
+      offeringsSkipped: 0,
+      boardsMovedToDuplicateOffering: 0,
+      mappingsMoved: 0,
+      mappingsSkipped: 0,
+      rulesMoved: 0,
+      rulesSkipped: 0,
+      portfoliosMoved: 0,
+      submissionsMoved: 0
+    };
+
+    const offerings = await tx.courseOffering.findMany({ where: { courseId: source.id } });
+    for (const offering of offerings) {
+      const duplicate = await tx.courseOffering.findFirst({
+        where: {
+          courseId: target.id,
+          semesterId: offering.semesterId,
+          section: offering.section
+        }
+      });
+      if (duplicate) {
+        const movedBoards = await tx.courseBoard.updateMany({
+          where: { courseOfferingId: offering.id },
+          data: { courseOfferingId: duplicate.id }
+        });
+        await tx.teamakingPost.updateMany({
+          where: { courseOfferingId: offering.id },
+          data: { courseOfferingId: duplicate.id }
+        });
+        await tx.courseOffering.update({ where: { id: offering.id }, data: { status: "archived" } });
+        summary.offeringsSkipped += 1;
+        summary.boardsMovedToDuplicateOffering += movedBoards.count;
+      } else {
+        await tx.courseOffering.update({ where: { id: offering.id }, data: { courseId: target.id } });
+        summary.offeringsMoved += 1;
+      }
+    }
+
+    const mappings = await tx.courseMajorMapping.findMany({ where: { courseId: source.id } });
+    for (const mapping of mappings) {
+      const duplicate = await tx.courseMajorMapping.findUnique({
+        where: {
+          courseId_majorId_recommendedGrade: {
+            courseId: target.id,
+            majorId: mapping.majorId,
+            recommendedGrade: mapping.recommendedGrade
+          }
+        }
+      });
+      if (duplicate) {
+        await tx.courseMajorMapping.delete({ where: { id: mapping.id } });
+        summary.mappingsSkipped += 1;
+      } else {
+        await tx.courseMajorMapping.update({ where: { id: mapping.id }, data: { courseId: target.id } });
+        summary.mappingsMoved += 1;
+      }
+    }
+
+    const rules = await tx.courseCurriculumRule.findMany({ where: { courseId: source.id } });
+    for (const rule of rules) {
+      const duplicate = await tx.courseCurriculumRule.findFirst({
+        where: { courseId: target.id, semesterId: rule.semesterId, externalId: rule.externalId }
+      });
+      if (duplicate) {
+        await tx.courseCurriculumRule.update({ where: { id: rule.id }, data: { status: "archived" } });
+        summary.rulesSkipped += 1;
+      } else {
+        await tx.courseCurriculumRule.update({ where: { id: rule.id }, data: { courseId: target.id } });
+        summary.rulesMoved += 1;
+      }
+    }
+
+    const portfolios = await tx.portfolioItem.updateMany({
+      where: { relatedCourseId: source.id },
+      data: { relatedCourseId: target.id }
+    });
+    summary.portfoliosMoved = portfolios.count;
+
+    const submissions = await tx.userSubmittedCourse.updateMany({
+      where: { matchedCourseId: source.id },
+      data: { matchedCourseId: target.id }
+    });
+    summary.submissionsMoved = submissions.count;
+
+    const archivedSource = await tx.course.update({
+      where: { id: source.id },
+      data: {
+        status: "archived",
+        mergedIntoCourseId: target.id,
+        mergedAt: new Date(),
+        mergeNote: adminNote ?? `Merged into ${target.code}`
+      }
+    });
+
+    return { source: archivedSource, target, summary };
+  });
+
+  await writeAudit(adminUserId, "admin.courses.merge", "Course", sourceCourseId, null, {
+    targetCourseId,
+    adminNote,
+    summary: result.summary
+  });
+  return result;
+}
+
+async function createAppVersionFromAdminRequest(body: Record<string, unknown>, admin: any) {
+  const active = await getActiveAppVersion();
+  const finalCheckpoint = await createVersionCheckpoint({
+    appVersionId: active.id,
+    label: `Final state of ${active.name}`,
+    kind: "version_close",
+    reason: optionalString(body.reason) ?? "Admin opened a new software/test version",
+    triggeredByUserId: admin.id
+  });
+
+  await prisma.appVersion.update({
+    where: { id: active.id },
+    data: {
+      status: "closed",
+      endedAt: new Date(),
+      finalCheckpointId: finalCheckpoint.id
+    }
+  });
+
+  const version = await prisma.appVersion.create({
+    data: {
+      name: assertString(body.name, "name"),
+      phase: optionalString(body.phase) ?? "testing",
+      status: "active",
+      notes: optionalString(body.notes),
+      createdByUserId: admin.id
+    }
+  });
+
+  const activeSchools = await prisma.school.findMany({
+    where: { appVersionId: active.id },
+    include: { domains: true }
+  });
+  const schoolIdMap = new Map<string, string>();
+  for (const sourceSchool of activeSchools) {
+    const school = await prisma.school.create({
+      data: {
+        appVersionId: version.id,
+        name: sourceSchool.name,
+        shortName: sourceSchool.shortName,
+        status: sourceSchool.status,
+        domains: {
+          create: sourceSchool.domains.map((domain) => ({ domain: domain.domain, status: domain.status }))
+        }
+      }
+    });
+    schoolIdMap.set(sourceSchool.id, school.id);
+  }
+
+  const adminUsers = await prisma.user.findMany({
+    where: {
+      appVersionId: active.id,
+      role: { in: ["school_admin", "super_admin"] }
+    },
+    include: { profile: true, contactInfo: true }
+  });
+  for (const sourceUser of adminUsers) {
+    const user = await prisma.user.create({
+      data: {
+        appVersionId: version.id,
+        email: sourceUser.email,
+        schoolId: sourceUser.schoolId ? schoolIdMap.get(sourceUser.schoolId) ?? null : null,
+        role: sourceUser.role,
+        passwordHash: sourceUser.passwordHash,
+        status: "active",
+        isEmailVerified: sourceUser.isEmailVerified,
+        onboardingCompleted: false
+      }
+    });
+    if (sourceUser.profile) {
+      await prisma.userProfile.create({
+        data: {
+          userId: user.id,
+          displayName: sourceUser.profile.displayName,
+          nickname: sourceUser.profile.nickname,
+          avatarUrl: sourceUser.profile.avatarUrl,
+          backgroundImageUrl: sourceUser.profile.backgroundImageUrl,
+          headline: sourceUser.profile.headline,
+          bio: sourceUser.profile.bio,
+          outputTags: toJson(sourceUser.profile.outputTags ?? []),
+          visibilitySettings: toJson(sourceUser.profile.visibilitySettings ?? {}),
+          openToBeDiscovered: false
+        }
+      });
+    }
+    if (sourceUser.contactInfo) {
+      await prisma.contactInfo.create({
+        data: {
+          userId: user.id,
+          schoolEmail: user.email,
+          visibilitySettings: toJson(sourceUser.contactInfo.visibilitySettings ?? {})
+        }
+      });
+    }
+  }
+
+  await operationLog({
+    appVersionId: version.id,
+    actorUserId: adminUsers.find((row) => row.email === admin.email)?.id ?? null,
+    actorRole: admin.role,
+    action: "admin.versions.open",
+    targetType: "AppVersion",
+    targetId: version.id,
+    summary: { previousVersionId: active.id, finalCheckpointId: finalCheckpoint.id }
+  });
+
+  return { version, finalCheckpoint, copiedAdmins: adminUsers.length, copiedSchools: activeSchools.length };
+}
+
+async function estimateDefaultJoinUsers(input: {
+  schoolId?: string;
+  majorCodes: string[];
+  facultyCodes: string[];
+  grades: string[];
+  relativeTermCodes: string[];
+  allMajors: boolean;
+  semesterYear?: number;
+  semesterTerm?: string;
+}) {
+  if (!input.schoolId) return 0;
+
+  const [majors, faculties] = await Promise.all([
+    input.majorCodes.length
+      ? prisma.major.findMany({ where: { schoolId: input.schoolId, code: { in: input.majorCodes } }, select: { id: true } })
+      : Promise.resolve([]),
+    input.facultyCodes.length
+      ? prisma.faculty.findMany({ where: { schoolId: input.schoolId, code: { in: input.facultyCodes } }, select: { id: true } })
+      : Promise.resolve([])
+  ]);
+
+  const audienceOr = [];
+  if (input.allMajors) audienceOr.push({});
+  if (majors.length) audienceOr.push({ majorId: { in: majors.map((major) => major.id) } });
+  if (faculties.length) audienceOr.push({ facultyId: { in: faculties.map((faculty) => faculty.id) } });
+  if (!audienceOr.length) return 0;
+
+  const users = await prisma.user.findMany({
+    where: {
+      schoolId: input.schoolId,
+      onboardingCompleted: true,
+      profile: {
+        is: {
+          ...(input.grades.length && !input.relativeTermCodes.length ? { grade: { in: input.grades } } : {}),
+          OR: audienceOr
+        }
+      }
+    },
+    select: {
+      id: true,
+      profile: {
+        select: {
+          entryYear: true,
+          entryTerm: true,
+          grade: true
+        }
+      }
+    }
+  });
+
+  if (!input.relativeTermCodes.length) return users.length;
+  const semester = { year: input.semesterYear, term: input.semesterTerm };
+  return users.filter((user) => {
+    const code = relativeTermCodeForProfile(user.profile, semester);
+    return code ? input.relativeTermCodes.includes(code) : false;
+  }).length;
+}
+
+async function buildCourseImportPreview(payload: Record<string, unknown>) {
+  const validation = validateBnbuCourseImportPayload(payload);
+  const semesterInput = isPlainRecord(payload.semester) ? payload.semester : {};
+  const semesterCode = textValue(semesterInput.code);
+  const school = await getActiveSchool("BNBU");
+  const semester = school
+    ? await prisma.semester.findFirst({
+        where: {
+          schoolId: school.id,
+          OR: [{ code: semesterCode }, { name: textValue(semesterInput.name) }]
+        }
+      })
+    : null;
+
+  const facultyCodes = records(payload.faculties).map((item) => textValue(item.code)).filter(Boolean);
+  const majorCodes = records(payload.majors).map((item) => textValue(item.code)).filter(Boolean);
+  const courseCodes = records(payload.courses).map((item) => textValue(item.code)).filter(Boolean);
+  const incomingRuleIds = records(payload.curriculumRules).map((item) => textValue(item.id)).filter(Boolean);
+  const incomingCourses = records(payload.courses);
+  const incomingRules = records(payload.curriculumRules);
+  const incomingOfferings = records(payload.offerings);
+  const incomingCohortYears = [...new Set(incomingRules.flatMap(cohortYearsForRule))].sort((a, b) => b - a);
+
+  const [existingFaculties, existingMajors, existingCourses, existingRules] = await Promise.all([
+    school && facultyCodes.length
+      ? prisma.faculty.findMany({ where: { schoolId: school.id, code: { in: facultyCodes } }, select: { code: true, name: true } })
+      : Promise.resolve([]),
+    school && majorCodes.length
+      ? prisma.major.findMany({ where: { schoolId: school.id, code: { in: majorCodes } }, select: { code: true, name: true } })
+      : Promise.resolve([]),
+    school && courseCodes.length
+      ? prisma.course.findMany({
+          where: { schoolId: school.id, code: { in: courseCodes } },
+          select: {
+            code: true,
+            title: true,
+            description: true,
+            credits: true,
+            ownerUnit: true,
+            categoryTags: true,
+            courseType: true,
+            status: true,
+            manualOverrideFields: true,
+            manualNote: true
+          }
+        })
+      : Promise.resolve([]),
+    school
+      ? prisma.courseCurriculumRule.findMany({
+          where: { course: { schoolId: school.id }, status: "active" },
+          include: { course: { select: { code: true, title: true } } }
+        })
+      : Promise.resolve([])
+  ]);
+
+  const existingFacultyCodes = new Set(existingFaculties.map((item) => item.code).filter(Boolean));
+  const existingMajorCodes = new Set(existingMajors.map((item) => item.code).filter(Boolean));
+  const existingCourseCodes = new Set(existingCourses.map((item) => item.code));
+  const existingCourseByCode = new Map(existingCourses.map((item) => [item.code, item]));
+  const existingRulesInCohorts = incomingCohortYears.length
+    ? existingRules.filter((rule) => {
+        const years = cohortYearsForRule({ audience: rule.audience as unknown as Record<string, unknown> });
+        return years.some((year) => incomingCohortYears.includes(year));
+      })
+    : existingRules;
+  const existingRuleIds = new Set(existingRulesInCohorts.map((item) => item.externalId));
+  const incomingRuleIdSet = new Set(incomingRuleIds);
+
+  let estimatedDefaultJoinUsers = 0;
+  const defaultJoinRuleSamples: string[] = [];
+  const searchableRuleSamples: string[] = [];
+
+  for (const rule of incomingRules) {
+    const studentAction = normalizedRuleStudentAction(rule);
+    const externalId = textValue(rule.id);
+    if (studentAction === "searchable_add") searchableRuleSamples.push(externalId);
+    if (studentAction !== "default_join") continue;
+    defaultJoinRuleSamples.push(externalId);
+    const audience = isPlainRecord(rule.audience) ? rule.audience : {};
+    estimatedDefaultJoinUsers += await estimateDefaultJoinUsers({
+      schoolId: school?.id,
+      majorCodes: textValues(audience.majorCodes),
+      facultyCodes: textValues(audience.facultyCodes),
+      grades: textValues(audience.grades),
+      relativeTermCodes: relativeTermCodesForRule(rule),
+      allMajors: audience.allMajors === true,
+      semesterYear: Number(semesterInput.academicYear),
+      semesterTerm: textValue(semesterInput.term)
+    });
+  }
+
+  const newRuleIds = incomingRuleIds.filter((id) => !existingRuleIds.has(id));
+  const retainedRuleIds = incomingRuleIds.filter((id) => existingRuleIds.has(id));
+  const inactiveRuleIds = existingRulesInCohorts.map((rule) => rule.externalId).filter((id) => !incomingRuleIdSet.has(id));
+  const existingRuleById = new Map(existingRulesInCohorts.map((rule) => [rule.externalId, rule]));
+  const changedRules = incomingRules
+    .map((rule) => {
+      const externalId = textValue(rule.id);
+      const existing = existingRuleById.get(externalId);
+      if (!existing) return null;
+      const incomingAudience = audienceForRule(rule);
+      const incomingRelativeTerms = relativeTermCodesForRule(rule);
+      const changedFields = [
+        existing.classification !== textValue(rule.classification) ? "classification" : null,
+        existing.studentAction !== normalizedRuleStudentAction(rule) ? "studentAction" : null,
+        stableJson(existing.audience) !== stableJson(incomingAudience) ? "audience" : null,
+        stableJson(existing.relativeTermCodes) !== stableJson(incomingRelativeTerms) ? "relativeTermCodes" : null
+      ].filter(Boolean);
+      if (!changedFields.length) return null;
+      return {
+        id: externalId,
+        courseCode: textValue(rule.courseCode),
+        changedFields,
+        before: {
+          classification: existing.classification,
+          studentAction: existing.studentAction,
+          audience: existing.audience,
+          relativeTermCodes: existing.relativeTermCodes
+        },
+        after: {
+          classification: textValue(rule.classification),
+          studentAction: normalizedRuleStudentAction(rule),
+          audience: incomingAudience,
+          relativeTermCodes: incomingRelativeTerms
+        }
+      };
+    })
+    .filter(Boolean);
+
+  const courseRows = incomingCourses.map((course) => {
+    const code = textValue(course.code);
+    const existing = existingCourseByCode.get(code);
+    const manualOverrideFields = textValues(existing?.manualOverrideFields);
+    const protectedConflicts = manualOverrideFields
+      .map((field) => {
+        const incomingValue =
+          field === "categoryTags" || field === "sourceRefIds"
+            ? textValues(course[field])
+            : field === "ownerUnit"
+              ? isPlainRecord(course[field]) ? course[field] : {}
+              : course[field];
+        const currentValue = existing ? (existing as any)[field] : undefined;
+        if (!existing || stableJson(currentValue) === stableJson(incomingValue)) return null;
+        return { field, currentValue, incomingValue };
+      })
+      .filter(Boolean);
+    return {
+      kind: "courses",
+      id: code,
+      code,
+      title: textValue(course.title),
+      credits: typeof course.credits === "number" ? course.credits : null,
+      ownerUnit: isPlainRecord(course.ownerUnit) ? course.ownerUnit : {},
+      categoryTags: textValues(course.categoryTags),
+      sourceRefIds: textValues(course.sourceRefIds),
+      manualOverrideFields,
+      protectedConflicts,
+      status: existingCourseCodes.has(code) ? "updated" : "new",
+      raw: course
+    };
+  });
+  const ruleRows = incomingRules.map((rule) => {
+    const audience = audienceForRule(rule);
+    const externalId = textValue(rule.id);
+    return {
+      kind: "curriculumRules",
+      id: externalId,
+      courseCode: textValue(rule.courseCode),
+      classification: textValue(rule.classification),
+      classificationLabel: textValue(rule.classificationLabel),
+      studentAction: normalizedRuleStudentAction(rule),
+      majorCodes: textValues(audience.majorCodes),
+      facultyCodes: textValues(audience.facultyCodes),
+      cohortYears: numberValues(audience.cohortYears),
+      relativeTermCodes: relativeTermCodesForRule(rule),
+      allMajors: audience.allMajors === true,
+      confidence: textValue(rule.confidence) || "unknown",
+      sourceRefIds: textValues(rule.sourceRefIds),
+      status: existingRuleIds.has(externalId) ? "retained_or_changed" : "new",
+      raw: rule
+    };
+  });
+  const termContextRuleRows = ruleRows.filter((row) => ruleMatchesAcademicTermContext(row.raw, { year: Number(semesterInput.academicYear), term: textValue(semesterInput.term) }));
+  const sourceRows = records(payload.sourceRefs).map((source) => ({
+    kind: "sourceRefs",
+    id: textValue(source.id),
+    title: textValue(source.title),
+    sourceType: textValue(source.sourceType),
+    url: textValue(source.url),
+    raw: source
+  }));
+  const offeringRows = incomingOfferings.map((offering, index) => ({
+    kind: "offerings",
+    id: textValue(offering.id) || `${textValue(offering.courseCode)}-${index}`,
+    courseCode: textValue(offering.courseCode),
+    semesterCode: textValue(offering.semesterCode),
+    sections: textValues(offering.sections),
+    sourceRefIds: textValues(offering.sourceRefIds),
+    status: textValue(offering.status) || "active",
+    raw: offering
+  }));
+
+  return {
+    validation,
+    importMode: incomingOfferings.length ? "combined_with_offerings" : "cohort_handbook",
+    semester: {
+      code: semesterCode,
+      exists: Boolean(semester),
+      willBecomeCurrent: semesterInput.isCurrentCandidate === true,
+      label: textValue(semesterInput.name),
+      note: incomingOfferings.length
+        ? "包含真实开课记录，会创建或更新 CourseBoard。"
+        : "这是按入学年份发布的 programme handbook / curriculum plan 导入；批准后写入课程目录和 admission-year 配置规则，CourseBoard 会由当前 academic term 与学生入学年份、专业、相对学期匹配后激活。"
+    },
+    counts: {
+      newFaculties: facultyCodes.filter((code) => !existingFacultyCodes.has(code)).length,
+      updatedFaculties: facultyCodes.filter((code) => existingFacultyCodes.has(code)).length,
+      newMajors: majorCodes.filter((code) => !existingMajorCodes.has(code)).length,
+      updatedMajors: majorCodes.filter((code) => existingMajorCodes.has(code)).length,
+      newCourses: courseCodes.filter((code) => !existingCourseCodes.has(code)).length,
+      updatedCourses: courseCodes.filter((code) => existingCourseCodes.has(code)).length,
+      newRules: newRuleIds.length,
+      retainedRules: retainedRuleIds.length,
+      rulesToDeactivate: inactiveRuleIds.length,
+      changedRules: changedRules.length,
+      defaultJoinRules: defaultJoinRuleSamples.length,
+      searchableRules: searchableRuleSamples.length,
+      offeringCourses: new Set(incomingOfferings.map((item) => textValue(item.courseCode)).filter(Boolean)).size,
+      offeringSections: incomingOfferings.reduce((total, item) => total + Math.max(1, textValues(item.sections).length), 0),
+      courseBoardsToActivate: new Set(termContextRuleRows.map((row) => row.courseCode).filter(Boolean)).size,
+      rulesInAcademicTermContext: termContextRuleRows.length,
+      protectedCourseConflicts: courseRows.reduce((total, row) => total + row.protectedConflicts.length, 0),
+      estimatedDefaultJoinUsers
+    },
+    coverage: {
+      cohortYears: countRows(ruleRows, (row) => row.cohortYears.map(String)),
+      classifications: countRows(ruleRows, (row) => row.classification),
+      studentActions: countRows(ruleRows, (row) => row.studentAction),
+      majors: countRows(ruleRows, (row) => (row.majorCodes.length ? row.majorCodes : row.allMajors ? "ALL" : "Unspecified")),
+      relativeTerms: countRows(ruleRows, (row) => (row.relativeTermCodes.length ? row.relativeTermCodes : "Unspecified")),
+      majorTermClassification: countRows(ruleRows, (row) => {
+        const majors = row.majorCodes.length ? row.majorCodes : [row.allMajors ? "ALL" : "Unspecified"];
+        const terms = row.relativeTermCodes.length ? row.relativeTermCodes : ["Unspecified"];
+        return majors.flatMap((major) => terms.map((term) => `${row.cohortYears.join("/") || "?"} · ${major} · ${term} · ${row.classification}`));
+      })
+    },
+    databaseCoverage: await buildBnbuDatabaseCoverage(existingRules),
+    diff: {
+      baseline: "current_database",
+      courses: {
+        added: courseCodes.filter((code) => !existingCourseCodes.has(code)),
+        updated: courseCodes.filter((code) => existingCourseCodes.has(code)),
+        protectedConflicts: courseRows.filter((row) => row.protectedConflicts.length > 0).map((row) => ({
+          code: row.code,
+          title: row.title,
+          conflicts: row.protectedConflicts
+        }))
+      },
+      rules: {
+        added: newRuleIds,
+        retained: retainedRuleIds,
+        changed: changedRules,
+        wouldDeactivate: inactiveRuleIds
+      }
+    },
+    tables: {
+      courses: courseRows,
+      curriculumRules: ruleRows,
+      offerings: offeringRows,
+      sourceRefs: sourceRows
+    },
+    samples: {
+      newCourses: firstItems(courseCodes.filter((code) => !existingCourseCodes.has(code))),
+      updatedCourses: firstItems(courseCodes.filter((code) => existingCourseCodes.has(code))),
+      newRules: firstItems(newRuleIds),
+      rulesToDeactivate: firstItems(inactiveRuleIds),
+      defaultJoinRules: firstItems(defaultJoinRuleSamples),
+      searchableRules: firstItems(searchableRuleSamples),
+      changedRules: firstItems(changedRules.map((item: any) => item.id))
+    }
+  };
+}
+
+async function buildBnbuDatabaseCoverage(preloadedRules?: any[]) {
+  const school = await getActiveSchool("BNBU");
+  if (!school) {
+    return { cohortYears: [], classifications: [], majors: [], relativeTerms: [], totalRules: 0 };
+  }
+  const rules = preloadedRules ?? await prisma.courseCurriculumRule.findMany({
+    where: { course: { schoolId: school.id }, status: "active" },
+    include: { course: { select: { code: true, title: true } } }
+  });
+  const rows = rules.map((rule) => {
+    const audience = isPlainRecord(rule.audience) ? rule.audience : {};
+    return {
+      cohortYears: numberValues(audience.cohortYears),
+      classification: rule.classification,
+      majorCodes: textValues(audience.majorCodes),
+      relativeTermCodes: Array.isArray(rule.relativeTermCodes) ? textValues(rule.relativeTermCodes) : []
+    };
+  });
+  return {
+    totalRules: rows.length,
+    cohortYears: countRows(rows, (row) => row.cohortYears.map(String)),
+    classifications: countRows(rows, (row) => row.classification),
+    majors: countRows(rows, (row) => row.majorCodes.length ? row.majorCodes : "ALL/Unspecified"),
+    relativeTerms: countRows(rows, (row) => row.relativeTermCodes.length ? row.relativeTermCodes : "Unspecified")
+  };
 }
 
 async function findOrCreateBoard(tx: any, courseOfferingId: string, title: string) {
@@ -2049,12 +4549,44 @@ async function findOrCreateBoard(tx: any, courseOfferingId: string, title: strin
   });
 }
 
-async function applyDefaultJoinRule(tx: any, input: {
-  ruleId: string;
+async function findOrCreateAcademicTermOffering(tx: any, input: {
   courseId: string;
   semesterId: string;
+  sourceRefIds: string[];
+}) {
+  const existing = await tx.courseOffering.findFirst({
+    where: { courseId: input.courseId, semesterId: input.semesterId, section: "Programme Plan" }
+  });
+  if (existing) {
+    return tx.courseOffering.update({
+      where: { id: existing.id },
+      data: {
+        sourceRefIds: input.sourceRefIds,
+        status: existing.status === "cancelled" ? existing.status : "active"
+      }
+    });
+  }
+  return tx.courseOffering.create({
+    data: {
+      courseId: input.courseId,
+      semesterId: input.semesterId,
+      section: "Programme Plan",
+      sourceRefIds: input.sourceRefIds,
+      status: "active"
+    }
+  });
+}
+
+async function applyDefaultJoinRule(tx: any, input: {
+  ruleId: string;
+  schoolId: string;
+  courseId: string;
+  semesterId: string;
+  semesterYear: number;
+  semesterTerm: string;
   classification: string;
   audience: Record<string, unknown>;
+  relativeTermCodes: string[];
 }) {
   const majorCodes = textValues(input.audience.majorCodes);
   const facultyCodes = textValues(input.audience.facultyCodes);
@@ -2063,10 +4595,10 @@ async function applyDefaultJoinRule(tx: any, input: {
 
   const [majors, faculties, boards] = await Promise.all([
     majorCodes.length
-      ? tx.major.findMany({ where: { code: { in: majorCodes } }, select: { id: true } })
+      ? tx.major.findMany({ where: { schoolId: input.schoolId, code: { in: majorCodes } }, select: { id: true } })
       : Promise.resolve([]),
     facultyCodes.length
-      ? tx.faculty.findMany({ where: { code: { in: facultyCodes } }, select: { id: true } })
+      ? tx.faculty.findMany({ where: { schoolId: input.schoolId, code: { in: facultyCodes } }, select: { id: true } })
       : Promise.resolve([]),
     tx.courseBoard.findMany({
       where: {
@@ -2084,7 +4616,7 @@ async function applyDefaultJoinRule(tx: any, input: {
   const majorIds = majors.map((major: { id: string }) => major.id);
   const facultyIds = faculties.map((faculty: { id: string }) => faculty.id);
   const profileWhere: Record<string, unknown> = {};
-  if (grades.length) profileWhere.grade = { in: grades };
+  if (grades.length && !input.relativeTermCodes.length) profileWhere.grade = { in: grades };
 
   const audienceOr = [];
   if (allMajors) audienceOr.push({});
@@ -2094,9 +4626,7 @@ async function applyDefaultJoinRule(tx: any, input: {
 
   const users = await tx.user.findMany({
     where: {
-      schoolId: {
-        equals: await tx.semester.findUnique({ where: { id: input.semesterId }, select: { schoolId: true } }).then((semester: { schoolId: string } | null) => semester?.schoolId ?? "")
-      },
+      schoolId: input.schoolId,
       onboardingCompleted: true,
       profile: {
         is: {
@@ -2105,14 +4635,30 @@ async function applyDefaultJoinRule(tx: any, input: {
         }
       }
     },
-    select: { id: true }
+    select: {
+      id: true,
+      profile: {
+        select: {
+          entryYear: true,
+          entryTerm: true,
+          grade: true
+        }
+      }
+    }
   });
+
+  const matchedUsers = input.relativeTermCodes.length
+    ? users.filter((user: { profile: unknown }) => {
+        const code = relativeTermCodeForProfile(user.profile, { year: input.semesterYear, term: input.semesterTerm });
+        return code ? input.relativeTermCodes.includes(code) : false;
+      })
+    : users;
 
   let membershipsCreated = 0;
   let membershipsSkipped = 0;
   const source = membershipSourceForClassification(input.classification);
 
-  for (const user of users) {
+  for (const user of matchedUsers) {
     for (const board of boards) {
       const existing = await tx.courseBoardMembership.findUnique({
         where: { userId_boardId: { userId: user.id, boardId: board.id } }
@@ -2147,23 +4693,25 @@ async function applyDefaultJoinRule(tx: any, input: {
     }
   }
 
-  return { matchedUsers: users.length, membershipsCreated, membershipsSkipped };
+  return { matchedUsers: matchedUsers.length, membershipsCreated, membershipsSkipped };
 }
 
 async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: string) {
   const summary = validateBnbuCourseImportPayload(payload);
   if (!summary.ok) throw new ApiError(400, `导入文件校验失败：${summary.errors.join("; ")}`);
+  const appVersionId = await getActiveAppVersionId();
 
   return prisma.$transaction(async (tx) => {
     const schoolInput = isPlainRecord(payload.school) ? payload.school : {};
     const semesterInput = isPlainRecord(payload.semester) ? payload.semester : {};
     const school = await tx.school.upsert({
-      where: { shortName: "BNBU" },
+      where: { appVersionId_shortName: { appVersionId, shortName: "BNBU" } },
       update: {
         name: textValue(schoolInput.name) || "Beijing Normal-Hong Kong Baptist University",
         status: "active"
       },
       create: {
+        appVersionId,
         shortName: "BNBU",
         name: textValue(schoolInput.name) || "Beijing Normal-Hong Kong Baptist University",
         status: "active"
@@ -2172,7 +4720,7 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
 
     const emailDomain = textValue(schoolInput.emailDomain) || "mail.bnbu.edu.cn";
     await tx.schoolEmailDomain.upsert({
-      where: { domain: emailDomain },
+      where: { schoolId_domain: { schoolId: school.id, domain: emailDomain } },
       update: { schoolId: school.id, status: "active" },
       create: { schoolId: school.id, domain: emailDomain, status: "active" }
     });
@@ -2252,33 +4800,32 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
     const courseByCode = new Map<string, any>();
     for (const courseInput of records(payload.courses)) {
       const code = textValue(courseInput.code);
-      const course = await tx.course.upsert({
-        where: { schoolId_code: { schoolId: school.id, code } },
-        update: {
-          title: textValue(courseInput.title),
-          description: textValue(courseInput.description),
-          credits: numberValue(courseInput.credits),
-          ownerUnit: toJson(isPlainRecord(courseInput.ownerUnit) ? courseInput.ownerUnit : {}),
-          categoryTags: textValues(courseInput.categoryTags),
-          sourceRefIds: textValues(courseInput.sourceRefIds),
-          courseType: "coursework",
-          status: "active",
-          source: "bnbu_import"
-        },
-        create: {
-          schoolId: school.id,
-          code,
-          title: textValue(courseInput.title),
-          description: textValue(courseInput.description),
-          credits: numberValue(courseInput.credits),
-          ownerUnit: toJson(isPlainRecord(courseInput.ownerUnit) ? courseInput.ownerUnit : {}),
-          categoryTags: textValues(courseInput.categoryTags),
-          sourceRefIds: textValues(courseInput.sourceRefIds),
-          courseType: "coursework",
-          status: "active",
-          source: "bnbu_import"
-        }
-      });
+      const existingCourse = await tx.course.findUnique({ where: { schoolId_code: { schoolId: school.id, code } } });
+      const importData = {
+        title: textValue(courseInput.title),
+        description: textValue(courseInput.description),
+        credits: numberValue(courseInput.credits),
+        ownerUnit: toJson(isPlainRecord(courseInput.ownerUnit) ? courseInput.ownerUnit : {}),
+        categoryTags: textValues(courseInput.categoryTags),
+        sourceRefIds: textValues(courseInput.sourceRefIds),
+        courseType: "coursework",
+        status: "active",
+        source: "bnbu_import"
+      };
+      const protectedFields = textValues(existingCourse?.manualOverrideFields);
+      const updateData = Object.fromEntries(Object.entries(importData).filter(([field]) => !protectedFields.includes(field)));
+      const course = existingCourse
+        ? await tx.course.update({
+            where: { id: existingCourse.id },
+            data: updateData
+          })
+        : await tx.course.create({
+            data: {
+              schoolId: school.id,
+              code,
+              ...importData
+            }
+          });
       courseByCode.set(code, course);
     }
 
@@ -2346,12 +4893,15 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
     }
 
     const autoJoinResults = [];
+    const activatedBoards = [];
+    const handbookOnlyImport = records(payload.offerings).length === 0;
     for (const ruleInput of records(payload.curriculumRules)) {
       const course = courseByCode.get(textValue(ruleInput.courseCode));
       if (!course) continue;
       const classification = textValue(ruleInput.classification);
       const studentAction = normalizedRuleStudentAction(ruleInput);
       const audience = isPlainRecord(ruleInput.audience) ? ruleInput.audience : {};
+      const relativeTermCodes = relativeTermCodesForRule(ruleInput);
       const externalId = textValue(ruleInput.id);
       const rule = await tx.courseCurriculumRule.upsert({
         where: { semesterId_externalId: { semesterId: semester.id, externalId } },
@@ -2362,6 +4912,7 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
           classificationLabel: textValue(ruleInput.classificationLabel) || bnbuClassificationLabels[classification as keyof typeof bnbuClassificationLabels] || classification,
           studentAction,
           audience: toJson(audience),
+          relativeTermCodes,
           ownerUnit: toJson(isPlainRecord(ruleInput.ownerUnit) ? ruleInput.ownerUnit : {}),
           sourceRefIds: textValues(ruleInput.sourceRefIds),
           confidence: textValue(ruleInput.confidence) || "unknown",
@@ -2377,6 +4928,7 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
           classificationLabel: textValue(ruleInput.classificationLabel) || bnbuClassificationLabels[classification as keyof typeof bnbuClassificationLabels] || classification,
           studentAction,
           audience: toJson(audience),
+          relativeTermCodes,
           ownerUnit: toJson(isPlainRecord(ruleInput.ownerUnit) ? ruleInput.ownerUnit : {}),
           sourceRefIds: textValues(ruleInput.sourceRefIds),
           confidence: textValue(ruleInput.confidence) || "unknown",
@@ -2385,13 +4937,27 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
         }
       });
 
+      if (handbookOnlyImport && ruleMatchesAcademicTermContext(ruleInput, semester)) {
+        const offering = await findOrCreateAcademicTermOffering(tx, {
+          courseId: course.id,
+          semesterId: semester.id,
+          sourceRefIds: textValues(ruleInput.sourceRefIds)
+        });
+        const board = await findOrCreateBoard(tx, offering.id, `${course.code} ${course.title}`);
+        activatedBoards.push({ ruleId: externalId, boardId: board.id, courseCode: course.code });
+      }
+
       if (studentAction === "default_join") {
         const result = await applyDefaultJoinRule(tx, {
           ruleId: rule.id,
+          schoolId: school.id,
           courseId: course.id,
           semesterId: semester.id,
+          semesterYear: semester.year,
+          semesterTerm: semester.term,
           classification,
-          audience
+          audience,
+          relativeTermCodes
         });
         autoJoinResults.push({ ruleId: externalId, ...result });
       }
@@ -2401,9 +4967,86 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
       school,
       semester,
       validationSummary: summary,
+      activatedBoards,
       autoJoinResults
     };
   });
+}
+
+function activeAnnouncementWhere(appVersionId: string, now = new Date()) {
+  return {
+    appVersionId,
+    status: "published",
+    OR: [{ startsAt: null }, { startsAt: { lte: now } }],
+    AND: [{ OR: [{ endsAt: null }, { endsAt: { gte: now } }] }]
+  };
+}
+
+function serializeAnnouncement(announcement: any) {
+  const read = Array.isArray(announcement.reads) ? announcement.reads[0] : null;
+  return {
+    id: announcement.id,
+    titleZh: announcement.titleZh,
+    titleEn: announcement.titleEn,
+    bodyZh: announcement.bodyZh,
+    bodyEn: announcement.bodyEn,
+    status: announcement.status,
+    audience: announcement.audience,
+    priority: announcement.priority,
+    startsAt: announcement.startsAt,
+    endsAt: announcement.endsAt,
+    publishedAt: announcement.publishedAt,
+    publishedBy: announcement.publishedBy ? publicUser(announcement.publishedBy) : null,
+    archivedAt: announcement.archivedAt,
+    readAt: read?.readAt ?? null,
+    dismissedAt: read?.dismissedAt ?? null,
+    createdAt: announcement.createdAt,
+    updatedAt: announcement.updatedAt,
+    readCount: announcement._count?.reads
+  };
+}
+
+async function handleAnnouncements(method: string, path: string[]) {
+  const appVersionId = await getActiveAppVersionId();
+
+  if (method === "GET") {
+    const viewer = await getCurrentUser().catch(() => null);
+    const announcements = await prisma.siteAnnouncement.findMany({
+      where: activeAnnouncementWhere(appVersionId),
+      include: {
+        publishedBy: { include: userInclude },
+        ...(viewer ? { reads: { where: { userId: viewer.id }, take: 1 } } : {}),
+        _count: { select: { reads: true } }
+      },
+      orderBy: [{ priority: "desc" }, { publishedAt: "desc" }, { createdAt: "desc" }],
+      take: 50
+    });
+    return ok({ announcements: announcements.map(serializeAnnouncement) });
+  }
+
+  if (method === "POST" && path[1] && path[2] === "read") {
+    const user = await getCurrentUser().catch(() => null);
+    if (!user || isDemoUser(user)) return ok({ message: "公告已在本地标记为已读。" });
+    const announcement = await prisma.siteAnnouncement.findFirst({
+      where: { id: path[1], appVersionId, status: "published" }
+    });
+    if (!announcement) throw new ApiError(404, "找不到这条公告。");
+    const read = await prisma.userAnnouncementRead.upsert({
+      where: { announcementId_userId: { announcementId: announcement.id, userId: user.id } },
+      update: { readAt: new Date(), dismissedAt: new Date() },
+      create: { announcementId: announcement.id, userId: user.id, dismissedAt: new Date() }
+    });
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "announcements.read",
+      targetType: "SiteAnnouncement",
+      targetId: announcement.id
+    });
+    return ok({ read, message: "公告已标记为已读。" });
+  }
+
+  throw new ApiError(404, "找不到公告接口。");
 }
 
 function dateRangeFromRequest(request: NextRequest) {
@@ -2456,71 +5099,230 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
     }
   }
 
+  if (method === "GET" && resource === "versions") {
+    const [activeVersion, versions, checkpoints] = await Promise.all([
+      getActiveAppVersion(),
+      prisma.appVersion.findMany({
+        include: {
+          _count: {
+            select: {
+              users: true,
+              schools: true,
+              importBatches: true,
+              importDatasets: true,
+              checkpoints: true,
+              operationLogs: true
+            }
+          }
+        },
+        orderBy: { startedAt: "desc" },
+        take: 30
+      }),
+      prisma.versionCheckpoint.findMany({
+        include: { appVersion: true },
+        orderBy: { createdAt: "desc" },
+        take: 50
+      })
+    ]);
+    return ok({
+      activeVersion,
+      versions: versions.map(summarizeVersion),
+      checkpoints: checkpoints.map((checkpoint) => ({
+        id: checkpoint.id,
+        appVersionId: checkpoint.appVersionId,
+        appVersionName: checkpoint.appVersion.name,
+        label: checkpoint.label,
+        kind: checkpoint.kind,
+        reason: checkpoint.reason,
+        summary: checkpoint.summary,
+        createdAt: checkpoint.createdAt,
+        downloadUrl: `/api/admin/versions/checkpoints/${checkpoint.id}/download`
+      }))
+    });
+  }
+
+  if (method === "POST" && resource === "versions" && !id) {
+    const body = await readBody(request);
+    const result = await createAppVersionFromAdminRequest(body, admin);
+    await writeAudit(admin.id, "admin.versions.open", "AppVersion", result.version.id, null, result);
+    return created({
+      ...result,
+      message: `已开启新版本：${result.version.name}。普通用户、课程、学期和导入数据从空白开始；只复制管理员账号和学校邮箱域名，便于继续登录管理。`
+    });
+  }
+
+  if (method === "POST" && resource === "versions" && id === "checkpoints") {
+    const body = await readBody(request);
+    const checkpoint = await createVersionCheckpoint({
+      label: optionalString(body.label) ?? `Manual checkpoint ${new Date().toLocaleString()}`,
+      kind: "manual",
+      reason: optionalString(body.reason),
+      triggeredByUserId: admin.id
+    });
+    await writeAudit(admin.id, "admin.versions.checkpoint", "VersionCheckpoint", checkpoint.id, null, checkpoint);
+    return created({ checkpoint, message: `已创建版本检查点：${checkpoint.label}` });
+  }
+
+  if (method === "GET" && resource === "versions" && id === "checkpoints" && action && path[4] === "download") {
+    const checkpoint = await prisma.versionCheckpoint.findUnique({
+      where: { id: action },
+      include: { appVersion: true, chunks: true }
+    });
+    if (!checkpoint) throw new ApiError(404, "找不到这个版本检查点。");
+    return jsonDownloadResponse(checkpoint, `${checkpoint.appVersion.name}-${checkpoint.label}-checkpoint.json`);
+  }
+
+  if (method === "POST" && resource === "versions" && id === "checkpoints" && action && ["restore-as-new-version", "rollback"].includes(path[4] ?? "")) {
+    const restored = await restoreCheckpointAsNewVersion(action, admin);
+    await writeAudit(admin.id, "admin.versions.restore_as_new_version", "VersionCheckpoint", action, null, restored.mappedCounts);
+    return ok({
+      ...restored,
+      message: `已从检查点创建新的 active version：${restored.version.name}。旧 active version 已关闭，未做原地覆盖。`
+    });
+  }
+
+  if (method === "GET" && resource === "course-import-datasets" && id && action === "download") {
+    const dataset = await prisma.courseImportDataset.findUnique({ where: { id }, include: { school: true } });
+    if (!dataset) throw new ApiError(404, "找不到这个导入数据集。");
+    const content = await readStoredJson(dataset.originalStorageKey);
+    return new NextResponse(content, {
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${dataset.originalFileName}"`
+      }
+    });
+  }
+
   if (method === "POST" && resource === "course-imports" && id === "validate") {
     const body = await readBody(request);
     const payload = courseImportPayloadFromBody(body);
-    const validation = validateBnbuCourseImportPayload(payload);
-    return ok({ validation });
+    const preview = await buildCourseImportPreview(payload);
+    return ok({ validation: preview.validation, preview });
   }
 
   if (method === "GET" && resource === "course-imports") {
+    const appVersionId = await getActiveAppVersionId();
     const importBatches = await prisma.courseImportBatch.findMany({
-      include: { school: true },
+      where: { appVersionId },
+      include: { school: true, dataset: true },
       orderBy: { createdAt: "desc" },
       take: 50
     });
-    return ok({ importBatches });
+    const selectedBatch = id ? await prisma.courseImportBatch.findUnique({ where: { id }, include: { school: true, dataset: true } }) : null;
+    const selectedPayload = selectedBatch?.datasetId
+      ? await payloadFromDataset(selectedBatch.datasetId)
+      : selectedBatch && isPlainRecord(selectedBatch.payload)
+        ? selectedBatch.payload
+        : null;
+    const preview = selectedPayload ? await buildCourseImportPreview(selectedPayload) : null;
+    const databaseCoverage = await buildBnbuDatabaseCoverage();
+    const selectedSummary = selectedBatch ? summarizeCourseImportBatch(selectedBatch, true) : null;
+    return ok({
+      importBatches: importBatches.map((batch) => summarizeCourseImportBatch(batch)),
+      selectedBatch: selectedSummary && selectedPayload ? { ...selectedSummary, payload: selectedPayload } : selectedSummary,
+      preview,
+      databaseCoverage
+    });
   }
 
   if (method === "POST" && resource === "course-imports" && !id) {
     const body = await readBody(request);
     const payload = courseImportPayloadFromBody(body);
+    const name = optionalString(body.name) ?? optionalString(body.configName) ?? optionalString(body.sourceLabel);
+    if (!name) throw new ApiError(400, "请为本次配置填写一个名称。");
     const validation = validateBnbuCourseImportPayload(payload);
     if (!validation.ok) {
       throw new ApiError(400, `导入文件校验失败：${validation.errors.join("; ")}`);
     }
 
-    const school = await prisma.school.findUnique({ where: { shortName: "BNBU" } });
+    const appVersionId = await getActiveAppVersionId();
+    const school = await getActiveSchool("BNBU");
+    const preview = await buildCourseImportPreview(payload);
+    const summary = buildCourseImportBatchSummary(payload, preview);
+    const cohortYears = importCohortYearsFromPayload(payload, preview);
+    const hash = payloadHash(payload);
+    const pendingBatches = await prisma.courseImportBatch.findMany({
+      where: {
+        appVersionId,
+        ...(school?.id ? { schoolId: school.id } : {}),
+        status: "pending"
+      },
+      select: { id: true, semesterCode: true, cohortYears: true, payload: true, summary: true, createdAt: true }
+    });
+    const duplicatePending = pendingBatches.find((batch) => {
+      const existingYears: number[] = numberValues(batch.cohortYears).length
+        ? numberValues(batch.cohortYears)
+        : isPlainRecord(batch.payload)
+          ? importCohortYearsFromPayload(batch.payload)
+          : numberValues(isPlainRecord(batch.summary) ? batch.summary.cohortYears : undefined);
+      return hasOverlappingNumber(existingYears, cohortYears);
+    });
+    if (duplicatePending) {
+      throw new ApiError(409, `已存在 ${cohortYears.join(", ")} admission 的 pending 配置，请先批准或拒绝旧配置后再创建。`, ERROR_CODES.COURSE_IMPORT_DUPLICATE_PENDING);
+    }
+    const dataset = await createCourseImportDataset({ payload, name, adminUserId: admin.id, schoolId: school?.id, preview });
     const batch = await prisma.courseImportBatch.create({
       data: {
+        appVersionId,
         schoolId: school?.id,
+        datasetId: dataset.id,
+        name,
         schemaVersion: validation.schemaVersion ?? "teamaking.bnbu_course_import.v1",
         semesterCode: validation.semesterCode,
+        cohortYears: toJson(cohortYears),
+        payloadHash: hash,
+        summary: toJson(summary),
+        sourceLabel: summary.sourceLabel,
         status: "pending",
-        payload: toJson(payload),
-        validationSummary: toJson(validation)
+        payload: toJson({}),
+        validationSummary: toJson({ ...validation, preview })
       }
     });
-    await writeAudit(admin.id, "admin.course_imports.create", "CourseImportBatch", batch.id, null, { batch, validation });
-    return created({ importBatch: batch, validation });
+    await writeAudit(admin.id, "admin.course_imports.create", "CourseImportBatch", batch.id, null, { batch, validation, preview });
+    return created({ importBatch: summarizeCourseImportBatch(batch), validation, preview });
   }
 
   if (method === "POST" && resource === "course-imports" && id && action === "approve") {
     const batch = await prisma.courseImportBatch.findUnique({ where: { id } });
-    if (!batch) throw new ApiError(404, "找不到这个课程导入批次。");
-    if (batch.status === "approved") throw new ApiError(400, "这个导入批次已经批准过。");
-    if (!isPlainRecord(batch.payload)) throw new ApiError(400, "导入批次 payload 无法解析。");
+    if (!batch) throw new ApiError(404, "找不到这个课程配置操作。");
+    if (batch.status === "approved") throw new ApiError(400, "这个课程配置操作已经批准过。");
+    const approvalPayload = batch.datasetId ? await payloadFromDataset(batch.datasetId) : isPlainRecord(batch.payload) ? batch.payload : null;
+    if (!approvalPayload) throw new ApiError(400, "课程配置操作的 JSON 无法解析。");
 
     const before = await prisma.courseImportBatch.findUnique({ where: { id } });
-    const result = await applyBnbuCourseImport(batch.payload, batch.id);
+    const result = await applyBnbuCourseImport(approvalPayload, batch.id);
+    const approvalPreview = await buildCourseImportPreview(approvalPayload);
+    const approvalSummary = buildCourseImportBatchSummary(approvalPayload, approvalPreview);
+    const approvalCohortYears = importCohortYearsFromPayload(approvalPayload, approvalPreview);
     const updated = await prisma.courseImportBatch.update({
       where: { id },
       data: {
         schoolId: result.school.id,
         status: "approved",
         validationSummary: result.validationSummary,
+        summary: toJson(approvalSummary),
+        cohortYears: toJson(approvalCohortYears),
+        payloadHash: batch.payloadHash ?? payloadHash(approvalPayload),
+        sourceLabel: batch.sourceLabel ?? approvalSummary.sourceLabel,
         approvedByUserId: admin.id,
         approvedAt: new Date()
       }
     });
+    await createVersionCheckpoint({
+      appVersionId: batch.appVersionId,
+      label: `After import: ${batch.name ?? batch.id}`,
+      kind: "course_import",
+      reason: "Course import approved",
+      triggeredByUserId: admin.id
+    });
     await writeAudit(admin.id, "admin.course_imports.approve", "CourseImportBatch", id, before, { updated, result });
-    return ok({ importBatch: updated, result });
+    return ok({ importBatch: summarizeCourseImportBatch(updated), result });
   }
 
   if (method === "POST" && resource === "course-imports" && id && action === "reject") {
     const body = await readBody(request);
     const before = await prisma.courseImportBatch.findUnique({ where: { id } });
-    if (!before) throw new ApiError(404, "找不到这个课程导入批次。");
+    if (!before) throw new ApiError(404, "找不到这个课程配置操作。");
     const updated = await prisma.courseImportBatch.update({
       where: { id },
       data: {
@@ -2531,11 +5333,185 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
       }
     });
     await writeAudit(admin.id, "admin.course_imports.reject", "CourseImportBatch", id, before, updated);
-    return ok({ importBatch: updated });
+    return ok({ importBatch: summarizeCourseImportBatch(updated) });
   }
 
-  if (method === "GET" && resource === "users") {
+  if (resource === "announcements") {
+    const appVersionId = await getActiveAppVersionId();
+    if (method === "GET" && !id) {
+      const announcements = await prisma.siteAnnouncement.findMany({
+        where: { appVersionId },
+        include: {
+          publishedBy: { include: userInclude },
+          _count: { select: { reads: true } }
+        },
+        orderBy: [{ createdAt: "desc" }]
+      });
+      return ok({ announcements: announcements.map(serializeAnnouncement) });
+    }
+
+    if (method === "POST" && !id) {
+      const body = await readBody(request);
+      const status = optionalString(body.status) ?? "draft";
+      const shouldPublish = status === "published";
+      const announcement = await prisma.siteAnnouncement.create({
+        data: {
+          appVersionId,
+          titleZh: assertString(body.titleZh, "titleZh"),
+          titleEn: optionalString(body.titleEn),
+          bodyZh: assertString(body.bodyZh, "bodyZh"),
+          bodyEn: optionalString(body.bodyEn),
+          audience: optionalString(body.audience) ?? "all",
+          priority: Number(body.priority ?? 0) || 0,
+          startsAt: optionalString(body.startsAt) ? new Date(assertString(body.startsAt, "startsAt")) : null,
+          endsAt: optionalString(body.endsAt) ? new Date(assertString(body.endsAt, "endsAt")) : null,
+          status: shouldPublish ? "published" : "draft",
+          publishedAt: shouldPublish ? new Date() : null,
+          publishedByUserId: shouldPublish ? admin.id : null
+        },
+        include: { publishedBy: { include: userInclude }, _count: { select: { reads: true } } }
+      });
+      await writeAudit(admin.id, "admin.announcements.create", "SiteAnnouncement", announcement.id, null, announcement);
+      return created({ announcement: serializeAnnouncement(announcement), message: shouldPublish ? "公告已创建并发布。" : "公告草稿已创建。" });
+    }
+
+    if (method === "PATCH" && id) {
+      const body = await readBody(request);
+      const before = await prisma.siteAnnouncement.findUnique({ where: { id } });
+      if (!before || before.appVersionId !== appVersionId) throw new ApiError(404, "找不到这条公告。");
+      const announcement = await prisma.siteAnnouncement.update({
+        where: { id },
+        data: {
+          titleZh: optionalString(body.titleZh) ?? before.titleZh,
+          titleEn: Object.prototype.hasOwnProperty.call(body, "titleEn") ? optionalString(body.titleEn) : before.titleEn,
+          bodyZh: optionalString(body.bodyZh) ?? before.bodyZh,
+          bodyEn: Object.prototype.hasOwnProperty.call(body, "bodyEn") ? optionalString(body.bodyEn) : before.bodyEn,
+          audience: optionalString(body.audience) ?? before.audience,
+          priority: Object.prototype.hasOwnProperty.call(body, "priority") ? Number(body.priority ?? 0) || 0 : before.priority,
+          startsAt: Object.prototype.hasOwnProperty.call(body, "startsAt") ? (optionalString(body.startsAt) ? new Date(assertString(body.startsAt, "startsAt")) : null) : before.startsAt,
+          endsAt: Object.prototype.hasOwnProperty.call(body, "endsAt") ? (optionalString(body.endsAt) ? new Date(assertString(body.endsAt, "endsAt")) : null) : before.endsAt
+        },
+        include: { publishedBy: { include: userInclude }, _count: { select: { reads: true } } }
+      });
+      await writeAudit(admin.id, "admin.announcements.patch", "SiteAnnouncement", id, before, announcement);
+      return ok({ announcement: serializeAnnouncement(announcement), message: "公告已更新。" });
+    }
+
+    if (method === "POST" && id && action === "publish") {
+      const before = await prisma.siteAnnouncement.findUnique({ where: { id } });
+      if (!before || before.appVersionId !== appVersionId) throw new ApiError(404, "找不到这条公告。");
+      const announcement = await prisma.siteAnnouncement.update({
+        where: { id },
+        data: {
+          status: "published",
+          publishedAt: before.publishedAt ?? new Date(),
+          publishedByUserId: admin.id,
+          archivedAt: null
+        },
+        include: { publishedBy: { include: userInclude }, _count: { select: { reads: true } } }
+      });
+      await writeAudit(admin.id, "admin.announcements.publish", "SiteAnnouncement", id, before, announcement);
+      return ok({ announcement: serializeAnnouncement(announcement), message: "公告已发布给所有用户。" });
+    }
+
+    if (method === "POST" && id && action === "archive") {
+      const before = await prisma.siteAnnouncement.findUnique({ where: { id } });
+      if (!before || before.appVersionId !== appVersionId) throw new ApiError(404, "找不到这条公告。");
+      const announcement = await prisma.siteAnnouncement.update({
+        where: { id },
+        data: { status: "archived", archivedAt: new Date() },
+        include: { publishedBy: { include: userInclude }, _count: { select: { reads: true } } }
+      });
+      await writeAudit(admin.id, "admin.announcements.archive", "SiteAnnouncement", id, before, announcement);
+      return ok({ announcement: serializeAnnouncement(announcement), message: "公告已归档。" });
+    }
+  }
+
+  if (resource === "admin-users") {
+    if (admin.role !== "super_admin") {
+      throw new ApiError(403, "只有 super_admin 可以维护管理员账号。", ERROR_CODES.AUTH_ADMIN_LOGIN_REQUIRED);
+    }
+
+    if (method === "GET" && !id) {
+      const appVersionId = await getActiveAppVersionId();
+      const users = await prisma.user.findMany({
+        where: { appVersionId, role: { in: ["course_moderator", "school_admin", "super_admin"] } },
+        include: userInclude,
+        orderBy: { createdAt: "desc" }
+      });
+      return ok({ adminUsers: users.map((user) => publicUser(user)) });
+    }
+
+    if (method === "POST" && !id) {
+      const body = await readBody(request);
+      const appVersionId = await getActiveAppVersionId();
+      const email = assertString(body.email, "email").toLowerCase();
+      const role = optionalString(body.role) ?? "school_admin";
+      if (!isAdminRole(role)) throw new ApiError(400, "管理员角色无效。", ERROR_CODES.AUTH_ADMIN_LOGIN_REQUIRED, { role });
+      const password = assertString(body.password, "password");
+      const user = await prisma.user.upsert({
+        where: { appVersionId_email: { appVersionId, email } },
+        update: {
+          role,
+          passwordHash: passwordHashFor(password),
+          status: "active",
+          suspendedUntil: null,
+          isEmailVerified: true,
+          onboardingCompleted: true
+        },
+        create: {
+          appVersionId,
+          email,
+          role,
+          passwordHash: passwordHashFor(password),
+          status: "active",
+          isEmailVerified: true,
+          onboardingCompleted: true
+        },
+        include: userInclude
+      });
+      await prisma.userProfile.upsert({
+        where: { userId: user.id },
+        update: { displayName: optionalString(body.displayName) ?? user.profile?.displayName ?? email.split("@")[0] },
+        create: { userId: user.id, displayName: optionalString(body.displayName) ?? email.split("@")[0] }
+      });
+      await writeAudit(admin.id, "admin.admin_users.create", "User", user.id, null, { email, role });
+      return created({ adminUser: publicUser(user), message: "管理员账号已创建或更新。" });
+    }
+
+    if (method === "PATCH" && id) {
+      const body = await readBody(request);
+      const before = await prisma.user.findUnique({ where: { id }, include: userInclude });
+      if (!before || !isAdminRole(before.role)) throw new ApiError(404, "找不到这个管理员账号。");
+      const role = optionalString(body.role);
+      if (role && !isAdminRole(role)) throw new ApiError(400, "管理员角色无效。", ERROR_CODES.AUTH_ADMIN_LOGIN_REQUIRED, { role });
+      const password = optionalString(body.password);
+      const user = await prisma.user.update({
+        where: { id },
+        data: {
+          ...(role ? { role } : {}),
+          ...(password ? { passwordHash: passwordHashFor(password) } : {}),
+          status: optionalString(body.status) ?? before.status,
+          suspendedUntil: optionalString(body.suspendedUntil) ? new Date(assertString(body.suspendedUntil, "suspendedUntil")) : before.suspendedUntil
+        },
+        include: userInclude
+      });
+      if (optionalString(body.displayName)) {
+        await prisma.userProfile.upsert({
+          where: { userId: user.id },
+          update: { displayName: assertString(body.displayName, "displayName") },
+          create: { userId: user.id, displayName: assertString(body.displayName, "displayName") }
+        });
+      }
+      await writeAudit(admin.id, "admin.admin_users.patch", "User", id, before, { id, role, status: user.status, passwordChanged: Boolean(password) });
+      return ok({ adminUser: publicUser(user), message: "管理员账号已更新。" });
+    }
+  }
+
+  if (method === "GET" && resource === "users" && !id) {
+    const appVersionId = await getActiveAppVersionId();
     const users = await prisma.user.findMany({
+      where: { appVersionId },
       include: adminUserInclude,
       orderBy: { createdAt: "desc" },
       take: 100
@@ -2564,14 +5540,17 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
   }
 
   if (method === "GET" && resource === "schools") {
-    const schools = await prisma.school.findMany({ include: { domains: true, faculties: true, majors: true }, orderBy: { createdAt: "desc" } });
+    const appVersionId = await getActiveAppVersionId();
+    const schools = await prisma.school.findMany({ where: { appVersionId }, include: { domains: true, faculties: true, majors: true }, orderBy: { createdAt: "desc" } });
     return ok({ schools });
   }
 
   if (method === "POST" && resource === "schools") {
     const body = await readBody(request);
+    const appVersionId = await getActiveAppVersionId();
     const school = await prisma.school.create({
       data: {
+        appVersionId,
         name: assertString(body.name, "name"),
         shortName: assertString(body.shortName, "shortName"),
         status: optionalString(body.status) ?? "active",
@@ -2602,12 +5581,14 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
   }
 
   if (method === "GET" && resource === "majors") {
-    const [faculties, majors, semesters] = await Promise.all([
-      prisma.faculty.findMany({ include: { school: true }, orderBy: { name: "asc" } }),
-      prisma.major.findMany({ include: { school: true, faculty: true }, orderBy: { name: "asc" } }),
-      prisma.semester.findMany({ include: { school: true }, orderBy: [{ year: "desc" }, { name: "asc" }] })
+    const appVersionId = await getActiveAppVersionId();
+    const [schools, faculties, majors, semesters] = await Promise.all([
+      prisma.school.findMany({ where: { appVersionId }, orderBy: { shortName: "asc" } }),
+      prisma.faculty.findMany({ where: { school: { appVersionId } }, include: { school: true }, orderBy: { name: "asc" } }),
+      prisma.major.findMany({ where: { school: { appVersionId } }, include: { school: true, faculty: true }, orderBy: { name: "asc" } }),
+      prisma.semester.findMany({ where: { school: { appVersionId } }, include: { school: true }, orderBy: [{ year: "desc" }, { name: "asc" }] })
     ]);
-    return ok({ faculties, majors, semesters });
+    return ok({ schools, faculties, majors, semesters });
   }
 
   if (method === "POST" && resource === "majors") {
@@ -2647,20 +5628,80 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
   }
 
   if (method === "GET" && resource === "courses") {
-    const courses = await prisma.course.findMany({ include: courseInclude, orderBy: { code: "asc" }, take: 100 });
-    return ok({ courses });
+    const url = new URL(request.url);
+    const query = optionalString(url.searchParams.get("query")) ?? "";
+    const requestedStatus = optionalString(url.searchParams.get("status")) ?? "all";
+    const requestedSource = optionalString(url.searchParams.get("source")) ?? "all";
+    const requestedTag = optionalString(url.searchParams.get("tag")) ?? "";
+    const page = Math.max(1, Number(url.searchParams.get("page") ?? 1) || 1);
+    const pageSize = Math.min(100, Math.max(10, Number(url.searchParams.get("pageSize") ?? 25) || 25));
+    const school = await getActiveSchool("BNBU");
+    const where: any = {
+      ...(school ? { schoolId: school.id } : {}),
+      ...(requestedStatus !== "all" ? { status: requestedStatus } : {}),
+      ...(requestedSource !== "all" ? { source: requestedSource } : {}),
+      ...(query
+        ? {
+            OR: [
+              { code: { contains: query, mode: "insensitive" } },
+              { title: { contains: query, mode: "insensitive" } },
+              { description: { contains: query, mode: "insensitive" } }
+            ]
+          }
+        : {})
+    };
+    const [allMatching, semesters] = await Promise.all([
+    prisma.course.findMany({
+      where,
+      include: {
+        ...courseInclude,
+        curriculumRules: {
+          where: { status: "active" },
+          include: { semester: true },
+          orderBy: { updatedAt: "desc" },
+          take: 200
+        },
+        _count: { select: { curriculumRules: true, offerings: true } }
+      },
+      orderBy: { code: "asc" }
+    }),
+    prisma.semester.findMany({
+      where: school ? { schoolId: school.id } : {},
+      orderBy: [{ year: "desc" }, { term: "asc" }]
+    })
+    ]);
+    const tag = requestedTag.trim().toLowerCase();
+    const filtered = tag
+      ? allMatching.filter((course) => textValues(course.categoryTags).some((item) => item.toLowerCase().includes(tag)))
+      : allMatching;
+    const total = filtered.length;
+    const courses = filtered.slice((page - 1) * pageSize, page * pageSize).map(serializeAdminCourse);
+    const sources = [...new Set(allMatching.map((course) => course.source).filter(Boolean))].sort();
+    const tags = [...new Set(allMatching.flatMap((course) => textValues(course.categoryTags)))].sort();
+    return ok({ courses, semesters, pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) }, filters: { sources, tags } });
   }
 
   if (method === "POST" && resource === "courses") {
     const body = await readBody(request);
+    const schoolId = optionalString(body.schoolId) ?? (await getActiveSchool("BNBU"))?.id;
+    if (!schoolId) throw new ApiError(400, "找不到 BNBU 学校记录，无法新增课程。");
+    const code = assertString(body.code, "code").trim().toUpperCase();
+    const existing = await prisma.course.findUnique({ where: { schoolId_code: { schoolId, code } } });
+    if (existing) throw new ApiError(409, `${code} 已存在；同一学校下课程代码必须唯一。`);
     const course = await prisma.course.create({
       data: {
-        schoolId: assertString(body.schoolId, "schoolId"),
-        code: assertString(body.code, "code"),
+        schoolId,
+        code,
         title: assertString(body.title, "title"),
         description: optionalString(body.description) ?? "",
+        credits: numberValue(body.credits),
+        ownerUnit: toJson(parseJsonObject(body.ownerUnit)),
+        categoryTags: parseCommaText(body.categoryTags),
         courseType: optionalString(body.courseType) ?? "coursework",
-        source: "admin"
+        status: optionalString(body.status) ?? "active",
+        source: "admin",
+        manualOverrideFields: ["title", "description", "credits", "ownerUnit", "categoryTags", "courseType", "status"],
+        manualNote: optionalString(body.manualNote)
       }
     });
     const semesterId = optionalString(body.semesterId);
@@ -2685,29 +5726,130 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
           })
         : null;
     await writeAudit(admin.id, "admin.courses.create", "Course", course.id, null, { course, offering, board });
-    return created({ course, offering, board });
+    return created({ course: serializeAdminCourse({ ...course, curriculumRules: [], offerings: [], mappings: [], _count: { curriculumRules: 0, offerings: 0 } }), offering, board });
   }
 
   if (method === "PATCH" && resource === "courses" && id) {
     const body = await readBody(request);
     const before = await prisma.course.findUnique({ where: { id } });
+    if (!before) throw new ApiError(404, "找不到这门课程。");
+    const editableFields = ["code", "title", "description", "credits", "ownerUnit", "categoryTags", "courseType", "status"];
+    const changedFields = editableFields.filter((field) => Object.prototype.hasOwnProperty.call(body, field));
+    const overrideFields = [...new Set([...textValues(before.manualOverrideFields), ...changedFields.filter((field) => field !== "code")])];
+    const nextCode = optionalString(body.code)?.trim().toUpperCase();
+    if (nextCode && nextCode !== before.code) {
+      const duplicate = await prisma.course.findUnique({ where: { schoolId_code: { schoolId: before.schoolId, code: nextCode } } });
+      if (duplicate) throw new ApiError(409, `${nextCode} 已存在；同一学校下课程代码必须唯一。`);
+    }
     const course = await prisma.course.update({
       where: { id },
       data: {
-        code: optionalString(body.code) ?? before?.code,
-        title: optionalString(body.title) ?? before?.title,
-        description: optionalString(body.description) ?? before?.description,
-        status: optionalString(body.status) ?? before?.status
+        code: nextCode ?? before.code,
+        title: optionalString(body.title) ?? before.title,
+        description: optionalString(body.description) ?? before.description,
+        credits: Object.prototype.hasOwnProperty.call(body, "credits") ? numberValue(body.credits) : before.credits,
+        ownerUnit: Object.prototype.hasOwnProperty.call(body, "ownerUnit") ? toJson(parseJsonObject(body.ownerUnit)) : before.ownerUnit,
+        categoryTags: Object.prototype.hasOwnProperty.call(body, "categoryTags") ? parseCommaText(body.categoryTags) : textValues(before.categoryTags),
+        courseType: optionalString(body.courseType) ?? before.courseType,
+        status: optionalString(body.status) ?? before.status,
+        manualOverrideFields: overrideFields,
+        manualNote: optionalString(body.manualNote) ?? before.manualNote
+      },
+      include: {
+        ...courseInclude,
+        curriculumRules: { where: { status: "active" }, include: { semester: true }, orderBy: { updatedAt: "desc" }, take: 200 },
+        _count: { select: { curriculumRules: true, offerings: true } }
       }
     });
     await writeAudit(admin.id, "admin.courses.patch", "Course", id, before, course);
-    return ok({ course });
+    return ok({ course: serializeAdminCourse(course) });
+  }
+
+  if (method === "POST" && resource === "courses" && id && action === "offerings") {
+    const body = await readBody(request);
+    const course = await prisma.course.findUnique({ where: { id } });
+    if (!course) throw new ApiError(404, "找不到这门课程。");
+    const semesterId = assertString(body.semesterId, "semesterId");
+    const semester = await prisma.semester.findUnique({ where: { id: semesterId } });
+    if (!semester || semester.schoolId !== course.schoolId) {
+      throw new ApiError(400, "开课学期和课程不属于同一学校。", ERROR_CODES.COURSE_OFFERING_INVALID, { courseId: id, semesterId });
+    }
+    const existing = await prisma.courseOffering.findFirst({
+      where: {
+        courseId: course.id,
+        semesterId,
+        section: optionalString(body.section) ?? null
+      }
+    });
+    const offering = existing
+      ? await prisma.courseOffering.update({
+          where: { id: existing.id },
+          data: {
+            teacherName: optionalString(body.teacherName) ?? existing.teacherName,
+            status: optionalString(body.status) ?? existing.status,
+            sourceRefIds: Array.isArray(body.sourceRefIds) ? stringArray(body.sourceRefIds) : toJson(existing.sourceRefIds ?? [])
+          },
+          include: { course: true, semester: true, boards: true }
+        })
+      : await prisma.courseOffering.create({
+          data: {
+            courseId: course.id,
+            semesterId,
+            teacherName: optionalString(body.teacherName),
+            section: optionalString(body.section),
+            status: optionalString(body.status) ?? "active",
+            sourceRefIds: Array.isArray(body.sourceRefIds) ? stringArray(body.sourceRefIds) : []
+          },
+          include: { course: true, semester: true, boards: true }
+        });
+    let board = null;
+    if (body.createBoard !== false) {
+      board = await prisma.courseBoard.findFirst({ where: { courseOfferingId: offering.id, status: "active" } });
+      if (!board) {
+        board = await prisma.courseBoard.create({
+          data: {
+            courseOfferingId: offering.id,
+            title: optionalString(body.boardTitle) ?? `${course.code} ${course.title}`,
+            rules: optionalString(body.boardRules) ?? undefined,
+            status: "active"
+          }
+        });
+      }
+    }
+    await writeAudit(admin.id, "admin.course_offerings.create", "CourseOffering", offering.id, null, { offering, board });
+    return created({ offering, board, reused: Boolean(existing) });
+  }
+
+  if (method === "PATCH" && resource === "course-offerings" && id) {
+    const body = await readBody(request);
+    const before = await prisma.courseOffering.findUnique({ where: { id }, include: { course: true, semester: true, boards: true } });
+    if (!before) throw new ApiError(404, "找不到这个开课配置。");
+    const semesterId = optionalString(body.semesterId);
+    if (semesterId) {
+      const semester = await prisma.semester.findUnique({ where: { id: semesterId } });
+      if (!semester || semester.schoolId !== before.course.schoolId) {
+        throw new ApiError(400, "开课学期和课程不属于同一学校。", ERROR_CODES.COURSE_OFFERING_INVALID, { offeringId: id, semesterId });
+      }
+    }
+    const offering = await prisma.courseOffering.update({
+      where: { id },
+      data: {
+        semesterId: semesterId ?? before.semesterId,
+        teacherName: optionalString(body.teacherName) ?? before.teacherName,
+        section: Object.prototype.hasOwnProperty.call(body, "section") ? optionalString(body.section) ?? null : before.section,
+        status: optionalString(body.status) ?? before.status,
+        sourceRefIds: Array.isArray(body.sourceRefIds) ? stringArray(body.sourceRefIds) : toJson(before.sourceRefIds ?? [])
+      },
+      include: { course: true, semester: true, boards: true }
+    });
+    await writeAudit(admin.id, "admin.course_offerings.patch", "CourseOffering", id, before, offering);
+    return ok({ offering });
   }
 
   if (method === "POST" && resource === "courses" && id && action === "merge") {
     const body = await readBody(request);
-    await writeAudit(admin.id, "admin.courses.merge", "Course", id, null, body);
-    return ok({ message: "课程合并记录已写入审计日志。MVP 中保留人工合并扩展点。" });
+    const result = await mergeCourses(id, assertString(body.targetCourseId, "targetCourseId"), admin.id, optionalString(body.adminNote));
+    return ok({ result, message: `课程已合并：${result.source.code} -> ${result.target.code}` });
   }
 
   if (method === "GET" && resource === "course-submissions") {
@@ -2719,11 +5861,44 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
   }
 
   if (method === "GET" && resource === "support-tickets") {
+    const query = (request.nextUrl.searchParams.get("query") ?? "").trim().toLowerCase();
+    const status = request.nextUrl.searchParams.get("status") ?? "all";
+    const category = request.nextUrl.searchParams.get("category") ?? "all";
     const tickets = await prisma.supportTicket.findMany({
       include: { submittedBy: { include: { profile: true } } },
       orderBy: { createdAt: "desc" }
     });
-    return ok({ tickets });
+    const filtered = tickets.filter((ticket) => {
+      const matchesStatus = status === "all" || ticket.status === status;
+      const matchesCategory = category === "all" || ticket.category === category;
+      const haystack = [
+        ticket.id,
+        ticket.email,
+        ticket.category,
+        ticket.title,
+        ticket.description,
+        ticket.relatedUrl,
+        ticket.adminNote,
+        ticket.adminReply,
+        ticket.submittedBy?.email,
+        ticket.submittedBy?.profile?.displayName
+      ].filter(Boolean).join(" ").toLowerCase();
+      return matchesStatus && matchesCategory && (!query || haystack.includes(query));
+    });
+    const countBy = (field: "status" | "category") => tickets.reduce<Record<string, number>>((acc, ticket) => {
+      const key = ticket[field] || "unknown";
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    return ok({
+      tickets: filtered,
+      summary: {
+        total: tickets.length,
+        visible: filtered.length,
+        byStatus: countBy("status"),
+        byCategory: countBy("category")
+      }
+    });
   }
 
   if (method === "PATCH" && resource === "support-tickets" && id) {
@@ -2812,11 +5987,18 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
   }
 
   if (method === "GET" && resource === "boards") {
-    const boards = await prisma.courseBoard.findMany({
-      include: { courseOffering: { include: { course: true, semester: true } }, memberships: true },
-      orderBy: { createdAt: "desc" }
-    });
-    return ok({ boards });
+    const [boards, offerings] = await Promise.all([
+      prisma.courseBoard.findMany({
+        include: { courseOffering: { include: { course: true, semester: true } }, memberships: true },
+        orderBy: { createdAt: "desc" }
+      }),
+      prisma.courseOffering.findMany({
+        where: { status: "active" },
+        include: { course: true, semester: true, boards: true },
+        orderBy: [{ updatedAt: "desc" }]
+      })
+    ]);
+    return ok({ boards, offerings });
   }
 
   if (method === "POST" && resource === "boards") {
@@ -2880,9 +6062,13 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
   if (method === "PATCH" && resource === "team-up-requests" && id) {
     const body = await readBody(request);
     const before = await prisma.teamUpRequest.findUnique({ where: { id } });
+    const requestedStatus = optionalString(body.status);
+    if (requestedStatus && !teamUpInterestStatuses.includes(requestedStatus as any)) {
+      throw new ApiError(400, "TeamUp 状态无效。", ERROR_CODES.TEAMUP_INVALID_TRANSITION, { status: requestedStatus });
+    }
     const requestRow = await prisma.teamUpRequest.update({
       where: { id },
-      data: { status: optionalString(body.status) ?? before?.status }
+      data: { status: requestedStatus ?? before?.status }
     });
     await writeAudit(admin.id, "admin.team_up_requests.patch", "TeamUpRequest", id, before, requestRow);
     return ok({ request: requestRow });
@@ -2942,15 +6128,147 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
   }
 
   if (method === "GET" && resource === "logs") {
-    const logs = await prisma.adminAuditLog.findMany({
-      include: { adminUser: { include: { profile: true } } },
+    const appVersionId = await getActiveAppVersionId();
+    const url = new URL(request.url);
+    const actorUserId = optionalString(url.searchParams.get("actorUserId"));
+    const [logs, operationLogs] = await Promise.all([
+      prisma.adminAuditLog.findMany({
+        where: { appVersionId },
+        include: { adminUser: { include: { profile: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 100
+      }),
+      prisma.operationLog.findMany({
+        where: {
+          appVersionId,
+          ...(actorUserId ? { actorUserId } : {})
+        },
+        include: { actor: { include: { profile: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 200
+      })
+    ]);
+    return ok({ operationLogs, logs });
+  }
+
+  if (method === "GET" && resource === "error-events") {
+    const appVersionId = await getActiveAppVersionId();
+    const query = normalizeSearch(request.nextUrl.searchParams.get("query") ?? "");
+    const where: any = { appVersionId };
+    if (query) {
+      where.OR = [
+        { errorCode: { contains: query, mode: "insensitive" } },
+        { requestId: { contains: query, mode: "insensitive" } },
+        { path: { contains: query, mode: "insensitive" } },
+        { userId: { contains: query, mode: "insensitive" } },
+        { message: { contains: query, mode: "insensitive" } }
+      ];
+    }
+    const events = await prisma.errorEvent.findMany({
+      where,
+      include: { user: { include: { profile: true } } },
       orderBy: { createdAt: "desc" },
-      take: 100
+      take: 200
+    });
+    const byCode = events.reduce<Record<string, number>>((acc, event) => {
+      acc[event.errorCode] = (acc[event.errorCode] ?? 0) + 1;
+      return acc;
+    }, {});
+    return ok({ errorEvents: events, summary: { total: events.length, byCode } });
+  }
+
+  if (method === "GET" && resource === "users" && id === "logs") {
+    const appVersionId = await getActiveAppVersionId();
+    const logs = await prisma.operationLog.findMany({
+      where: { appVersionId, actorUserId: action },
+      include: { actor: { include: { profile: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 200
     });
     return ok({ logs });
   }
 
   throw new ApiError(404, "找不到管理后台接口。");
+}
+
+async function handleCrawler(method: string, path: string[], request: NextRequest) {
+  const admin = await requireAdmin();
+  const resource = path[1];
+  const id = path[2];
+  const action = path[3];
+
+  if (method === "GET" && (!resource || resource === "options")) {
+    return ok({
+      defaults: {
+        name: "",
+        target: "programme_handbook",
+        handbookUrl: "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm",
+        cohorts: "2025,2024",
+        academicYear: "2026",
+        term: "Spring",
+        limit: "all"
+      },
+      targets: [
+        {
+          value: "programme_handbook",
+          label: "Programme handbook",
+          supported: true,
+          description: "抓取每个 admission year 的四年课程安排，输出 Course + admission-year Curriculum Rules。"
+        },
+        {
+          value: "semester_offerings",
+          label: "Semester offerings",
+          supported: false,
+          description: "预留入口；需要 BNBU 官方真实开课表来源。"
+        },
+        {
+          value: "syllabus_teamwork",
+          label: "Syllabus teamwork evidence",
+          supported: false,
+          description: "预留入口；需要 syllabus PDF/HTML 来源。"
+        }
+      ],
+      outputs: await listCrawlerOutputs()
+    });
+  }
+
+  if (method === "GET" && resource === "jobs" && !id) {
+    const appVersionId = await getActiveAppVersionId();
+    return ok({
+      jobs: await listCrawlerJobs(appVersionId),
+      outputs: await listCrawlerOutputs()
+    });
+  }
+
+  if (method === "POST" && resource === "jobs") {
+    const body = await readBody(request);
+    const job = await startCrawlerJob(body, admin);
+    return created({ job, message: `已启动爬虫任务：${job.name}` });
+  }
+
+  if (method === "GET" && resource === "jobs" && id) {
+    const appVersionId = await getActiveAppVersionId();
+    await markStaleCrawlerJobs(appVersionId);
+    const job = await prisma.crawlerJob.findUnique({ where: { id } });
+    if (!job) throw new ApiError(404, "找不到这个爬虫任务。");
+    return ok({ job: serializeCrawlerJob(job), outputs: await listCrawlerOutputs() });
+  }
+
+  if (method === "GET" && resource === "outputs") {
+    if (id && action === "download") {
+      const storageKey = Buffer.from(id, "base64url").toString("utf8");
+      const content = await readStoredJson(storageKey);
+      return new NextResponse(content, {
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${storageKey.split(/[\\/]/).pop() ?? "crawler-output.json"}"`
+        }
+      });
+    }
+    return ok({ outputs: await listCrawlerOutputs() });
+  }
+
+  throw new ApiError(404, "找不到爬虫接口。");
 }
 
 async function dispatch(method: string, context: RouteContext, request: NextRequest) {
@@ -2971,25 +6289,27 @@ async function dispatch(method: string, context: RouteContext, request: NextRequ
   if (root === "team-up-requests") return handleTeamUpRequests(method, path, request);
   if (root === "follow-requests") return handleFollowRequests(method, path);
   if (root === "support-tickets") return handleSupportTickets(method, request);
+  if (root === "announcements") return handleAnnouncements(method, path);
   if (root === "uploads") return handleUploads(method, request);
   if (root === "matches" && method === "GET") return handleMatches();
   if (root === "admin") return handleAdmin(method, path, request);
+  if (root === "crawler") return handleCrawler(method, path, request);
 
   throw new ApiError(404, "找不到这个 API 路径。");
 }
 
 export async function GET(request: NextRequest, context: RouteContext) {
-  return handleApi(() => dispatch("GET", context, request));
+  return handleApi(() => dispatch("GET", context, request), { request, onError: (error) => persistErrorEvent(request, error) });
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  return handleApi(() => dispatch("POST", context, request));
+  return handleApi(() => dispatch("POST", context, request), { request, onError: (error) => persistErrorEvent(request, error) });
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  return handleApi(() => dispatch("PATCH", context, request));
+  return handleApi(() => dispatch("PATCH", context, request), { request, onError: (error) => persistErrorEvent(request, error) });
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {
-  return handleApi(() => dispatch("DELETE", context, request));
+  return handleApi(() => dispatch("DELETE", context, request), { request, onError: (error) => persistErrorEvent(request, error) });
 }

@@ -251,6 +251,25 @@ function sanitizeDemoFollowRequest(request: any, viewerId?: string | null) {
 
 export function demoAdminResource(resource?: string) {
   const state = globalState();
+  if (resource === "announcements") {
+    return {
+      announcements: [
+        {
+          id: "demo-announcement-1",
+          titleZh: "欢迎使用 TEAMAKING 测试版",
+          titleEn: "Welcome to the TEAMAKING beta",
+          bodyZh: "这是演示公告。正式环境中，管理员可以在这里发布面向所有用户的公告。",
+          bodyEn: "This is a demo announcement. In production, admins can publish announcements for all users here.",
+          status: "published",
+          priority: 0,
+          publishedAt: new Date().toISOString(),
+          readCount: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ]
+    };
+  }
   if (resource === "team-up-requests") return { "team-up-requests": state.teamUpInterests.map((interest) => sanitizeDemoInterest(interest, "demo-user-admin")) };
   if (resource === "support-tickets") return { "support-tickets": state.supportTickets };
   if (resource === "teamaking-posts") return { "teamaking-posts": state.posts.map((post) => sanitizeDemoPost(post, "demo-user-admin")) };

@@ -294,6 +294,26 @@
   - 新增 `docs/BNBU_COURSE_CRAWLER_REQUIREMENTS.md`。
   - 文档覆盖 raw JSONL schema、cleaned JSON schema、各节点功能、卡点、校验要求、正式数据库字段映射、课程分类和 studentAction 规则。
   - 明确 crawler 不输出 memberships；默认加入由 TEAMAKING 在管理员批准导入后根据 `default_join` curriculum rules 生成。
+
+### Course Import 差异预览
+
+- 背景：用户要求补齐导入预览/差异对比，避免管理员盲批课程配置。
+- 改动：
+  - 新增导入 preview 计算：校验 JSON 时同步返回新增/更新 Faculty、Major、Course、Rule 数量，当前学期会失效的旧 rule 数量，默认加入 rule 数量，可搜索 rule 数量，以及预计默认加入用户数。
+  - `GET /api/admin/course-imports/:id` 支持查看某个已创建批次的 preview。
+  - `/admin/course-imports` 页面展示 Import Preview、validation errors/warnings、样例新增课程、更新课程、新增规则、将失效规则、默认加入规则和可搜索规则。
+  - 创建待审批批次时把 preview 写入 `validationSummary`，方便后续审计。
+
+### BNBU Import v2 与相对学期匹配
+
+- 背景：用户指出 handbook 中的 2025/Fall 等年份不能直接当真实当前学期，programme handbook 只能生成 curriculum rules，真实 Course Board 必须来自 timetable/course-list offering。
+- 改动：
+  - 新增 `teamaking.bnbu_course_import.v2` 校验，兼容 v1。
+  - `UserProfile` 增加 `entryYear` 和 `entryTerm`；`CourseCurriculumRule` 增加 `relativeTermCodes`。
+  - default join 和 recommended courses 在 v2 下按学生入学信息与当前 semester 动态计算 `Y1S1`、`Y2S2` 等相对学期。
+  - v2 校验阻止 programme-scoped rules 使用 `allMajors: true`，要求 `majorCodes`，并阻止 handbook/curriculum-only source 伪造成 offerings。
+  - 历史 semester 不允许 `isCurrentCandidate: true`；unknown classification 必须用 `recommend_only` 或 `hidden`。
+  - 新增 `course_imports/bnbu/` 用于提交最终 cleaned JSON，并 gitignore 本地 `local_bnbu_course_pipeline/` 工具目录。
     - `179675`：`TEAMAKING 找回密码验证码`
   - Vercel 已添加：
     - `TENCENTCLOUD_SES_REGION=ap-hongkong`
@@ -321,3 +341,195 @@
     - 上线前检查清单。
   - README 增加 `docs/ENVIRONMENT_VARIABLES.md` 为开发者必读文档。
   - README 的 Vercel 环境变量部分改为引用专门指南，避免 README 成为密钥和值的混杂清单。
+
+### 版本化数据集、线上爬虫入口与操作日志
+
+- 背景：
+  - 用户要求 crawler 能脱离 Codex 手动运行，并最终以独立子域名形式提供前端入口。
+  - 用户要求导入 JSON 后不只保存单个巨大 payload，而是拆成线上数据集、保留导入/编辑日志。
+  - 用户要求引入测试阶段/软件版本概念，支持开启新空白版本、保存旧版本最终状态，并记录现实时间操作日志。
+- 改动：
+  - 新增 `AppVersion`、`VersionCheckpoint`、`VersionCheckpointChunk`、`OperationLog`。
+  - `User`、`EmailVerification`、`School`、`CourseImportBatch`、`CourseImportDataset`、`AdminAuditLog` 增加 `appVersionId`，用户邮箱和学校简称唯一性改为版本内唯一。
+  - 新增 `CourseImportDataset` 及 source refs/faculties/majors/courses/rules/offerings 子表；`CourseImportBatch` 增加 `name`、`datasetId`、版本字段，pending 批次引用拆分后的数据集。
+  - 管理员导入页新增配置名称、数据集下载入口；创建 pending 时写 `storage/course_import_artifacts/`，批次列表不再展示巨大 payload。
+  - 新增 `/admin/versions`：查看 active version、开启新版本、创建 checkpoint、下载 checkpoint、记录回溯请求。
+  - 新增 `/admin/logs` 可读操作日志视图；用户写入、课程加入/退出、TeamUp/Follow、工单、管理员审批和版本操作会写入 `OperationLog`。
+  - 新增 `/crawler` 和 `/api/crawler/*`：支持自然语言说明、admission years、programme/faculty 范围、source URL、输出模式，启动 BNBU programme handbook crawl，并提供输出 JSON 下载。
+  - 新增 tracked crawler runner `scripts/bnbu-crawler/run-handbook-preview.mjs`；本地 gitignored pipeline 仍保留为实验区。
+  - `middleware.ts` 增加 `CRAWLER_HOSTS`，用于线上独立 crawler 子域名；`storage/` 加入 `.gitignore`。
+  - 新增 migration `20260524190000_versions_datasets_logs_crawler_storage` 并已应用到本地数据库。
+- 验证：
+  - `npx prisma validate` 通过。
+  - `npx prisma migrate dev` 已应用最新迁移。
+  - `npx prisma migrate status` 显示数据库 schema up to date。
+  - `npm run lint` 通过。
+  - `npx tsc --noEmit` 通过。
+  - `npm run build` 通过。
+  - Smoke test：`node scripts/bnbu-crawler/run-handbook-preview.mjs --cohorts=2025 --limit=1 ...` 成功生成 `storage/crawler_outputs_smoke/bnbu-2025-admission-handbook.teamaking.json`。
+  - 使用 `npx tsx` 调用主程序校验器验证 smoke JSON：`ok: true`，50 courses，50 curriculum rules，0 offerings。
+- 注意：
+  - 自动破坏性 rollback/replay 暂不直接执行；当前实现保存并下载 checkpoint，回溯请求会记录日志，避免误删线上数据。
+  - `offerings[]` 仍取决于官方真实开课/semester offerings 来源；programme handbook 输出为空 offerings 是预期状态。
+
+### BNBU Crawler 管理员变量表
+
+- 背景：
+  - 用户希望 crawler 页面所有可交互项和变量都有一份面向非开发管理员的 Markdown 说明，避免只靠口头解释。
+- 改动：
+  - 新增 `docs/BNBU_CRAWLER_ADMIN_VARIABLES.md`。
+  - 文档覆盖：
+    - 推荐操作流程。
+    - `/crawler` 页面所有输入字段：自然语言说明、target、Handbook URL、Admission years、Programme codes、Faculty codes、Academic year、Term、Limit、Output mode。
+    - target 枚举、output mode 差异、派生变量、Jobs 表、Download outputs 表。
+    - smoke test、全量导入、按学院导入三种常见填法。
+    - failed job、empty offerings、limit 误用、admission year 与 academic year 混淆等常见错误。
+    - 下载 JSON 后进入 `/admin/course-imports` 前的检查清单。
+  - README 的“开发者先读”和 BNBU Course Import 段落增加该文档入口。
+
+### Admission-Year 配置语义、Crawler Job 持久化与工单后台
+
+- 背景：
+  - 用户指出 `term` 不应被误解为课程安排分类；BNBU handbook 的核心分类应是 admission year 的四年课程安排。
+  - 用户指出一次 JSON 输入就是一次课程安排配置操作，不应被解释为“拆成多个 pending 批次”。
+  - 用户要求 crawler job 可自定义名称，并能在失败时看到明确原因。
+  - 用户要求 Support Tickets 后台支持搜索、类型筛选和更完整的处理界面。
+- 改动：
+  - 新增 `CrawlerJob` Prisma model 和 migration `20260525003000_crawler_jobs`；crawler 任务现在持久化保存自定义任务名、输入范围、命令、日志、输出、失败原因、exit code 和开始/结束时间。
+  - `/crawler` 页面增加 `Job name`；将 `Academic year / Term` 改为 `Activation preview year / term`，说明它只用于预览 Course Board 激活，不改变 admission-year 课程安排。
+  - `/api/crawler/jobs` 改为读取数据库中的 `CrawlerJob`，开发服务器重启后仍可看到历史任务；长时间未更新的 running job 会标记为 failed 并给出原因。
+  - `/admin/course-imports` 文案改为“Admission-year configuration operations / 导入队列与配置历史”；明确每个 JSON 只创建一条 pending 配置操作，拆分数据集只是为了查询、审计、编辑和回溯。
+  - 导入列表的 pending 行增加直接“批准 / 拒绝”按钮；预览页把 `cohort` 面向管理员的文案替换为 `admission year`。
+  - `/admin/support-tickets` 改为管理工作台：显示总数/待处理/处理中，支持搜索、类别筛选、状态筛选，列表提前展示工单类型，右侧/下方提供详情、管理员备注、用户回复和状态更新。
+  - 用户工单类别增加 `course_config_error`，用于课程配置错误反馈。
+  - README 和 `docs/BNBU_CRAWLER_ADMIN_VARIABLES.md` 更新 admission-year 语义、job name、Activation preview、pending/approved 历史记录解释。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npx prisma validate` 通过。
+  - `npx prisma migrate dev` 已应用 `20260525003000_crawler_jobs` 并重新生成 Prisma Client。
+  - 复现全量 crawler：`node scripts/bnbu-crawler/run-handbook-preview.mjs --cohorts=2025,2024 --limit=all --semesterCode=2026-Fall ...` 当前成功生成 2025 和 2024 admission JSON，说明截图中的 failed 更可能来自旧版本、网络/PDF 拉取瞬断或开发服务器中断。
+  - Smoke test：`node scripts/bnbu-crawler/run-handbook-preview.mjs --cohorts=2024 --limit=1 ...` 成功生成 `storage/crawler_outputs_smoke/bnbu-2024-admission-handbook.teamaking.json`。
+
+### TeamUp Interest 卡片对齐
+
+- 背景：
+  - 用户指出 TeamUp Menu 中 TeamUp Interest 卡片的头像、正文、状态和操作按钮视觉对齐不统一。
+- 改动：
+  - 调整 `TeamUpRequestCard` 布局：头像固定为左列，正文、Profile/Post 按钮和处理按钮统一在内容列内对齐，状态标签固定在内容区右上角。
+  - 该组件同时影响 `/team-up-requests` 和单个 Teamaking Post 详情里的 TeamUp Interest 列表。
+- 验证：
+  - `npm run typecheck` 通过。
+
+### Public Profile 重复资料卡清理
+
+- 背景：
+  - 用户指出 public profile 页面已经处于 View Profile 场景，右下角再次展示 `ProfileCard` 和 `View Profile` 按钮是重复信息。
+- 改动：
+  - 将右下角 `ProfileCard` 中的年级、专业、headline、bio、output tags 和 skills 合并到顶部 profile hero。
+  - 删除 public profile 页面右下角重复资料卡；Contact 改为单独整宽卡片。
+- 验证：
+  - `npm run typecheck` 通过。
+
+### Matches 推荐理由标签清理
+
+- 背景：
+  - 用户指出 Teamaking Post 本身已经是校内招募队友场景，`Same school` 和 `Open to Team` 作为卡片下方推荐标签没有信息增量。
+- 改动：
+  - `/api/matches` 不再为 Teamaking Post 推荐结果返回 `Same school` 和 `Open to Team` 理由。
+  - `MatchesPage` 对旧数据或 demo 数据做前端兜底过滤；过滤后没有推荐理由时不再渲染空标签区域。
+- 验证：
+  - `npm run typecheck` 通过。
+
+### 简历解析结构化展示
+
+- 背景：
+  - 用户指出 Profile 简历解析只是把识别文本塞成一段，排版混乱、显示不完整，也没有滚动条。
+- 改动：
+  - `parseResumeText` 从单段摘要升级为本地规则解析：输出 `summary`、`skills`、`highlights`、`sections`、`rawText`、`lineCount`、联系方式和链接。
+  - 增加中英文 section 识别：教育背景、实习/工作经历、项目经历、技能关键词、奖项/证书、语言能力。
+  - 增加关键词归纳：writing、research、presentation、data analysis、figma、visual design、project management、marketing、collaboration tools 等。
+  - `/profile/me` 简历展示改为结构化面板：自动摘要、联系方式、关键词、Highlights、分区内容；完整解析原文放入可展开的滚动区域。
+  - 新增 `/api/profile/me/reparse-resume` 和 Profile 编辑页“重新整理当前简历”按钮；已有简历可不重新上传，直接重新生成结构化解析。
+  - README 的 Profile 上传说明更新为“本地结构化解析”，为后续接云端文档解析或模型摘要保留接口。
+- 验证：
+  - `npm run typecheck` 通过。
+  - 使用 `npx tsx` 对中文简历片段 smoke test，能产出 `education`、`skills`、`experience` sections、skills 和 rawText。
+
+### 个人卡片标签去重
+
+- 背景：
+  - 用户指出部分个人 block 会把相同技能标签展示成两行，例如 `coding / data analysis / project management` 重复出现。
+- 改动：
+  - `ProfileCard` 将 `profile.outputTags` 和 `user.skills` 合并后按大小写不敏感方式去重，再统一渲染。
+  - 保留 `View Profile` 等卡片操作不变，只清理重复标签显示。
+- 验证：
+  - `npm run typecheck` 通过。
+
+### Profile 联系方式可复制
+
+- 背景：
+  - 用户希望 public profile 的联系方式 block 中每个联系方式之间有明确分割，并且邮箱、WeChat、LinkedIn/主页等文本型联系方式支持一键复制。
+- 改动：
+  - Public Profile 的 `Contact` block 改为“联系方式”，每条联系方式独立成行并使用分割线区隔。
+  - 学校邮箱、WeChat、LinkedIn/主页、个人邮箱增加复制按钮；复制成功后短暂显示“已复制”。
+  - WeChat QR 保持图片展示，不加入复制按钮。
+- 验证：
+  - `npm run typecheck` 通过。
+
+### Proof 分区与 Matches 标签语义
+
+- 背景：
+  - 用户指出 Public Profile 的 proof 区域仍只粗分 Works/Honors，不能区分技能认证、奖项、简历和过往 paperwork；即便没有材料也应明确显示空状态。
+  - 用户指出 Matches 中 `Profile ·` / `Signal ·` 标签语义混在一起，应区分课程/交付要求和个人擅长。
+- 改动：
+  - Profile proof 区域新增固定四类分区：过往作品 / Paperwork、简历、技能 / 职业认证、奖项 / GPA；每类都显示数量和空状态。
+  - Profile 编辑页的已保存 proof 区域也使用同一套分区，置顶成果仍单独保留。
+  - `TeamakingPostCard` 将 `post.strengths` 与 `contributionTypes` 合并为“课程 / 交付要求”，将用户 `outputTags` 与 skills 合并为“个人擅长”，并去掉 `Profile ·` / `Signal ·` 前缀。
+  - Matches 外部推荐理由过滤改为大小写不敏感，避免旧数据里的 `Same school` / `Open to Team` 继续显示。
+- 验证：
+  - `npm run typecheck` 通过。
+
+### 测试版上线硬化
+
+- 背景：
+  - 目标调整为少量 BNBU 学生可稳定测试，优先补齐登录、课程数据、Profile 上传、TeamUp、错误追踪和管理员基础维护。
+- 改动：
+  - 新增稳定错误码与 `ErrorEvent` 日志；API 错误响应统一返回 `error/errorCode/requestId`，后台新增 `/admin/error-events` 搜索。
+  - 新增 `AuthEvent`，实现验证码同邮箱同用途 2 分钟冷却、密码登录同邮箱 1 小时 5 次失败限流；注册完成后回到登录页。
+  - 管理员登录改为数据库正式管理员账号，新增 CLI 与后台维护入口；`docs/admin-credentials.local.md` 加入 `.gitignore`。
+  - 封禁/暂停账号可登录到 `/account-restricted` 并提交/查看工单，其它业务 API 仍由 `requireUser` 拦截。
+  - Profile 上传增加 storage provider 抽象、本地/R2/inline 模式、基础后缀/MIME/大小检查，并保存 storage/scan metadata。
+  - Portfolio 可见性改为服务端严格过滤：private、same_school/public、same_course_board 分别按本人、同校已验证、共享 active Course Board 判断。
+  - Course 管理增加 offering 创建/编辑与 Board 生成；course merge 迁移关联并归档源课程；checkpoint restore 改为创建新的 active version。
+  - 工单新增用户侧“我的工单”；TeamUp 状态去除后台 archived 入口；后台 Major/Semester/Board 表单改为下拉/分字段输入。
+  - 新增 `docs/ERROR_CODES.md`、`docs/ACCEPTANCE_CHECKLIST.md`、Vitest/Playwright 测试入口。
+- 验证：
+  - `npm run prisma:validate` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过。
+  - `npm run test` 通过（无 `TEST_DATABASE_URL` 时 DB integration 安全跳过）。
+  - `npm run test:e2e` 通过。
+  - `npm run build` 通过。
+
+### 多语言与全站公告
+
+- 背景：
+  - 用户要求系统框架支持简体中文 / English，默认中文，首次打开按 IP 国家/地区判断中文区或英文区，并提供手动语言切换。
+  - 用户要求管理员可向所有用户发布公告，公告在首页上方及任意页面顶部以弹窗方式出现，并能查看历史公告。
+  - 用户确认腾讯云两套邮件模板已完成审核，需要纳入上线准备检查。
+- 改动：
+  - 新增 `lib/i18n.ts` 与 `LanguageRuntime`：通过 `teamaking_locale` cookie 和 localStorage 保存语言选择；middleware 首次访问根据 `x-vercel-ip-country` / `cf-ipcountry` 初始化语言；右上角提供手动切换。
+  - 翻译策略限定在系统框架文案、导航、按钮、占位符和状态文案；输入框、文本域、代码块、pre、select option 以及 `data-no-translate` 内容不会被自动翻译。
+  - 新增 `SiteAnnouncement` 和 `UserAnnouncementRead` 模型、迁移 `20260525162000_announcements_i18n`。
+  - 新增 `/api/announcements`、`/api/announcements/:id/read`、`/api/admin/announcements`，支持公告列表、已读记录、管理员创建/发布/归档。
+  - 新增全站 `AnnouncementCenter`：任意页面顶部显示最新公告入口，未读公告自动弹窗；用户可打开历史弹窗或进入 `/announcements` 查看历史。
+  - 新增 `/admin/announcements` 管理页：支持中英文标题/正文、优先级、草稿/立即发布、发布、归档和阅读计数。
+  - README、`.env.example`、`docs/ENVIRONMENT_VARIABLES.md` 更新多语言、公告、`CRAWLER_HOSTS` 和腾讯云 SES 模板审核通过后的上线配置。
+- 验证：
+  - `npx prisma validate` 通过。
+  - `npx prisma migrate dev` 已应用 `20260525162000_announcements_i18n`。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过。
+  - `npm run test` 通过。
+  - `npm run build` 通过。
+  - `npm run test:e2e` 通过；smoke test 已兼容中文/英文标题。

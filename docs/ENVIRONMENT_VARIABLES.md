@@ -15,10 +15,13 @@ Vercel 中环境变量修改后，必须到 `Deployments` 对最新 production d
 ```env
 NEXT_PUBLIC_APP_URL="https://teamingapp.org"
 ADMIN_HOSTS="admin.teamingapp.org"
+CRAWLER_HOSTS="crawler.teamingapp.org"
 ```
 
 - `NEXT_PUBLIC_APP_URL`：公开主站域名。
-- `ADMIN_HOSTS`：允许访问 `/admin`、`/admin-login`、`/api/admin/*` 和 `/api/auth/developer-login` 的管理员域名。主系统不展示 Admin 入口。
+- `ADMIN_HOSTS`：允许访问 `/admin`、`/admin-login`、`/api/admin/*` 和 `/api/auth/admin-login` 的管理员域名。主系统不展示 Admin 入口。
+- `CRAWLER_HOSTS`：允许访问 `/crawler` 和 `/api/crawler/*` 的爬虫子域名。主站和管理员域名之外会返回 404。
+- 多语言不需要额外环境变量。首次访问时 middleware 会根据 `x-vercel-ip-country` 或 `cf-ipcountry` 设置 `teamaking_locale` cookie；用户可在页面右上角手动切换。
 
 ## 数据库
 
@@ -62,19 +65,17 @@ EMAIL_DEBUG_CODE_RESPONSE="true"
 
 ## 管理员登录
 
-```env
-DEVELOPER_LOGIN_EMAIL="管理员登录邮箱"
-DEVELOPER_LOGIN_PASSWORD="管理员登录密码"
-DEVELOPER_LOGIN_ROLE="school_admin"
-DEVELOPER_LOGIN_DISPLAY_NAME="TEAMAKING Admin"
+管理员入口：`https://admin.teamingapp.org/admin-login`。
+
+管理员账号存储在数据库 `User` 表中，不再通过 `DEVELOPER_LOGIN_*` 环境变量维护。创建或重置账号：
+
+```bash
+npm run admin:create -- --email maintainer@example.com --password "change-this-password" --role super_admin --record-local
+npm run admin:reset-password -- --email maintainer@example.com --password "new-password" --record-local
+npm run admin:list
 ```
 
-说明：
-
-- 管理员入口：`https://admin.teamingapp.org/admin-login`
-- `DEVELOPER_LOGIN_EMAIL` 不一定必须是可收邮件地址，但建议使用可追溯的真实管理邮箱。
-- `DEVELOPER_LOGIN_PASSWORD` 是生产敏感值，只放 Vercel，不写入 Git。
-- 角色可用值包括 `school_admin` 和 `super_admin`；目前推荐 `school_admin`。
+`--record-local` 会写入 `docs/admin-credentials.local.md`，该文件被 `.gitignore` 忽略，不提交 Git。生产真实密码不要写入 README、日志或 issue。
 
 ## 腾讯云 SES
 
@@ -101,7 +102,7 @@ TENCENTCLOUD_SES_RESET_TEMPLATE_ID="179675"
 
 - `179674`：`TEAMAKING 注册验证码`
 - `179675`：`TEAMAKING 找回密码验证码`
-- 模板审核通过后才能正式发信；审核中时线上发信可能失败。
+- 这两套模板已经完成审核，可以用于正式发信。上线前仍必须确认 Vercel 中的模板 ID 与腾讯云控制台一致。
 
 腾讯云 API 密钥：
 
@@ -133,13 +134,27 @@ TXT   _dmarc.notify             v=DMARC1; p=none
 
 Cloudflare 中这些记录应为 DNS only，不使用代理。DKIM 值必须完整复制，不要换行或漏字符。
 
+上线前邮件实测：
+
+1. Vercel 生产环境设置 `EMAIL_DEBUG_CODE_RESPONSE=false`。
+2. Vercel 生产环境设置 `TENCENTCLOUD_SECRET_ID` / `TENCENTCLOUD_SECRET_KEY`。
+3. Vercel 生产环境设置 `TENCENTCLOUD_SES_FROM_EMAIL`，发件邮箱必须是腾讯云 SES 已验证地址。
+4. Vercel 生产环境设置 `TENCENTCLOUD_SES_REGISTER_TEMPLATE_ID=179674`。
+5. Vercel 生产环境设置 `TENCENTCLOUD_SES_RESET_TEMPLATE_ID=179675`。
+6. Redeploy 后，用真实学校邮箱测试注册验证码和找回密码验证码。
+
 ## 上传存储
 
 ```env
 UPLOAD_STORAGE_MODE=""
+R2_ACCOUNT_ID=""
+R2_BUCKET=""
+R2_ACCESS_KEY_ID=""
+R2_SECRET_ACCESS_KEY=""
+R2_PUBLIC_BASE_URL=""
 ```
 
-线上 Vercel 环境会自动把 4MB 内上传文件以内联 data URL 方式保存到数据库字段，方便测试账号重复登录后继续查看头像、背景、简历和作品链接。
+默认本地测试写入 gitignored `public/uploads`。生产建议设置 `UPLOAD_STORAGE_MODE=r2` 并配置 Cloudflare R2；`R2_PUBLIC_BASE_URL` 可填自定义公开域名或 R2 public bucket base URL。
 
 本地如需强制模拟线上内联存储：
 
@@ -147,17 +162,19 @@ UPLOAD_STORAGE_MODE=""
 UPLOAD_STORAGE_MODE="inline"
 ```
 
-正式长期版本建议接入对象存储，并继续沿用 `fileUrl`、`storageKey`、`fileName`、`fileMimeType`、`fileSize`、`fileExtension`、`previewKind` 等字段。
+接口会继续沿用 `fileUrl`、`storageKey`、`storageMode`、`storageProvider`、`objectKey`、`fileName`、`fileMimeType`、`fileSize`、`fileExtension`、`previewKind`、`scanStatus` 等字段。
 
 ## 上线前检查清单
 
 1. Vercel 中 `NEXT_PUBLIC_APP_URL=https://teamingapp.org`。
 2. Vercel 中 `ADMIN_HOSTS=admin.teamingapp.org`。
-3. Vercel 中 `ENABLE_DEMO_ACCESS=false`。
-4. Vercel 中 `EMAIL_DEBUG_CODE_RESPONSE=false`。
-5. 管理员登录变量已配置。
-6. 腾讯云 SES SecretId/SecretKey 已配置。
-7. 腾讯云 SES 发信地址和模板 ID 已配置。
-8. 腾讯云模板审核通过。
-9. Neon production migration 已执行。
-10. Vercel 已 Redeploy。
+3. 如启用线上爬虫入口，Vercel 中 `CRAWLER_HOSTS=crawler.teamingapp.org`。
+4. Vercel 中 `ENABLE_DEMO_ACCESS=false`。
+5. Vercel 中 `EMAIL_DEBUG_CODE_RESPONSE=false`。
+6. 管理员正式账号已在数据库创建或重置。
+7. 腾讯云 SES SecretId/SecretKey 已配置。
+8. 腾讯云 SES 发信地址和模板 ID 已配置。
+9. 腾讯云两套模板已审核通过，并完成注册/找回密码发信实测。
+10. Neon production migration 已执行。
+11. Vercel 已 Redeploy。
+12. `/admin/announcements` 可发布公告，主站任意页面顶部显示公告弹窗，`/announcements` 可查看历史。

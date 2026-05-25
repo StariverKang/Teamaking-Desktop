@@ -7,9 +7,40 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model AppVersion {
+  id                String    @id @default(cuid())
+  name              String
+  phase             String    @default("testing")
+  status            String    @default("active")
+  notes             String?
+  startedAt         DateTime  @default(now())
+  endedAt           DateTime?
+  createdByUserId   String?
+  finalCheckpointId String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  users              User[]
+  emailVerifications EmailVerification[]
+  schools            School[]
+  importBatches      CourseImportBatch[]
+  importDatasets     CourseImportDataset[]
+  checkpoints        VersionCheckpoint[]
+  operationLogs      OperationLog[]
+  auditLogs          AdminAuditLog[]
+  crawlerJobs        CrawlerJob[]
+  errorEvents        ErrorEvent[]
+  authEvents         AuthEvent[]
+  announcements      SiteAnnouncement[]
+
+  @@index([status])
+  @@index([phase])
+}
+
 model User {
   id                  String    @id @default(cuid())
-  email               String    @unique
+  appVersionId        String    @default("legacy")
+  email               String
   schoolId            String?
   role                String    @default("verified_user")
   passwordHash        String?
@@ -21,6 +52,7 @@ model User {
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
+  appVersion             AppVersion              @relation(fields: [appVersionId], references: [id])
   school                 School?                 @relation(fields: [schoolId], references: [id])
   profile                UserProfile?
   contactInfo            ContactInfo?
@@ -35,21 +67,32 @@ model User {
   portfolioItems         PortfolioItem[]
   endorsementsGiven      Endorsement[]           @relation("EndorsementsGiven")
   endorsementsGot        Endorsement[]           @relation("EndorsementsGot")
+  boardSectionsCreated   CourseBoardSection[]
   auditLogs              AdminAuditLog[]
+  operationLogs          OperationLog[]
+  errorEvents            ErrorEvent[]
   supportTickets         SupportTicket[]
+  announcementReads      UserAnnouncementRead[]
+  publishedAnnouncements SiteAnnouncement[]      @relation("AnnouncementPublisher")
 
+  @@unique([appVersionId, email])
+  @@index([appVersionId])
   @@index([schoolId])
 }
 
 model EmailVerification {
-  id        String    @id @default(cuid())
-  email     String
-  code      String
-  purpose   String    @default("login")
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime  @default(now())
+  id           String    @id @default(cuid())
+  appVersionId String    @default("legacy")
+  email        String
+  code         String
+  purpose      String    @default("login")
+  expiresAt    DateTime
+  usedAt       DateTime?
+  createdAt    DateTime  @default(now())
 
+  appVersion AppVersion @relation(fields: [appVersionId], references: [id])
+
+  @@index([appVersionId])
   @@index([email])
   @@index([email, purpose])
 }
@@ -64,6 +107,8 @@ model UserProfile {
   headline           String?
   bio                String   @default("")
   grade              String?
+  entryYear          Int?
+  entryTerm          String?
   facultyId          String?
   majorId            String?
   outputTags         Json     @default("[]")
@@ -80,6 +125,7 @@ model UserProfile {
   major   Major?   @relation(fields: [majorId], references: [id])
 
   @@index([majorId])
+  @@index([entryYear, entryTerm])
 }
 
 model ContactInfo {
@@ -119,32 +165,39 @@ model UserSkill {
 }
 
 model School {
-  id        String   @id @default(cuid())
-  name      String
-  shortName String
-  status    String   @default("active")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  appVersionId String   @default("legacy")
+  name         String
+  shortName    String
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  users         User[]
-  domains       SchoolEmailDomain[]
-  faculties     Faculty[]
-  majors        Major[]
-  semesters     Semester[]
-  courses       Course[]
-  submissions   UserSubmittedCourse[]
-  importBatches CourseImportBatch[]
+  appVersion     AppVersion            @relation(fields: [appVersionId], references: [id])
+  users          User[]
+  domains        SchoolEmailDomain[]
+  faculties      Faculty[]
+  majors         Major[]
+  semesters      Semester[]
+  courses        Course[]
+  submissions    UserSubmittedCourse[]
+  importBatches  CourseImportBatch[]
+  importDatasets CourseImportDataset[]
 
-  @@unique([shortName])
+  @@unique([appVersionId, shortName])
+  @@index([appVersionId])
 }
 
 model SchoolEmailDomain {
   id       String @id @default(cuid())
   schoolId String
-  domain   String @unique
+  domain   String
   status   String @default("active")
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, domain])
+  @@index([domain])
 }
 
 model Faculty {
@@ -196,20 +249,25 @@ model Semester {
 }
 
 model Course {
-  id           String   @id @default(cuid())
-  schoolId     String
-  code         String
-  title        String
-  description  String   @default("")
-  credits      Float?
-  ownerUnit    Json     @default("{}")
-  categoryTags Json     @default("[]")
-  sourceRefIds Json     @default("[]")
-  courseType   String   @default("coursework")
-  status       String   @default("active")
-  source       String   @default("admin_seed")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  schoolId             String
+  code                 String
+  title                String
+  description          String   @default("")
+  credits              Float?
+  ownerUnit            Json     @default("{}")
+  categoryTags         Json     @default("[]")
+  sourceRefIds         Json     @default("[]")
+  manualOverrideFields Json     @default("[]")
+  manualNote           String?
+  courseType           String   @default("coursework")
+  status               String   @default("active")
+  source               String   @default("admin_seed")
+  mergedIntoCourseId   String?
+  mergedAt             DateTime?
+  mergeNote            String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   school          School                 @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   offerings       CourseOffering[]
@@ -219,6 +277,7 @@ model Course {
 
   @@unique([schoolId, code])
   @@index([title])
+  @@index([mergedIntoCourseId])
 }
 
 model CourseOffering {
@@ -268,34 +327,64 @@ model CourseBoard {
 
   courseOffering CourseOffering          @relation(fields: [courseOfferingId], references: [id], onDelete: Cascade)
   memberships    CourseBoardMembership[]
+  sections       CourseBoardSection[]
   posts          TeamakingPost[]
 
   @@index([courseOfferingId])
+}
+
+model CourseBoardSection {
+  id              String   @id @default(cuid())
+  boardId         String
+  code            String
+  source          String   @default("student_created")
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  board     CourseBoard             @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  createdBy User?                   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  members   CourseBoardMembership[]
+
+  @@unique([boardId, code])
+  @@index([code])
 }
 
 model CourseBoardMembership {
   id           String    @id @default(cuid())
   userId       String
   boardId      String
+  sectionId    String?
+  sectionCode  String?
   source       String    @default("manual")
   status       String    @default("active")
   originRuleId String?
   joinedAt     DateTime  @default(now())
   leftAt       DateTime?
 
-  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  board CourseBoard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user    User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  board   CourseBoard         @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  section CourseBoardSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
 
   @@unique([userId, boardId])
   @@index([status])
   @@index([originRuleId])
+  @@index([sectionId])
+  @@index([sectionCode])
 }
 
 model CourseImportBatch {
   id                String    @id @default(cuid())
+  appVersionId      String    @default("legacy")
+  datasetId         String?
   schoolId          String?
+  name              String?
   schemaVersion     String
   semesterCode      String?
+  cohortYears       Json      @default("[]")
+  payloadHash       String?
+  summary           Json      @default("{}")
+  sourceLabel       String?
   status            String    @default("pending")
   payload           Json
   validationSummary Json      @default("{}")
@@ -307,12 +396,144 @@ model CourseImportBatch {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
+  appVersion      AppVersion             @relation(fields: [appVersionId], references: [id])
+  dataset         CourseImportDataset?   @relation(fields: [datasetId], references: [id], onDelete: SetNull)
   school          School?                @relation(fields: [schoolId], references: [id], onDelete: SetNull)
   curriculumRules CourseCurriculumRule[]
 
+  @@index([appVersionId])
+  @@index([datasetId])
   @@index([schoolId])
   @@index([status])
   @@index([semesterCode])
+  @@index([payloadHash])
+}
+
+model CourseImportDataset {
+  id                  String   @id @default(cuid())
+  appVersionId        String   @default("legacy")
+  schoolId            String?
+  name                String
+  schemaVersion       String
+  semesterCode        String?
+  cohortYears         Json     @default("[]")
+  sourceLabel         String?
+  payloadHash         String
+  status              String   @default("draft")
+  summary             Json     @default("{}")
+  validationSummary   Json     @default("{}")
+  originalFileName    String
+  originalStorageKey  String?
+  originalSize        Int?
+  originalContentType String   @default("application/json")
+  createdByUserId     String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  appVersion AppVersion                     @relation(fields: [appVersionId], references: [id])
+  school     School?                        @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+  batches    CourseImportBatch[]
+  sourceRefs CourseImportDatasetSourceRef[]
+  faculties  CourseImportDatasetFaculty[]
+  majors     CourseImportDatasetMajor[]
+  courses    CourseImportDatasetCourse[]
+  rules      CourseImportDatasetRule[]
+  offerings  CourseImportDatasetOffering[]
+
+  @@index([appVersionId])
+  @@index([schoolId])
+  @@index([status])
+  @@index([payloadHash])
+}
+
+model CourseImportDatasetSourceRef {
+  id         String  @id @default(cuid())
+  datasetId  String
+  externalId String
+  title      String?
+  url        String?
+  sourceType String?
+  raw        Json    @default("{}")
+
+  dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetId, externalId])
+}
+
+model CourseImportDatasetFaculty {
+  id        String @id @default(cuid())
+  datasetId String
+  code      String
+  name      String
+  raw       Json   @default("{}")
+
+  dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetId, code])
+}
+
+model CourseImportDatasetMajor {
+  id          String  @id @default(cuid())
+  datasetId   String
+  code        String
+  name        String
+  facultyCode String?
+  degreeType  String?
+  raw         Json    @default("{}")
+
+  dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetId, code])
+}
+
+model CourseImportDatasetCourse {
+  id           String @id @default(cuid())
+  datasetId    String
+  code         String
+  title        String
+  credits      Float?
+  categoryTags Json   @default("[]")
+  ownerUnit    Json   @default("{}")
+  raw          Json   @default("{}")
+
+  dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetId, code])
+  @@index([code])
+}
+
+model CourseImportDatasetRule {
+  id                String @id @default(cuid())
+  datasetId         String
+  externalId        String
+  courseCode        String
+  classification    String
+  studentAction     String
+  audience          Json   @default("{}")
+  relativeTermCodes Json   @default("[]")
+  sourceRefIds      Json   @default("[]")
+  raw               Json   @default("{}")
+
+  dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetId, externalId])
+  @@index([courseCode])
+  @@index([classification])
+}
+
+model CourseImportDatasetOffering {
+  id           String  @id @default(cuid())
+  datasetId    String
+  externalId   String
+  courseCode   String
+  semesterCode String?
+  sections     Json    @default("[]")
+  raw          Json    @default("{}")
+
+  dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetId, externalId])
+  @@index([courseCode])
 }
 
 model CourseCurriculumRule {
@@ -325,6 +546,7 @@ model CourseCurriculumRule {
   classificationLabel String?
   studentAction       String
   audience            Json     @default("{}")
+  relativeTermCodes   Json     @default("[]")
   ownerUnit           Json     @default("{}")
   sourceRefIds        Json     @default("[]")
   confidence          String   @default("unknown")
@@ -358,6 +580,30 @@ model CourseSyllabusMetadata {
   courseOffering CourseOffering @relation(fields: [courseOfferingId], references: [id], onDelete: Cascade)
 
   @@index([teamworkRequirement])
+}
+
+model CrawlerJob {
+  id              String    @id @default(cuid())
+  appVersionId    String    @default("legacy")
+  name            String
+  target          String    @default("programme_handbook")
+  status          String    @default("running")
+  input           Json      @default("{}")
+  command         String?
+  logs            Json      @default("[]")
+  outputs         Json      @default("[]")
+  errorMessage    String?
+  exitCode        Int?
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  appVersion AppVersion @relation(fields: [appVersionId], references: [id], onDelete: Cascade)
+
+  @@index([appVersionId, startedAt])
+  @@index([status])
 }
 
 model UserSubmittedCourse {
@@ -482,6 +728,10 @@ model PortfolioItem {
   fileSize                Int?
   fileExtension           String?
   storageKey              String?
+  storageMode             String?
+  storageProvider         String?
+  objectKey               String?
+  scanStatus              String   @default("not_scanned")
   fileUrl                 String?
   externalUrl             String?
   previewKind             String   @default("link")
@@ -512,6 +762,46 @@ model Endorsement {
   skill    Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
 }
 
+model ErrorEvent {
+  id           String   @id @default(cuid())
+  appVersionId String   @default("legacy")
+  requestId    String   @unique
+  errorCode    String
+  message      String
+  path         String?
+  method       String?
+  status       Int?
+  userId       String?
+  actorRole    String?
+  stackDigest  String?
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  appVersion AppVersion @relation(fields: [appVersionId], references: [id])
+  user       User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([appVersionId, createdAt])
+  @@index([errorCode])
+  @@index([userId, createdAt])
+  @@index([path])
+}
+
+model AuthEvent {
+  id           String   @id @default(cuid())
+  appVersionId String   @default("legacy")
+  email        String
+  action       String
+  purpose      String
+  success      Boolean  @default(false)
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  appVersion AppVersion @relation(fields: [appVersionId], references: [id])
+
+  @@index([appVersionId, email, action, purpose, createdAt])
+  @@index([action, success, createdAt])
+}
+
 model SiteConfig {
   id              String   @id @default(cuid())
   key             String   @unique
@@ -520,15 +810,112 @@ model SiteConfig {
   updatedAt       DateTime @updatedAt
 }
 
-model AdminAuditLog {
-  id          String   @id @default(cuid())
-  adminUserId String
-  action      String
-  targetType  String
-  targetId    String?
-  beforeValue Json?
-  afterValue  Json?
-  createdAt   DateTime @default(now())
+model SiteAnnouncement {
+  id                String    @id @default(cuid())
+  appVersionId      String    @default("legacy")
+  titleZh           String
+  titleEn           String?
+  bodyZh            String
+  bodyEn            String?
+  status            String    @default("draft")
+  audience          String    @default("all")
+  priority          Int       @default(0)
+  startsAt          DateTime?
+  endsAt            DateTime?
+  publishedAt       DateTime?
+  publishedByUserId String?
+  archivedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  adminUser User @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  appVersion  AppVersion             @relation(fields: [appVersionId], references: [id], onDelete: Cascade)
+  publishedBy User?                  @relation("AnnouncementPublisher", fields: [publishedByUserId], references: [id], onDelete: SetNull)
+  reads       UserAnnouncementRead[]
+
+  @@index([appVersionId, status, publishedAt])
+  @@index([audience])
+}
+
+model UserAnnouncementRead {
+  id             String    @id @default(cuid())
+  announcementId String
+  userId         String
+  readAt         DateTime  @default(now())
+  dismissedAt    DateTime?
+
+  announcement SiteAnnouncement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId])
+  @@index([userId, readAt])
+}
+
+model VersionCheckpoint {
+  id                String   @id @default(cuid())
+  appVersionId      String
+  label             String
+  kind              String   @default("operation")
+  reason            String?
+  triggeredByUserId String?
+  summary           Json     @default("{}")
+  createdAt         DateTime @default(now())
+
+  appVersion AppVersion               @relation(fields: [appVersionId], references: [id], onDelete: Cascade)
+  chunks     VersionCheckpointChunk[]
+
+  @@index([appVersionId])
+  @@index([createdAt])
+}
+
+model VersionCheckpointChunk {
+  id           String @id @default(cuid())
+  checkpointId String
+  name         String
+  rowCount     Int    @default(0)
+  data         Json   @default("[]")
+
+  checkpoint VersionCheckpoint @relation(fields: [checkpointId], references: [id], onDelete: Cascade)
+
+  @@unique([checkpointId, name])
+}
+
+model OperationLog {
+  id           String   @id @default(cuid())
+  appVersionId String   @default("legacy")
+  actorUserId  String?
+  actorRole    String?
+  action       String
+  targetType   String?
+  targetId     String?
+  method       String?
+  path         String?
+  status       String   @default("success")
+  summary      Json     @default("{}")
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  appVersion AppVersion @relation(fields: [appVersionId], references: [id])
+  actor      User?      @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([appVersionId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([action])
+  @@index([targetType, targetId])
+}
+
+model AdminAuditLog {
+  id           String   @id @default(cuid())
+  appVersionId String   @default("legacy")
+  adminUserId  String
+  action       String
+  targetType   String
+  targetId     String?
+  beforeValue  Json?
+  afterValue   Json?
+  createdAt    DateTime @default(now())
+
+  appVersion AppVersion @relation(fields: [appVersionId], references: [id])
+  adminUser  User       @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([appVersionId, createdAt])
 }

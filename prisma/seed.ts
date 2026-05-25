@@ -4,6 +4,19 @@ import { contactSnapshot, defaultContactVisibility } from "../lib/contact";
 const prisma = new PrismaClient();
 
 async function resetDatabase() {
+  await prisma.versionCheckpointChunk.deleteMany();
+  await prisma.versionCheckpoint.deleteMany();
+  await prisma.operationLog.deleteMany();
+  await prisma.courseCurriculumRule.deleteMany();
+  await prisma.courseSyllabusMetadata.deleteMany();
+  await prisma.courseImportBatch.deleteMany();
+  await prisma.courseImportDatasetOffering.deleteMany();
+  await prisma.courseImportDatasetRule.deleteMany();
+  await prisma.courseImportDatasetCourse.deleteMany();
+  await prisma.courseImportDatasetMajor.deleteMany();
+  await prisma.courseImportDatasetFaculty.deleteMany();
+  await prisma.courseImportDatasetSourceRef.deleteMany();
+  await prisma.courseImportDataset.deleteMany();
   await prisma.adminAuditLog.deleteMany();
   await prisma.supportTicket.deleteMany();
   await prisma.endorsement.deleteMany();
@@ -28,13 +41,24 @@ async function resetDatabase() {
   await prisma.siteConfig.deleteMany();
   await prisma.user.deleteMany();
   await prisma.school.deleteMany();
+  await prisma.appVersion.deleteMany();
 }
 
 async function main() {
   await resetDatabase();
 
+  const appVersion = await prisma.appVersion.create({
+    data: {
+      id: "legacy",
+      name: "Seed Development Version",
+      phase: "testing",
+      status: "active"
+    }
+  });
+
   const school = await prisma.school.create({
     data: {
+      appVersionId: appVersion.id,
       name: "BNBU",
       shortName: "BNBU",
       status: "active",
@@ -201,6 +225,8 @@ async function main() {
     displayName: string;
     bio: string;
     grade: string;
+    entryYear: number;
+    entryTerm: string;
     facultyId: string;
     majorId: string;
     wechatId: string;
@@ -208,6 +234,7 @@ async function main() {
   }) {
     const user = await prisma.user.create({
       data: {
+        appVersionId: appVersion.id,
         email: input.email,
         schoolId: school.id,
         role: input.role,
@@ -225,6 +252,8 @@ async function main() {
         headline: `${input.grade} · ${input.skillNames.slice(0, 2).join(" / ")}`,
         bio: input.bio,
         grade: input.grade,
+        entryYear: input.entryYear,
+        entryTerm: input.entryTerm,
         facultyId: input.facultyId,
         majorId: input.majorId,
         outputTags: input.skillNames,
@@ -275,6 +304,8 @@ async function main() {
     displayName: "Mia Chen",
     bio: "Media and Communication Year 2。擅长找资料、搭论文论证框架和做清晰的 slides。",
     grade: "Year 2",
+    entryYear: 2025,
+    entryTerm: "Fall",
     facultyId: faculties["Faculty of Humanities and Social Sciences"].id,
     majorId: majors.media.id,
     wechatId: "mia_teamaking",
@@ -287,6 +318,8 @@ async function main() {
     displayName: "Leo Wang",
     bio: "Computer Science Year 1。喜欢把复杂任务拆成可运行的小模块，也愿意补数据处理和 demo。",
     grade: "Year 1",
+    entryYear: 2025,
+    entryTerm: "Fall",
     facultyId: faculties["Faculty of Science and Technology"].id,
     majorId: majors.cs.id,
     wechatId: "leo_codes",
@@ -299,6 +332,8 @@ async function main() {
     displayName: "Ava Li",
     bio: "Marketing student and school admin demo account。关注用户洞察、展示结构和协作节奏。",
     grade: "Year 2",
+    entryYear: 2025,
+    entryTerm: "Fall",
     facultyId: faculties["Faculty of Business and Management"].id,
     majorId: majors.marketing.id,
     wechatId: "ava_market",
