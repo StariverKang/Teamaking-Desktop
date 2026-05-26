@@ -675,4 +675,30 @@
   - Crawler job 的整包下载按钮改为“下载整包备份”，单个输出按钮改为“可导入 JSON：文件名”，避免管理员把备份整包当作可导入配置。
   - 整包下载文件名增加 `outputs-backup-not-direct-import.bundle.json` 后缀，进一步提示它不是直接导入文件。
 - 验证：
-  - 待运行 `npm run typecheck`、`npm run lint`、`npm run build`、`npm run test`、`npm run test:e2e`。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。
+  - `npm run test` 通过（3 files passed，8 passed，1 skipped）。
+  - `npm run test:e2e` 通过（2 passed，0 warnings）。
+  - `npm run prisma:validate` 通过。
+  - `npm audit --omit=dev --registry=https://registry.npmjs.org --json` 通过，0 vulnerabilities。
+
+### Content Documents 树状管理与阅读
+
+- 背景：
+  - 管理员内容文档页面只有表格和表单，无法直观看到帮助中心、开发者日志、联系开发者文档的父子级结构。
+  - 用户侧文档也需要接近管理员侧的树状阅读体验，但不能编辑。
+- 改动：
+  - 新增共享的内容文档树组件，支持展开、收起、点击选择文档，并显示文档类型、slug 和后台状态。
+  - `/help`、`/developer-log`、`/contact-developer` 改为左侧文档目录树、右侧 Markdown 阅读区；用户只能阅读已发布内容。
+  - `/admin/content` 改为左侧文档树、右侧预览和视觉化编辑表单；支持搜索、按文档类型筛选、新建根文档、新建子文档、删除、预览 Markdown 和图片。
+  - 后台父级文档从手输 ID 改为同类型文档下拉选择，降低误操作概率。
+  - 后台内容页不再额外显示通用原始表格，避免和树状管理入口重复。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。
+  - `npm run test` 通过（3 files passed，8 passed，1 skipped）。
+  - `npm run test:e2e` 通过（2 passed，0 warnings）。
+  - `npm run prisma:validate` 通过。
+  - `npm audit --omit=dev --registry=https://registry.npmjs.org --json` 通过，0 vulnerabilities。

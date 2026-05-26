@@ -119,6 +119,128 @@ function MarkdownRenderer({ children }: { children: string }) {
   );
 }
 
+const contentKindLabels: Record<string, string> = {
+  help: "帮助中心",
+  developer_log: "开发者日志",
+  developer_contact: "联系开发者"
+};
+
+function flattenContentDocuments(documents: any[]): any[] {
+  const flat: any[] = [];
+  const visit = (document: any) => {
+    flat.push(document);
+    (document.children ?? []).forEach(visit);
+  };
+  documents.forEach(visit);
+  return flat;
+}
+
+function buildContentTree(documents: any[]) {
+  const clones = documents.map((document) => ({ ...document, children: [] as any[] }));
+  const byId = new Map(clones.map((document) => [document.id, document]));
+  const roots: any[] = [];
+  for (const document of clones) {
+    const parent = document.parentId ? byId.get(document.parentId) : null;
+    if (parent) parent.children.push(document);
+    else roots.push(document);
+  }
+  const sortTree = (items: any[]) => {
+    items.sort((a, b) => (a.kind ?? "").localeCompare(b.kind ?? "") || (a.displayOrder ?? 0) - (b.displayOrder ?? 0) || (a.title ?? "").localeCompare(b.title ?? ""));
+    items.forEach((item) => sortTree(item.children ?? []));
+  };
+  sortTree(roots);
+  return roots;
+}
+
+function firstContentDocument(documents: any[]): any | null {
+  for (const document of documents) {
+    return document ?? firstContentDocument(document.children ?? []);
+  }
+  return null;
+}
+
+function ContentDocumentTree({
+  documents,
+  selectedId,
+  expandedIds,
+  onToggle,
+  onSelect,
+  showStatus = false,
+  depth = 0
+}: {
+  documents: any[];
+  selectedId?: string;
+  expandedIds: Set<string>;
+  onToggle: (id: string) => void;
+  onSelect: (document: any) => void;
+  showStatus?: boolean;
+  depth?: number;
+}) {
+  if (!documents.length) return <p className="px-3 py-4 text-sm text-ink/50">暂无文档。</p>;
+  return (
+    <div className={depth ? "grid gap-1 border-l border-ink/12 pl-3" : "grid gap-1"}>
+      {documents.map((document) => {
+        const children = document.children ?? [];
+        const expanded = expandedIds.has(document.id) || depth === 0;
+        const selected = selectedId === document.id;
+        return (
+          <div key={document.id}>
+            <div className={`grid grid-cols-[28px_1fr] items-start gap-1 rounded-sm border px-2 py-2 ${selected ? "border-coral bg-coral/10" : "border-transparent hover:border-ink/15 hover:bg-chalk"}`} style={{ marginLeft: depth ? 0 : undefined }}>
+              <button
+                type="button"
+                onClick={() => children.length ? onToggle(document.id) : onSelect(document)}
+                className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-sm border border-ink/20 text-xs font-semibold"
+                aria-label={children.length ? "展开或收起文档" : "选择文档"}
+              >
+                {children.length ? (expanded ? "-" : "+") : <FileText size={14} aria-hidden />}
+              </button>
+              <button type="button" onClick={() => onSelect(document)} className="min-w-0 text-left">
+                <span className="block truncate text-sm font-semibold text-ink">{document.title || "Untitled"}</span>
+                <span className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-ink/52">
+                  <span>{contentKindLabels[document.kind] ?? document.kind}</span>
+                  <span>/{document.slug}</span>
+                  {showStatus ? <StatusPill status={document.status ?? "draft"} /> : null}
+                </span>
+              </button>
+            </div>
+            {children.length && expanded ? (
+              <div className="mt-1">
+                <ContentDocumentTree documents={children} selectedId={selectedId} expandedIds={expandedIds} onToggle={onToggle} onSelect={onSelect} showStatus={showStatus} depth={depth + 1} />
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ContentDocumentReader({ document, emptyTitle = "选择一篇文档" }: { document?: any; emptyTitle?: string }) {
+  if (!document) return <EmptyState title={emptyTitle} body="从左侧文档树选择一个条目后，会在这里显示正文。" />;
+  return (
+    <article className="grid gap-4">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-coral">{contentKindLabels[document.kind] ?? document.kind} / {document.slug}</p>
+        <h2 className="mt-1 text-3xl font-semibold text-ink">{document.title}</h2>
+        <div className="mt-2 flex flex-wrap gap-2 text-xs text-ink/56">
+          {document.publishedAt ? <span>Published {new Date(document.publishedAt).toLocaleDateString()}</span> : null}
+          {document.updatedAt ? <span>Updated {new Date(document.updatedAt).toLocaleString()}</span> : null}
+        </div>
+        {document.summary ? <p className="mt-3 text-sm leading-6 text-ink/64">{document.summary}</p> : null}
+      </div>
+      {contentImageUrls(document.imageUrls).length ? (
+        <div className="grid gap-3 md:grid-cols-3">
+          {contentImageUrls(document.imageUrls).map((url) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={url} src={url} alt={document.title} className="max-h-64 w-full border border-ink/20 object-contain" />
+          ))}
+        </div>
+      ) : null}
+      {document.bodyMarkdown ? <MarkdownRenderer>{document.bodyMarkdown}</MarkdownRenderer> : <p className="text-sm text-ink/52">这篇文档还没有正文。</p>}
+    </article>
+  );
+}
+
 function FilePreviewModal({ item, onClose }: { item: any; onClose: () => void }) {
   if (!item) return null;
   const url = item.fileUrl || item.externalUrl;
@@ -2042,42 +2164,51 @@ export function SupportWidget() {
 
 export function ContentDocumentsPage({ kind, title, eyebrow, description }: { kind: "help" | "developer_log" | "developer_contact"; title: string; eyebrow: string; description: string }) {
   const { data, error, loading } = useApi(`/api/content?kind=${kind}`);
-  const documents = data?.documents ?? [];
+  const documents = useMemo(() => data?.documents ?? [], [data?.documents]);
+  const flatDocuments = useMemo(() => flattenContentDocuments(documents), [documents]);
+  const [selectedDocId, setSelectedDocId] = useState("");
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
-  function renderDocument(document: any, depth = 0): React.ReactNode {
-    return (
-      <details key={document.id} open={depth === 0} className="border-2 border-ink bg-chalk p-4">
-        <summary className="cursor-pointer list-none">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-coral">{document.slug}</p>
-              <h2 className="mt-1 text-xl font-semibold text-ink">{document.title}</h2>
-              {document.summary ? <p className="mt-2 text-sm leading-6 text-ink/62">{document.summary}</p> : null}
-            </div>
-            {document.publishedAt ? <span className="border border-ink/20 px-2 py-1 text-xs text-ink/58">{new Date(document.publishedAt).toLocaleDateString()}</span> : null}
-          </div>
-        </summary>
-        <div className="mt-4 grid gap-4">
-          {contentImageUrls(document.imageUrls).length ? (
-            <div className="grid gap-3 md:grid-cols-3">
-              {contentImageUrls(document.imageUrls).map((url) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={url} src={url} alt={document.title} className="max-h-64 w-full border border-ink/20 object-contain" />
-              ))}
-            </div>
-          ) : null}
-          <MarkdownRenderer>{document.bodyMarkdown}</MarkdownRenderer>
-          {(document.children ?? []).length ? <div className="grid gap-3 pl-3">{document.children.map((child: any) => renderDocument(child, depth + 1))}</div> : null}
-        </div>
-      </details>
-    );
-  }
+  useEffect(() => {
+    if (!selectedDocId && flatDocuments.length) setSelectedDocId(flatDocuments[0].id);
+  }, [flatDocuments, selectedDocId]);
+
+  useEffect(() => {
+    if (!documents.length) return;
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      documents.forEach((document: any) => next.add(document.id));
+      return next;
+    });
+  }, [documents]);
+
+  const selectedDocument = flatDocuments.find((document: any) => document.id === selectedDocId) ?? firstContentDocument(documents);
 
   return (
     <PageShell title={title} eyebrow={eyebrow} description={description}>
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
-      <div className="grid gap-4">
-        {documents.map((document: any) => renderDocument(document))}
+      <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
+        <Card>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-xl font-semibold text-ink">文档目录</h2>
+            <span className="rounded-sm border border-ink/20 px-2 py-1 text-xs font-semibold text-moss">{flatDocuments.length} 篇</span>
+          </div>
+          <ContentDocumentTree
+            documents={documents}
+            selectedId={selectedDocument?.id}
+            expandedIds={expandedIds}
+            onToggle={(id) => setExpandedIds((current) => {
+              const next = new Set(current);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            })}
+            onSelect={(document) => setSelectedDocId(document.id)}
+          />
+        </Card>
+        <Card>
+          <ContentDocumentReader document={selectedDocument} />
+        </Card>
         {!loading && documents.length === 0 ? <EmptyState title="暂无内容" body="管理员发布内容后，会显示在这里。" /> : null}
       </div>
     </PageShell>
@@ -2893,10 +3024,15 @@ export function AdminResourcePage({
   const [importEdit, setImportEdit] = useState<{ kind: string; id: string; draft: Record<string, string | boolean>; raw: any } | null>(null);
   const [courseDraft, setCourseDraft] = useState<Record<string, string>>({});
   const [adminTableQuery, setAdminTableQuery] = useState("");
+  const [contentTreeQuery, setContentTreeQuery] = useState("");
+  const [contentKindFilter, setContentKindFilter] = useState("all");
+  const [contentExpandedIds, setContentExpandedIds] = useState<Set<string>>(new Set());
+  const [contentCreating, setContentCreating] = useState(false);
 
   useEffect(() => {
+    if (resource === "content") return;
     if (primaryRows.length > 0 && !selectedId) setSelectedId(primaryRows[0].id ?? primaryRows[0].key ?? "");
-  }, [primaryRows, selectedId]);
+  }, [primaryRows, resource, selectedId]);
 
   const selectedCourse = resource === "courses" ? (data?.courses ?? []).find((course: any) => course.id === selectedId) ?? data?.courses?.[0] : null;
 
@@ -2932,6 +3068,7 @@ export function AdminResourcePage({
     if (resource !== "content") return;
     const selectedDocument = (data?.documents ?? []).find((document: any) => document.id === selectedId);
     if (!selectedDocument) return;
+    setContentCreating(false);
     setTextFields((current) => ({
       ...current,
       contentKind: selectedDocument.kind ?? "help",
@@ -2945,6 +3082,23 @@ export function AdminResourcePage({
       contentDisplayOrder: String(selectedDocument.displayOrder ?? 0)
     }));
   }, [resource, selectedId, data?.documents]);
+
+  useEffect(() => {
+    if (resource !== "content" || contentCreating || selectedId) return;
+    const documents = data?.documents ?? [];
+    if (documents.length) setSelectedId(documents[0].id);
+  }, [resource, contentCreating, data?.documents, selectedId]);
+
+  useEffect(() => {
+    if (resource !== "content") return;
+    const documents = data?.documents ?? [];
+    if (!documents.length) return;
+    setContentExpandedIds((current) => {
+      const next = new Set(current);
+      documents.filter((document: any) => !document.parentId).forEach((document: any) => next.add(document.id));
+      return next;
+    });
+  }, [resource, data?.documents]);
 
   async function runAction(path: string, method: string, body: Record<string, unknown>, options: { busy?: string; success?: (response: any) => string; after?: (response: any) => void } = {}) {
     setResult(null);
@@ -3427,7 +3581,14 @@ export function AdminResourcePage({
   function renderAdminForm() {
     if (resource === "content") {
       const documents = data?.documents ?? [];
-      const selectedDocument = documents.find((document: any) => document.id === selectedId);
+      const query = contentTreeQuery.trim().toLowerCase();
+      const visibleDocuments = documents.filter((document: any) => {
+        const kindMatches = contentKindFilter === "all" || document.kind === contentKindFilter;
+        const queryMatches = !query || [document.title, document.slug, document.summary, document.kind, document.status].some((value) => String(value ?? "").toLowerCase().includes(query));
+        return kindMatches && queryMatches;
+      });
+      const documentTree = buildContentTree(visibleDocuments);
+      const selectedDocument = contentCreating ? null : documents.find((document: any) => document.id === selectedId);
       const draft = {
         kind: textFields.contentKind ?? selectedDocument?.kind ?? "help",
         title: textFields.contentTitle ?? selectedDocument?.title ?? "",
@@ -3440,39 +3601,103 @@ export function AdminResourcePage({
         displayOrder: textFields.contentDisplayOrder ?? String(selectedDocument?.displayOrder ?? 0)
       };
       const setDraft = (key: string, value: string) => setTextFields({ ...textFields, [key]: value });
-      const clearDraft = () => {
+      const startNewDocument = (parent?: any) => {
+        const nextKind = parent?.kind ?? (contentKindFilter === "all" ? "help" : contentKindFilter);
+        setContentCreating(true);
         setSelectedId("");
         setTextFields({
           ...textFields,
-          contentKind: "help",
+          contentKind: nextKind,
           contentTitle: "",
           contentSlug: "",
-          contentParentId: "",
+          contentParentId: parent?.id ?? "",
           contentSummary: "",
           contentBodyMarkdown: "",
           contentImageUrls: "",
           contentStatus: "draft",
           contentDisplayOrder: "0"
         });
+        if (parent?.id) {
+          setContentExpandedIds((current) => new Set(current).add(parent.id));
+        }
       };
+      const selectContentDocument = (document: any) => {
+        setContentCreating(false);
+        setSelectedId(document.id);
+      };
+      const draftImageUrls = draft.imageUrls.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 3);
+      const previewDocument = selectedDocument ?? {
+        kind: draft.kind,
+        slug: draft.slug || "new-document",
+        title: draft.title || "未命名文档",
+        summary: draft.summary,
+        bodyMarkdown: draft.bodyMarkdown,
+        imageUrls: draftImageUrls,
+        status: draft.status,
+        updatedAt: null
+      };
+      const parentOptions = documents.filter((document: any) => document.id !== selectedDocument?.id && document.kind === draft.kind);
       return (
-        <div className="grid gap-5">
-          <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
-            <select className={inputClass} value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
-              <option value="">新建文档</option>
-              {documents.map((document: any) => (
-                <option key={document.id} value={document.id}>{document.kind} · {document.title} · {document.status}</option>
-              ))}
-            </select>
-            <button type="button" onClick={clearDraft} className="border border-ink/30 px-3 py-2 text-sm font-semibold">新建</button>
-            {selectedId ? (
-              <button type="button" onClick={() => runAction(`/api/admin/content/${selectedId}`, "DELETE", {}, { success: (response) => response.message ?? "文档已删除。", after: clearDraft })} className="border border-rust/40 px-3 py-2 text-sm font-semibold text-rust">
-                删除
-              </button>
-            ) : null}
-          </div>
+        <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
+          <Card>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-ink">文档树</h2>
+                <p className="mt-1 text-sm leading-6 text-ink/58">展开目录、点击文档后在右侧预览和编辑。</p>
+              </div>
+              <span className="rounded-sm border border-ink/20 px-2 py-1 text-xs font-semibold text-moss">{visibleDocuments.length} / {documents.length}</span>
+            </div>
+            <div className="mt-4 grid gap-3">
+              <input className={inputClass} value={contentTreeQuery} onChange={(event) => setContentTreeQuery(event.target.value)} placeholder="搜索标题、slug、摘要、状态" />
+              <select className={inputClass} value={contentKindFilter} onChange={(event) => setContentKindFilter(event.target.value)}>
+                <option value="all">全部类型</option>
+                <option value="help">帮助中心</option>
+                <option value="developer_log">开发者日志</option>
+                <option value="developer_contact">联系开发者</option>
+              </select>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => startNewDocument()} className="rounded-sm bg-ink px-3 py-2 text-sm font-semibold text-paper">新建根文档</button>
+                {selectedDocument ? (
+                  <button type="button" onClick={() => startNewDocument(selectedDocument)} className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold">新建子文档</button>
+                ) : null}
+              </div>
+              <div className="max-h-[620px] overflow-auto border border-ink/15 bg-paper p-2">
+                <ContentDocumentTree
+                  documents={documentTree}
+                  selectedId={selectedDocument?.id}
+                  expandedIds={contentExpandedIds}
+                  onToggle={(id) => setContentExpandedIds((current) => {
+                    const next = new Set(current);
+                    if (next.has(id)) next.delete(id);
+                    else next.add(id);
+                    return next;
+                  })}
+                  onSelect={selectContentDocument}
+                  showStatus
+                />
+              </div>
+            </div>
+          </Card>
+          <div className="grid gap-5">
+            <Card>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-semibold text-ink">预览</h2>
+                  <p className="mt-1 text-sm text-ink/56">{selectedDocument ? "当前选中文档" : "正在创建新文档"}</p>
+                </div>
+                {selectedDocument ? (
+                  <button type="button" onClick={() => runAction(`/api/admin/content/${selectedDocument.id}`, "DELETE", {}, { success: (response) => response.message ?? "文档已删除。", after: () => startNewDocument() })} className="border border-rust/40 px-3 py-2 text-sm font-semibold text-rust">
+                    删除文档
+                  </button>
+                ) : null}
+              </div>
+              <ContentDocumentReader document={previewDocument} emptyTitle="选择或新建一篇文档" />
+            </Card>
+            <Card>
+              <h2 className="text-xl font-semibold text-ink">视觉化编辑</h2>
+              <p className="mt-1 text-sm leading-6 text-ink/58">保存后会同步到左侧文档树。用户侧只显示已发布内容，不能编辑。</p>
           <form
-            className="grid gap-4"
+            className="mt-4 grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
               const body = {
@@ -3482,12 +3707,18 @@ export function AdminResourcePage({
                 parentId: draft.parentId,
                 summary: draft.summary,
                 bodyMarkdown: draft.bodyMarkdown,
-                imageUrls: draft.imageUrls.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 3),
+                imageUrls: draftImageUrls,
                 status: draft.status,
                 displayOrder: Number(draft.displayOrder) || 0
               };
-              runAction(selectedId ? `/api/admin/content/${selectedId}` : "/api/admin/content", selectedId ? "PATCH" : "POST", body, {
-                success: (response) => response.message ?? "文档已保存。"
+              runAction(selectedDocument ? `/api/admin/content/${selectedDocument.id}` : "/api/admin/content", selectedDocument ? "PATCH" : "POST", body, {
+                success: (response) => response.message ?? "文档已保存。",
+                after: (response) => {
+                  if (response.document?.id) {
+                    setContentCreating(false);
+                    setSelectedId(response.document.id);
+                  }
+                }
               });
             }}
           >
@@ -3516,8 +3747,13 @@ export function AdminResourcePage({
             <Field label="标题">
               <input className={inputClass} value={draft.title} onChange={(event) => setDraft("contentTitle", event.target.value)} />
             </Field>
-            <Field label="父级文档 ID（可选）">
-              <input className={inputClass} value={draft.parentId} onChange={(event) => setDraft("contentParentId", event.target.value)} />
+            <Field label="父级文档">
+              <select className={inputClass} value={draft.parentId} onChange={(event) => setDraft("contentParentId", event.target.value)}>
+                <option value="">无父级，作为根文档显示</option>
+                {parentOptions.map((document: any) => (
+                  <option key={document.id} value={document.id}>{document.title} · /{document.slug}</option>
+                ))}
+              </select>
             </Field>
             <Field label="摘要">
               <input className={inputClass} value={draft.summary} onChange={(event) => setDraft("contentSummary", event.target.value)} />
@@ -3532,8 +3768,10 @@ export function AdminResourcePage({
               <p className="text-sm font-semibold text-ink">预览</p>
               <MarkdownRenderer>{draft.bodyMarkdown}</MarkdownRenderer>
             </div>
-            <button className="w-fit bg-ink px-4 py-2 text-sm font-semibold text-paper">{selectedId ? "更新文档" : "创建文档"}</button>
+            <button className="w-fit bg-ink px-4 py-2 text-sm font-semibold text-paper">{selectedDocument ? "更新文档" : "创建文档"}</button>
           </form>
+            </Card>
+          </div>
         </div>
       );
     }
@@ -4593,7 +4831,7 @@ export function AdminResourcePage({
     <PageShell title={title} eyebrow="Admin" description={description} aside="admin">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       <div className="grid gap-5">
-        {!["course-imports", "courses", "versions", "logs", "support-tickets"].includes(resource) ? rows.map(([key, rows]) => {
+        {!["course-imports", "courses", "versions", "logs", "support-tickets", "content"].includes(resource) ? rows.map(([key, rows]) => {
           const filteredRows = rows.filter((row) => !adminTableQuery || JSON.stringify(row).toLowerCase().includes(adminTableQuery.toLowerCase()));
           const rawColumns = Object.keys(rows[0] ?? { empty: "" }).filter((column) => column !== "appVersionId");
           const columns = [...rawColumns.filter((column) => column !== "id").slice(0, 7), ...(rawColumns.includes("id") ? ["id"] : [])];
