@@ -74,6 +74,19 @@ function NavItem({ href, label }: { href: string; label: string }) {
   );
 }
 
+function CourseLikeTitle({ title }: { title: string }) {
+  const match = /^([A-Z]{2,}\d{3,4}[A-Z]?)\s+(.+)$/.exec(title.trim());
+  if (!match) return <>{title}</>;
+  return (
+    <>
+      <span className="mb-2 block font-sans text-lg font-semibold tracking-[0.08em] text-coral md:text-2xl">
+        {match[1]}
+      </span>
+      <span className="block">{match[2]}</span>
+    </>
+  );
+}
+
 export function PageShell({
   title,
   eyebrow,
@@ -95,7 +108,9 @@ export function PageShell({
       <section className={clsx("min-w-0", aside === "none" && "lg:col-span-2")}>
         <div className="mb-5 border-b border-ink/18 pb-4">
           {eyebrow ? <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-coral">{eyebrow}</p> : null}
-          <h1 className="font-serif text-3xl font-semibold leading-tight text-ink md:text-5xl">{title}</h1>
+          <h1 className="font-serif text-3xl font-semibold leading-tight text-ink md:text-5xl">
+            <CourseLikeTitle title={title} />
+          </h1>
           {description ? <p className="mt-3 max-w-3xl text-base leading-7 text-ink/68">{description}</p> : null}
         </div>
         {children}

@@ -832,3 +832,15 @@
   - `npm run typecheck` 通过。
   - `npm run lint` 通过（0 warnings）。
   - `npm run build` 通过（0 warnings）。
+
+### Course Board 标题代码与课程名拆行
+
+- 背景：
+  - 用户反馈 Course Board 页面顶部标题把课程代码和长课程名放在同一行，视觉上过于拥挤。
+- 改动：
+  - `PageShell` 增加课程型标题识别：匹配 `ENG1013 Foundations...` 这类 `课程代码 + 课程名` 格式时，自动把课程代码作为较小的信号标签显示在上一行，课程名独立显示为主标题。
+  - 该逻辑复用于 Course Board 和课程详情页，其他普通页面标题不受影响。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。
