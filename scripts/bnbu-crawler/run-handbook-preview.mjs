@@ -19,7 +19,7 @@ const args = Object.fromEntries(
 );
 
 const handbookUrl = String(args.handbookUrl ?? DEFAULT_HANDBOOK_URL);
-const cohorts = csv(args.cohorts ?? "2025,2024");
+const cohorts = csv(args.cohorts ?? args.cohortYears);
 const semesterCode = String(args.semesterCode ?? "2026-Spring");
 const semesterName = String(args.semesterName ?? "2026 Spring");
 const academicYear = Number(args.academicYear ?? 2026);
@@ -94,6 +94,21 @@ function stripTags(html) {
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function pageTitle(html) {
+  return stripTags(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "");
+}
+
+function inferCohortYear(html, url, fallbackLabel = "") {
+  const title = pageTitle(html);
+  const text = `${title} ${fallbackLabel} ${stripTags(html).slice(0, 3000)} ${url}`;
+  return (
+    text.match(/for\s+(20\d{2})\s+Admission/i)?.[1] ??
+    text.match(/(20\d{2})\s+Admission/i)?.[1] ??
+    text.match(/Admission\s+(20\d{2})/i)?.[1] ??
+    null
+  );
 }
 
 function stableId(...parts) {
@@ -285,9 +300,31 @@ function mergeRules(items) {
 
 async function resolveCohortPages() {
   const html = await fetchText(handbookUrl);
+  const directProgrammes = parseProgrammeLinks(html, handbookUrl);
+  if (directProgrammes.length) {
+    if (cohorts.length > 1) {
+      throw new Error(`Handbook URL looks like a single admission page; provide one admission year or leave Admission years blank. Received: ${cohorts.join(",")}`);
+    }
+    const inferred = inferCohortYear(html, handbookUrl);
+    const requested = cohorts[0] ?? "";
+    if (requested && inferred && requested !== inferred) {
+      throw new Error(`Admission year mismatch: the page appears to be ${inferred} admission, but --cohorts=${requested} was provided.`);
+    }
+    const cohort = requested || inferred;
+    if (!cohort) {
+      throw new Error(`Could not infer admission year from ${handbookUrl}. Fill Admission years with one year, such as 2023.`);
+    }
+    return [{
+      cohort,
+      label: pageTitle(html) || `Undergraduate Handbook for ${cohort} Admission`,
+      url: handbookUrl,
+      html
+    }];
+  }
   const links = parseCohortLinks(html, handbookUrl);
   if (!links.size) return [{ cohort: cohorts[0] ?? "2025", label: `Undergraduate Handbook ${cohorts[0] ?? "2025"}`, url: handbookUrl, html }];
-  return cohorts.map((cohort) => {
+  const requestedCohorts = cohorts.length ? cohorts : ["2025", "2024"];
+  return requestedCohorts.map((cohort) => {
     const found = links.get(cohort);
     if (!found) throw new Error(`Could not find programme handbook page for ${cohort} admission at ${handbookUrl}`);
     return found;
@@ -334,7 +371,7 @@ async function buildPayload(cohortPage) {
     crawlerMeta: {
       runner: "scripts/bnbu-crawler/run-handbook-preview.mjs",
       handbookUrl,
-      cohorts: cohorts.map(Number).filter(Number.isFinite),
+      cohorts: (cohorts.length ? cohorts : [cohortPage.cohort]).map(Number).filter(Number.isFinite),
       programmeCodes,
       facultyCodes,
       limit: Number.isFinite(limit) ? limit : "all",

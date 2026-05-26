@@ -5658,13 +5658,14 @@ export function CrawlerPortalPage() {
     name: "",
     target: "programme_handbook",
     handbookUrl: "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm",
-    cohorts: "2025,2024",
+    courseDescriptionsUrl: "https://ar.bnbu.edu.cn/info/1021/1430.htm",
+    cohorts: "",
     academicYear: "2026",
     term: "Spring",
     limit: "all",
     outputMode: "download",
     databaseAction: "download_only",
-    instruction: "爬取 2025 和 2024 admission 的 programme handbook，输出 2026 Spring 的课程配置 JSON。"
+    instruction: "填写某一个 admission year 的 programme handbook 页面，输出 2026 Spring 的课程配置 JSON。"
   });
   const [result, setResult] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -5694,6 +5695,8 @@ export function CrawlerPortalPage() {
   const jobs = jobsData?.jobs ?? [];
   const outputs = jobsData?.outputs ?? data?.outputs ?? [];
   const targets = data?.targets ?? [];
+  const currentTarget = form.target ?? "programme_handbook";
+  const isCourseCatalog = currentTarget === "course_catalog";
 
   return (
     <PageShell
@@ -5701,7 +5704,7 @@ export function CrawlerPortalPage() {
       eyebrow="Crawler"
       aside="none"
       workspace
-      description="独立爬虫入口：以每年 admission programme handbook 为准生成 cleaned JSON；也可在管理员确认后创建导入批次或直接批准写入线上数据库。"
+      description="独立爬虫入口：programme handbook 生成 admission-year 课程安排；Course Descriptions 课程总表补充官方课程描述。"
     >
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {error && /请先完成|unauthorized|API_UNAUTHORIZED/i.test(error) ? (
@@ -5714,7 +5717,7 @@ export function CrawlerPortalPage() {
       <div className="grid gap-5 xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)] xl:items-start">
         <Card className="xl:max-h-[calc(100vh-12rem)] xl:overflow-y-auto">
           <h2 className="text-xl font-semibold text-ink">Crawl request</h2>
-          <p className="mt-2 text-sm leading-6 text-ink/62">当前唯一可执行目标是 programme handbook。它按 admission year 生成四年课程安排；BNBU class schedule 只是时间表，不作为课程存在或 CourseBoard 配置依据。Academic year / term 只用于预览“如果现在激活 Course Board，应匹配哪一批规则”。</p>
+          <p className="mt-2 text-sm leading-6 text-ink/62">推荐直接填写某一年的 admission handbook 页面并一次爬一年。Course Descriptions 是课程总表，只补课程描述；BNBU class schedule 只是时间表，不作为课程存在或 CourseBoard 配置依据。</p>
           {result ? (
             <div className={`mt-4 border px-3 py-2 text-sm font-medium ${
               result.type === "error" ? "border-rust/40 bg-rust/5 text-rust" : "border-forest/30 bg-forest/10 text-forest"
@@ -5733,7 +5736,7 @@ export function CrawlerPortalPage() {
               {targets.map((target: any) => (
                 <label key={target.value} className={`border border-ink/15 p-3 text-sm ${target.supported ? "bg-paper" : "bg-chalk opacity-60"}`}>
                   <span className="flex items-center gap-2 font-semibold text-ink">
-                    <input type="radio" name="target" value={target.value} checked={(form.target ?? "programme_handbook") === target.value} disabled={!target.supported} onChange={(event) => setForm({ ...form, target: event.target.value })} />
+                    <input type="radio" name="target" value={target.value} checked={currentTarget === target.value} disabled={!target.supported} onChange={(event) => setForm({ ...form, target: event.target.value })} />
                     {target.label}
                   </span>
                   <span className="mt-2 block leading-5 text-ink/60">{target.description}</span>
@@ -5741,12 +5744,30 @@ export function CrawlerPortalPage() {
               ))}
             </div>
             <div className="grid gap-3 md:grid-cols-4">
-              <Field label="Handbook URL"><input className={inputClass} value={form.handbookUrl ?? ""} onChange={(event) => setForm({ ...form, handbookUrl: event.target.value })} /></Field>
-              <Field label="Admission years"><input className={inputClass} value={form.cohorts ?? ""} onChange={(event) => setForm({ ...form, cohorts: event.target.value })} /></Field>
-              <Field label="Programme codes"><input className={inputClass} placeholder="ACCT,MCOM 可留空" value={form.programmes ?? ""} onChange={(event) => setForm({ ...form, programmes: event.target.value })} /></Field>
-              <Field label="Faculty codes"><input className={inputClass} placeholder="FBM,FHSS 可留空" value={form.facultyCodes ?? ""} onChange={(event) => setForm({ ...form, facultyCodes: event.target.value })} /></Field>
-              <Field label="Activation preview year" help="用于预览 Course Board 激活，不改变 admission-year 课程安排。"><input className={inputClass} value={form.academicYear ?? ""} onChange={(event) => setForm({ ...form, academicYear: event.target.value })} /></Field>
-              <Field label="Activation preview term" help="Fall/Spring 只用于计算当前学期会命中哪些 relative terms；课程安排仍按 admission year 存储。">
+              {isCourseCatalog ? (
+                <Field label="Course descriptions URL" help="填写 AR Course Descriptions 页面或 PDF；它是课程总表，不包含 admission-year 培养方案规则。">
+                  <input className={inputClass} value={form.courseDescriptionsUrl ?? ""} onChange={(event) => setForm({ ...form, courseDescriptionsUrl: event.target.value })} />
+                </Field>
+              ) : (
+                <>
+                  <Field label="Handbook URL" help="推荐填某一年的 handbook 页面，例如 /info/1020/...；总入口也仍可用。">
+                    <input
+                      className={inputClass}
+                      value={form.handbookUrl ?? ""}
+                      onChange={(event) => {
+                        const handbookUrl = event.target.value;
+                        const shouldClearCohorts = /\/info\/1020\//.test(handbookUrl) && ((form.cohorts ?? "").includes(",") || form.cohorts === "2025,2024");
+                        setForm({ ...form, handbookUrl, cohorts: shouldClearCohorts ? "" : form.cohorts ?? "" });
+                      }}
+                    />
+                  </Field>
+                  <Field label="Admission year" help="填写年份页面时可留空让系统从页面标题识别；总入口可填 2025 或 2025,2024。"><input className={inputClass} value={form.cohorts ?? ""} onChange={(event) => setForm({ ...form, cohorts: event.target.value })} /></Field>
+                  <Field label="Programme codes"><input className={inputClass} placeholder="ACCT,MCOM 可留空" value={form.programmes ?? ""} onChange={(event) => setForm({ ...form, programmes: event.target.value })} /></Field>
+                  <Field label="Faculty codes"><input className={inputClass} placeholder="FBM,FHSS 可留空" value={form.facultyCodes ?? ""} onChange={(event) => setForm({ ...form, facultyCodes: event.target.value })} /></Field>
+                </>
+              )}
+              <Field label={isCourseCatalog ? "Metadata year" : "Activation preview year"} help={isCourseCatalog ? "只写入输出 JSON 的 semester metadata。" : "用于预览 Course Board 激活，不改变 admission-year 课程安排。"}><input className={inputClass} value={form.academicYear ?? ""} onChange={(event) => setForm({ ...form, academicYear: event.target.value })} /></Field>
+              <Field label={isCourseCatalog ? "Metadata term" : "Activation preview term"} help={isCourseCatalog ? "只写入输出 JSON 的 semester metadata。" : "Fall/Spring 只用于计算当前学期会命中哪些 relative terms；课程安排仍按 admission year 存储。"}>
                 <select className={inputClass} value={form.term ?? "Spring"} onChange={(event) => setForm({ ...form, term: event.target.value })}>
                   {["Spring", "Fall"].map((item) => <option key={item}>{item}</option>)}
                 </select>
@@ -5758,7 +5779,7 @@ export function CrawlerPortalPage() {
                   <option value="git_import_json">course_imports/bnbu</option>
                 </select>
               </Field>
-              <Field label="After crawl" help="默认只生成下载文件；如选择直接批准，会写入线上课程目录和 admission-year 课程安排。">
+              <Field label="After crawl" help={isCourseCatalog ? "默认只生成下载文件；如直接批准，会合并课程描述，不会创建 admission-year rules。" : "默认只生成下载文件；如选择直接批准，会写入线上课程目录和 admission-year 课程安排。"}>
                 <select className={inputClass} value={form.databaseAction ?? "download_only"} onChange={(event) => setForm({ ...form, databaseAction: event.target.value })}>
                   <option value="download_only">只生成并下载 JSON</option>
                   <option value="create_pending">创建待审批导入批次</option>
@@ -5768,7 +5789,7 @@ export function CrawlerPortalPage() {
             </div>
             {form.databaseAction === "approve_import" ? (
               <div className="border border-rust/30 bg-rust/5 px-3 py-2 text-sm leading-6 text-rust">
-                这个选项会在爬虫成功后自动创建导入批次并批准写入数据库；同 admission year 的旧 pending 批次会被标记为 rejected，已有课程和用户数据不会被清空。
+                这个选项会在爬虫成功后自动创建导入批次并批准写入数据库；已有课程和用户数据不会被清空。
               </div>
             ) : null}
             <button disabled={busy} className="w-fit rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">
@@ -5785,7 +5806,7 @@ export function CrawlerPortalPage() {
           </div>
           <div className="mt-4 max-h-80 overflow-auto border border-ink/15">
             <table className="w-full min-w-[820px] border-collapse text-left text-sm">
-              <thead className="sticky top-0 bg-ink text-paper"><tr>{["Job", "Status", "Admission years", "Activation preview", "Started", "Result", "Actions", "Log"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+              <thead className="sticky top-0 bg-ink text-paper"><tr>{["Job", "Status", "Scope", "Activation preview", "Started", "Result", "Actions", "Log"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
               <tbody>
                 {jobs.length ? jobs.map((job: any) => (
                   <tr key={job.id} className="border-b border-ink/10">
@@ -5794,7 +5815,7 @@ export function CrawlerPortalPage() {
                       <p className="mt-1 text-xs text-ink/48">{job.id}</p>
                     </td>
                     <td className="px-3 py-2"><StatusPill status={job.status} /></td>
-                    <td className="px-3 py-2">{job.input?.cohorts?.join?.(", ") ?? ""}</td>
+                    <td className="px-3 py-2">{job.target === "course_catalog" ? "Course catalog" : job.input?.cohorts?.length ? job.input.cohorts.join(", ") : "inferred from page"}</td>
                     <td className="px-3 py-2">{job.input?.semesterCode ?? "not set"}</td>
                     <td className="px-3 py-2">{job.startedAt ? new Date(job.startedAt).toLocaleString() : ""}</td>
                     <td className="max-w-[300px] px-3 py-2 text-xs text-ink/64">

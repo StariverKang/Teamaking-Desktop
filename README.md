@@ -421,13 +421,13 @@ prisma/
 
 真实课程数据由 BNBU crawler/清洗工具采集和清洗。主系统仍只通过 cleaned JSON 入库：`schemaVersion` 建议为 `teamaking.bnbu_course_import.v2`（兼容 v1），`school.shortName` 必须为 `BNBU`。管理员在 `/admin/course-imports` 粘贴 JSON，填写本次配置名称，先校验并创建一条待审批配置操作，批准后才会写入课程目录和 admission-year 课程安排规则。
 
-爬虫入口已经拆成独立页面 `/crawler` 和 API `/api/crawler/*`。本地可直接访问；线上可通过 `CRAWLER_HOSTS` 配置独立 crawler 子域名。Crawler 当前只启用 `programme_handbook`：每年 admission handbook 是课程配置的唯一权威来源。BNBU class schedule 只是学期时间安排，不作为课程存在、真实开课或 CourseBoard 配置依据。Crawler 默认只生成可下载 JSON；管理员也可以在 `After crawl` 中选择创建 pending 导入批次，或直接批准并更新线上数据库。每个 Job 完成后都会提供“下载本次爬取内容”按钮。若要生成可提交的测试样本，可切换输出模式写入 `course_imports/bnbu/*.teamaking.json`。
+爬虫入口已经拆成独立页面 `/crawler` 和 API `/api/crawler/*`。本地可直接访问；线上可通过 `CRAWLER_HOSTS` 配置独立 crawler 子域名。Crawler 支持 `programme_handbook` 和 `course_catalog`：每年 admission handbook 是课程配置和 CourseBoard 规则的唯一权威来源，Course Descriptions 课程总表用于补充官方课程描述。BNBU class schedule 只是学期时间安排，不作为课程存在、真实开课或 CourseBoard 配置依据。Crawler 默认只生成可下载 JSON；管理员也可以在 `After crawl` 中选择创建 pending 导入批次，或直接批准并更新线上数据库。每个 Job 完成后都会提供“下载本次爬取内容”按钮。若要生成可提交的测试样本，可切换输出模式写入 `course_imports/bnbu/*.teamaking.json`。
 
 Crawler 页面字段解释、变量表、Job 状态、下载区和常见误用见 `docs/BNBU_CRAWLER_ADMIN_VARIABLES.md`。这份文档面向非开发管理员，可直接作为操作手册使用。
 
 导入审批前会生成预览差异，包括新增/更新 Faculty、Major、Course、Curriculum Rule，当前学期将失效的旧规则，默认加入规则数量，可搜索规则数量，以及预计会被默认加入 Course Board 的用户数量。管理员也可以选择已创建的配置操作并点击“查看差异”复核后再批准。
 
-本地实验目录 `local_bnbu_course_pipeline/` 整个目录已加入 `.gitignore`；可提交的管线产物仍限制为 `course_imports/bnbu/*.teamaking.json`。Programme Handbook 按 admission year 单独输出，例如 `bnbu-2025-admission-handbook.teamaking.json` 与 `bnbu-2024-admission-handbook.teamaking.json`，管理员可以分批校验、审批和对照数据库 coverage 查缺漏。handbook admission-year import 可以没有 `offerings[]`；Course Board 会按当前 academic term、学生 admission year、专业和 `relativeTermCodes` 激活。当前不抓取 syllabus/teamwork evidence；用户需要组队时自行发布 Teamaking Post。
+本地实验目录 `local_bnbu_course_pipeline/` 整个目录已加入 `.gitignore`；可提交的管线产物仍限制为 `course_imports/bnbu/*.teamaking.json`。Programme Handbook 推荐填某一年的 handbook 页面并一次爬一年，按 admission year 单独输出，例如 `bnbu-2025-admission-handbook.teamaking.json` 与 `bnbu-2024-admission-handbook.teamaking.json`；Course Descriptions 输出 `bnbu-course-descriptions-catalog.teamaking.json`。管理员可以分批校验、审批和对照数据库 coverage 查缺漏。handbook admission-year import 可以没有 `offerings[]`；Course Board 会按当前 academic term、学生 admission year、专业和 `relativeTermCodes` 激活。当前不抓取 syllabus/teamwork evidence；用户需要组队时自行发布 Teamaking Post。
 
 导入页里的“一条配置操作”对应一次 JSON 输入。系统不会把一次 JSON 拆成多个 pending 操作；它只是把 JSON 理解并存成可查询的 `CourseImportDataset`、source refs、faculties、majors、courses、rules、offerings 等行。真正可编辑、可审计和可回溯的是这些课程目录和 admission-year 配置规则，而不是一个难读的大 payload。
 

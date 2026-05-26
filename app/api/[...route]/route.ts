@@ -112,6 +112,7 @@ const courseInclude = {
 
 const BNBU_PROGRAMMES_URL = "https://www.bnbu.edu.cn/en/faculties_and_schools.htm";
 const BNBU_HANDBOOK_URL = "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm";
+const BNBU_COURSE_DESCRIPTIONS_URL = "https://ar.bnbu.edu.cn/info/1021/1430.htm";
 const BNBU_MIS_URL = "https://mis.bnbu.edu.cn";
 const handbookLinkCache = new Map<string, { expiresAt: number; ref: HandbookSourceRef | null }>();
 const programmeIntroCache = new Map<string, { expiresAt: number; ref: ProgrammeIntroRef | null }>();
@@ -4340,10 +4341,15 @@ function courseImportPayloadFromBody(body: Record<string, unknown>) {
 const writableStorageRoot = process.env.VERCEL ? path.join("/tmp", "teamaking") : path.join(/*turbopackIgnore: true*/ process.cwd(), "storage");
 const importArtifactDir = path.join(writableStorageRoot, "course_import_artifacts");
 const crawlerOutputDir = path.join(writableStorageRoot, "crawler_outputs");
-const crawlerScriptCandidates = [
-  path.join(/*turbopackIgnore: true*/ process.cwd(), "scripts", "bnbu-crawler", "run-handbook-preview.mjs"),
-  path.join(/*turbopackIgnore: true*/ process.cwd(), "local_bnbu_course_pipeline", "run_handbook_preview.mjs")
-];
+const crawlerScriptCandidatesByTarget: Record<string, string[]> = {
+  programme_handbook: [
+    path.join(/*turbopackIgnore: true*/ process.cwd(), "scripts", "bnbu-crawler", "run-handbook-preview.mjs"),
+    path.join(/*turbopackIgnore: true*/ process.cwd(), "local_bnbu_course_pipeline", "run_handbook_preview.mjs")
+  ],
+  course_catalog: [
+    path.join(/*turbopackIgnore: true*/ process.cwd(), "scripts", "bnbu-crawler", "run-course-catalog.mjs")
+  ]
+};
 const crawlerJobs = new Map<string, any>();
 const crawlerStaleMs = 30 * 60 * 1000;
 
@@ -4414,6 +4420,10 @@ function crawlerCsv(value: unknown) {
   return textValue(value).split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function mergeUniqueTextValues(...values: unknown[]) {
+  return [...new Set(values.flatMap((value) => textValues(value)))];
+}
+
 function parseCrawlerInstruction(value: unknown) {
   const instruction = textValue(value);
   const lower = instruction.toLowerCase();
@@ -4427,40 +4437,52 @@ function parseCrawlerInstruction(value: unknown) {
     instruction.match(/\b(20\d{2})\s*(春|秋|上|下)/);
   const term = termMatch ? (/spring|春|下/i.test(termMatch[2]) ? "Spring" : "Fall") : "";
   const academicYear = termMatch?.[1] ?? "";
+  const courseDescriptionsUrl = urls.find((url) => /course[_-]?dee?scription|course%20descriptions|\/1021\/1430/i.test(url)) ?? "";
+  const target = courseDescriptionsUrl || /course\s*descriptions?|course\s*catalog|课程总表|课程目录|课程描述/i.test(instruction)
+    ? "course_catalog"
+    : "programme_handbook";
   return {
-    handbookUrl: urls.find((url) => /programme_handbook|handbook/i.test(url)) ?? urls[0] ?? "",
+    handbookUrl: target === "course_catalog" ? "" : urls.find((url) => /programme_handbook|handbook|\/1020\//i.test(url)) ?? urls[0] ?? "",
+    courseDescriptionsUrl: courseDescriptionsUrl || (target === "course_catalog" ? urls[0] ?? "" : ""),
     cohorts: academicYear && term ? years.filter((year) => year !== academicYear).join(",") : years.join(","),
     programmes: upperCodes.join(","),
     limit: /全部|所有|all/i.test(instruction) ? "all" : limitMatch?.[1] ?? "",
     academicYear,
     term,
-    target: "programme_handbook"
+    target
   };
 }
 
-async function crawlerScriptPath() {
+async function crawlerScriptPath(target: string) {
+  const crawlerScriptCandidates = crawlerScriptCandidatesByTarget[target] ?? [];
   for (const candidate of crawlerScriptCandidates) {
     const info = await stat(candidate).catch(() => null);
     if (info?.isFile()) return candidate;
   }
-  throw new ApiError(500, "没有找到 BNBU crawler runner。请确认 scripts/bnbu-crawler/run-handbook-preview.mjs 已部署。");
+  throw new ApiError(500, `没有找到 BNBU crawler runner：${target}。请确认 scripts/bnbu-crawler 已部署。`);
 }
 
 function normalizeCrawlerJobInput(body: Record<string, unknown>) {
   const natural = parseCrawlerInstruction(body.instruction);
   const academicYear = textValue(body.academicYear) || natural.academicYear || "2026";
   const term = textValue(body.term) || natural.term || "Spring";
-  const cohorts = crawlerCsv(body.cohorts || natural.cohorts || "2025,2024");
+  const hasExplicitCohorts = Object.prototype.hasOwnProperty.call(body, "cohorts");
+  const cohorts = crawlerCsv(hasExplicitCohorts ? body.cohorts : natural.cohorts);
   const outputMode = textValue(body.outputMode) || "download";
   const databaseAction = textValue(body.databaseAction) || textValue(body.postCrawlAction) || "download_only";
   const requestedName = optionalString(body.name) ?? optionalString(body.jobName);
+  const target = textValue(body.target) || natural.target || "programme_handbook";
   return {
     name: requestedName,
-    target: textValue(body.target) || natural.target || "programme_handbook",
+    target,
     handbookUrl:
       textValue(body.handbookUrl) ||
       natural.handbookUrl ||
-      "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm",
+      BNBU_HANDBOOK_URL,
+    courseDescriptionsUrl:
+      textValue(body.courseDescriptionsUrl) ||
+      natural.courseDescriptionsUrl ||
+      BNBU_COURSE_DESCRIPTIONS_URL,
     cohorts,
     programmes: crawlerCsv(body.programmes || body.programmeCodes || natural.programmes).join(","),
     facultyCodes: crawlerCsv(body.facultyCodes).join(","),
@@ -4477,7 +4499,8 @@ function normalizeCrawlerJobInput(body: Record<string, unknown>) {
 }
 
 function defaultCrawlerJobName(input: any) {
-  const years = Array.isArray(input.cohorts) && input.cohorts.length ? input.cohorts.join(", ") : "unknown admission";
+  if (input.target === "course_catalog") return "BNBU course descriptions catalogue";
+  const years = Array.isArray(input.cohorts) && input.cohorts.length ? input.cohorts.join(", ") : "inferred";
   return `${years} admission programme handbook`;
 }
 
@@ -4923,31 +4946,42 @@ async function crawlerJobBundle(job: any) {
 
 async function startCrawlerJob(body: Record<string, unknown>, admin: any) {
   const input = normalizeCrawlerJobInput(body);
-  if (input.target !== "programme_handbook") {
-    throw new ApiError(400, "当前 BNBU 课程配置只以每年 admission programme handbook 为准；class schedule 不是课程存在依据，semester offerings / syllabus teamwork 不作为当前产品目标。");
+  if (!["programme_handbook", "course_catalog"].includes(input.target)) {
+    throw new ApiError(400, "当前 BNBU crawler 只支持 programme_handbook 和 course_catalog；class schedule 不是课程存在依据。");
   }
-  if (!input.cohorts.length) throw new ApiError(400, "至少填写一个 admission year，例如 2025 或 2025,2024。");
   await mkdir(crawlerOutputDir, { recursive: true });
-  const script = await crawlerScriptPath();
+  const script = await crawlerScriptPath(input.target);
   const appVersionId = await getActiveAppVersionId();
   const beforeOutputs = await listCrawlerOutputs();
   const jobName = input.name || defaultCrawlerJobName(input);
   const outDir = input.outputMode === "git_import_json" ? "course_imports/bnbu" : crawlerOutputDir;
-  const args = [
-    script,
-    `--handbookUrl=${input.handbookUrl}`,
-    `--cohorts=${input.cohorts.join(",")}`,
-    `--limit=${input.limit}`,
-    `--semesterCode=${input.semesterCode}`,
-    `--semesterName=${input.semesterName}`,
-    `--academicYear=${input.academicYear}`,
-    `--term=${input.term}`,
-    `--outDir=${outDir}`
-  ];
-  if (input.programmes) args.push(`--programmes=${input.programmes}`);
-  if (input.facultyCodes) args.push(`--facultyCodes=${input.facultyCodes}`);
-  if (input.programmeName) args.push(`--programmeName=${input.programmeName}`);
-  if (input.facultyName) args.push(`--facultyName=${input.facultyName}`);
+  const args = [script];
+  if (input.target === "course_catalog") {
+    args.push(
+      `--courseDescriptionsUrl=${input.courseDescriptionsUrl}`,
+      `--limit=${input.limit}`,
+      `--semesterCode=${input.semesterCode}`,
+      `--semesterName=${input.semesterName}`,
+      `--academicYear=${input.academicYear}`,
+      `--term=${input.term}`,
+      `--outDir=${outDir}`
+    );
+  } else {
+    args.push(
+      `--handbookUrl=${input.handbookUrl}`,
+      `--cohorts=${input.cohorts.join(",")}`,
+      `--limit=${input.limit}`,
+      `--semesterCode=${input.semesterCode}`,
+      `--semesterName=${input.semesterName}`,
+      `--academicYear=${input.academicYear}`,
+      `--term=${input.term}`,
+      `--outDir=${outDir}`
+    );
+    if (input.programmes) args.push(`--programmes=${input.programmes}`);
+    if (input.facultyCodes) args.push(`--facultyCodes=${input.facultyCodes}`);
+    if (input.programmeName) args.push(`--programmeName=${input.programmeName}`);
+    if (input.facultyName) args.push(`--facultyName=${input.facultyName}`);
+  }
   const command = ["node", ...args].map((item) => (item.includes(" ") ? JSON.stringify(item) : item)).join(" ");
   const createdJob = await prisma.crawlerJob.create({
     data: {
@@ -5003,7 +5037,11 @@ async function startCrawlerJob(body: Record<string, unknown>, admin: any) {
     const allOutputs = await listCrawlerOutputs();
     job.outputs = crawlerOutputsChangedAfter(beforeOutputs, allOutputs);
     if (code === 0 && !job.outputs.length) {
-      job.outputs = allOutputs.filter((file) => input.cohorts.some((cohort: string) => file.name.includes(`-${cohort}-`)));
+      job.outputs = allOutputs.filter((file) => input.target === "course_catalog"
+        ? file.name.includes("course-descriptions-catalog")
+        : input.cohorts.length
+          ? input.cohorts.some((cohort: string) => file.name.includes(`-${cohort}-`))
+          : /^bnbu-\d{4}-admission-handbook\.teamaking\.json$/.test(file.name));
     }
     if (code !== 0 && !job.errorMessage) {
       const tail = (job.logs ?? []).join("").trim().split("\n").filter(Boolean).slice(-1)[0];
@@ -6510,6 +6548,7 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
   const summary = validateBnbuCourseImportPayload(payload);
   if (!summary.ok) throw new ApiError(400, `导入文件校验失败：${summary.errors.join("; ")}`);
   const appVersionId = await getActiveAppVersionId();
+  const courseCatalogImport = textValue(payload.importMode) === "course_catalog";
 
   return prisma.$transaction(async (tx) => {
     const schoolInput = isPlainRecord(payload.school) ? payload.school : {};
@@ -6612,13 +6651,21 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
     for (const courseInput of records(payload.courses)) {
       const code = textValue(courseInput.code);
       const existingCourse = await tx.course.findUnique({ where: { schoolId_code: { schoolId: school.id, code } } });
+      const incomingDescription = textValue(courseInput.description);
+      const existingDescription = textValue(existingCourse?.description);
+      const incomingCategoryTags = textValues(courseInput.categoryTags);
+      const incomingSourceRefIds = textValues(courseInput.sourceRefIds);
       const importData = {
         title: textValue(courseInput.title),
-        description: textValue(courseInput.description),
+        description: incomingDescription || existingDescription,
         credits: numberValue(courseInput.credits),
-        ownerUnit: toJson(isPlainRecord(courseInput.ownerUnit) ? courseInput.ownerUnit : {}),
-        categoryTags: textValues(courseInput.categoryTags),
-        sourceRefIds: textValues(courseInput.sourceRefIds),
+        ownerUnit: toJson(courseCatalogImport && existingCourse?.ownerUnit ? existingCourse.ownerUnit : isPlainRecord(courseInput.ownerUnit) ? courseInput.ownerUnit : {}),
+        categoryTags: courseCatalogImport && existingCourse
+          ? mergeUniqueTextValues(existingCourse.categoryTags, incomingCategoryTags)
+          : incomingCategoryTags,
+        sourceRefIds: courseCatalogImport && existingCourse
+          ? mergeUniqueTextValues(existingCourse.sourceRefIds, incomingSourceRefIds)
+          : incomingSourceRefIds,
         courseType: "coursework",
         status: "active",
         source: "bnbu_import"
@@ -8098,8 +8145,9 @@ async function handleCrawler(method: string, path: string[], request: NextReques
       defaults: {
         name: "",
         target: "programme_handbook",
-        handbookUrl: "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm",
-        cohorts: "2025,2024",
+        handbookUrl: BNBU_HANDBOOK_URL,
+        courseDescriptionsUrl: BNBU_COURSE_DESCRIPTIONS_URL,
+        cohorts: "",
         academicYear: "2026",
         term: "Spring",
         limit: "all"
@@ -8109,7 +8157,13 @@ async function handleCrawler(method: string, path: string[], request: NextReques
           value: "programme_handbook",
           label: "Programme handbook",
           supported: true,
-          description: "唯一启用来源；抓取每个 admission year 的四年课程安排，输出 Course + admission-year Curriculum Rules。"
+          description: "抓取某一年 admission handbook 页面，或从总入口按 admission year 找页面，输出 Course + admission-year Curriculum Rules。"
+        },
+        {
+          value: "course_catalog",
+          label: "Course descriptions",
+          supported: true,
+          description: "抓取 AR Course Descriptions 课程总表，补充官方课程描述；不生成 admission-year Curriculum Rules。"
         }
       ],
       outputs: await listCrawlerOutputs()

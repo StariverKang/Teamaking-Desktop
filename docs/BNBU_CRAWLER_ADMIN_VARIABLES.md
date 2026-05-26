@@ -18,9 +18,10 @@
 |---|---|---:|---:|---|---|---|---|
 | Job name | `name` / `jobName` | 文本 | 否 | 根据 admission years 自动生成 | `2025+2024 admission handbook full crawl` | 给本次爬虫任务一个人能读懂的名称。 | 不填也能跑；系统内部仍有 `CrawlerJob.id`，但页面主要展示任务名。 |
 | 自然语言说明 | `instruction` | 文本 | 否 | 一段默认说明 | `爬取 2025 和 2024 admission 的 programme handbook，输出 2026 Fall 的课程配置 JSON。` | 辅助自动识别 URL、admission years、programme codes、academic year、term、limit 和 target。 | 明确字段会覆盖自然语言推断。自然语言适合快速填写，但正式任务建议同时检查下方结构化字段。 |
-| 爬取目标 | `target` | 枚举 | 是 | `programme_handbook` | `programme_handbook` | 决定运行哪类解析器。 | 当前只保留 `programme_handbook`。BNBU class schedule 只是学期时间安排，不作为课程存在或 Course Board 配置依据。 |
-| Handbook URL | `handbookUrl` | URL | 是 | BNBU programme handbook 页面 | `https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm` | Crawler 从这里寻找每个 admission year 的 programme handbook 页面和 PDF。 | 不要填某一个专业 PDF，除非后续解析器明确支持。当前应填 handbook index 页面。 |
-| Admission years | `cohorts` | 逗号分隔年份 | 是 | `2025,2024` | `2025`、`2025,2024` | 指“哪一年入学的学生”的四年课程安排。输出文件会按 admission year 分开生成。 | 这是学生入学年份，不是当前学年，也不是开课学期。 |
+| 爬取目标 | `target` | 枚举 | 是 | `programme_handbook` | `programme_handbook`、`course_catalog` | 决定运行哪类解析器。 | BNBU class schedule 只是学期时间安排，不作为课程存在或 Course Board 配置依据。 |
+| Handbook URL | `handbookUrl` | URL | `programme_handbook` 需要 | BNBU programme handbook 页面 | `https://ar.bnbu.edu.cn/info/1020/1683.htm` | Crawler 从这里寻找某个 admission year 的 programme handbook 页面和 PDF。 | 推荐填某一年的 handbook 页面并一次爬一年；总入口 `programme_handbook.htm` 仍可用。不要填某一个专业 PDF。 |
+| Course descriptions URL | `courseDescriptionsUrl` | URL | `course_catalog` 需要 | BNBU Course Descriptions 页面 | `https://ar.bnbu.edu.cn/info/1021/1430.htm` | Crawler 从这里找到 Course Descriptions PDF，生成课程总表 JSON。 | 只补 `courses[].description` 等课程目录信息，不生成 admission-year curriculum rules。 |
+| Admission year | `cohorts` | 逗号分隔年份 | 否 | 空 | `2025`、`2025,2024` | 指“哪一年入学的学生”的四年课程安排。输出文件会按 admission year 分开生成。 | 填年份页面时可留空让系统从页面标题识别；填总入口时可填一个或多个年份。这是学生入学年份，不是当前学年，也不是开课学期。 |
 | Programme codes | `programmes` / `programmeCodes` | 逗号分隔代码 | 否 | 空 | `ACCT,MCOM` | 只爬指定专业。留空表示该 admission year 下所有可识别专业。 | 代码通常来自 PDF 文件名前缀，如 `ACCT`。大小写不敏感，系统会转大写。 |
 | Faculty codes | `facultyCodes` | 逗号分隔代码 | 否 | 空 | `FBM,FHSS` | 只爬指定学院/学部范围。留空表示不过滤 faculty。 | 常用：`FBM`、`FHSS`、`FST`、`SCC`、`SAIN`、`GE`、`AR`。 |
 | Activation preview year | `academicYear` | 年份数字 | 是 | `2026` | `2026` | 生成 JSON 中 `semester.academicYear` 和默认 `semester.code`。 | 这是 Course Board 激活预览上下文，用于判断当前 academic term 对应哪些 admission-year rules；不代表 admission year。 |
@@ -34,6 +35,7 @@
 | 页面选项 | API 值 | 当前状态 | 输出内容 |
 |---|---|---|---|
 | Programme handbook | `programme_handbook` | 已支持 | 课程目录 `courses[]`、专业/学院、按 admission year 的 `curriculumRules[]`。通常 `offerings[]` 为空。 |
+| Course descriptions | `course_catalog` | 已支持 | BNBU AR Course Descriptions 课程总表，主要补充 `courses[].description`，不生成专业、offerings 或 admission-year rules。 |
 
 `semester_offerings` 和 `syllabus_teamwork` 不在当前产品目标内。管理员如果看到 BNBU class schedule，请不要把它当作真实开课列表；课程配置仍以每年 admission handbook JSON 为准。
 
@@ -64,7 +66,7 @@
 |---|---|---|---|
 | `semesterCode` | `academicYear` + `term` | `2026-Fall` | 写入 JSON 的 `semester.code`，用于激活预览。 |
 | `semesterName` | `academicYear` + `term` | `2026 Fall` | 写入 JSON 的 `semester.name`，用于激活预览。 |
-| `cohortYears` | `cohorts` | `[2025, 2024]` | 写入 JSON 顶层，用于说明这份文件覆盖哪些 admission years。 |
+| `cohortYears` | `cohorts` 或 handbook 页面标题 | `[2025, 2024]` | 写入 JSON 顶层，用于说明这份文件覆盖哪些 admission years；course catalog 输出为空数组。 |
 | `selectedProgrammeCodes` | 实际匹配到的 PDF | `["ACCT", "MCOM"]` | 写入 `crawlerMeta`，用于检查本次到底爬了哪些专业。 |
 | `isCurrentCandidate` | 固定为 false | `false` | crawler 输出不会请求切换系统当前学期。 |
 | `offerings` | 当前 handbook parser | `[]` | programme handbook import 通常为空。Course Board 由 academic term + admission-year rule 匹配激活，不依赖 class schedule。 |
@@ -75,7 +77,7 @@
 |---|---|---|
 | Job | 管理员填写的 Job name；下方可能显示内部 id。 | 日常检查看任务名；报错或查日志时用内部 id 对齐。 |
 | Status | `running`、`completed`、`failed`。 | 只有 `completed` 才代表本次完整成功。`failed` 需要看 Log，可能已有部分文件输出，但不应直接当全量结果使用。 |
-| Admission years | 本次爬取哪几年入学学生的课程安排。 | 例如 `2025, 2024`。 |
+| Scope | 本次爬取哪类数据。 | Programme handbook 显示 admission year；course catalog 显示课程总表。 |
 | Activation preview | 激活预览 academic term。 | 例如 `2026-Fall`；这不是 admission year。 |
 | Started | 任务启动的现实时间。 | 用于和输出文件 modified time、导入日志对齐。 |
 | Result | 成功摘要或失败错误。 | 如果 failed，先看这一列，再看 Log 最后几行。 |
