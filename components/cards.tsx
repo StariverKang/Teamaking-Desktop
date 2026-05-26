@@ -16,7 +16,7 @@ function uniqueTags(values: unknown[], limit?: number) {
   return tags;
 }
 
-export function CourseCard({ course }: { course: any }) {
+export function CourseCard({ course, onJoin }: { course: any; onJoin?: (course: any) => void | Promise<void> }) {
   const offering = course.offerings?.[0];
   const board = offering?.boards?.[0];
 
@@ -41,6 +41,15 @@ export function CourseCard({ course }: { course: any }) {
             进入 Course Board
             <ArrowRight size={15} aria-hidden />
           </Link>
+        ) : onJoin ? (
+          <button
+            type="button"
+            onClick={() => onJoin(course)}
+            className="focus-ring inline-flex items-center gap-2 border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper"
+          >
+            加入课程板
+            <ArrowRight size={15} aria-hidden />
+          </button>
         ) : null}
       </div>
     </Card>

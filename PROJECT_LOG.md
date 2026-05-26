@@ -819,3 +819,16 @@
   - `npm run test` 通过（3 files passed，9 passed，1 skipped）。
   - `npm run build` 通过（0 warnings）。
   - Playwright 截图检查 `/`、`/courses`、`/admin/content` 桌面端和 `/courses` 移动端，确认页面非空、结构可见、移动端导航可横向滚动。
+
+### 推荐课程卡片加入入口修复
+
+- 背景：
+  - 用户反馈推荐课程列表中部分课程只有“Course details”，没有“Enter Course Board / 加入课程板”入口。
+  - 根因是 `CourseCard` 只在课程已经有现成 CourseBoard 时显示进入按钮；但后端已经支持同校 active 课程按需创建并加入 CourseBoard。
+- 改动：
+  - `CourseCard` 增加可选 `onJoin` 回调；没有现成 board 但页面提供加入能力时，显示“加入课程板”按钮。
+  - 课程页推荐列表向 `CourseCard` 传入现有 `joinFirstBoard`，因此 handbook 推荐课程即使还没有 board，也能点击后创建/加入。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。

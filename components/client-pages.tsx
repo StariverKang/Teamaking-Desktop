@@ -2452,7 +2452,7 @@ export function CoursesPage() {
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             {(recommended?.courses ?? []).map((course: any) => (
-              <CourseCard key={course.id} course={course} />
+              <CourseCard key={course.id} course={course} onJoin={joinFirstBoard} />
             ))}
             {(recommended?.courses ?? []).length === 0 ? (
               <Card>
