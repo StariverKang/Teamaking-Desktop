@@ -844,3 +844,19 @@
   - `npm run typecheck` 通过。
   - `npm run lint` 通过（0 warnings）。
   - `npm run build` 通过（0 warnings）。
+
+### AR Programme Handbook 精确 PDF 定位修复
+
+- 背景：
+  - 用户反馈 AR programme handbook 索引进入每个 admission handbook 页面后，页面内实际都有每个 programme 的 PDF 下载链接，但 TEAMAKING 的官方四年课程安排入口仍提示“未定位到当前专业的精确 handbook PDF”。
+  - 根因是后端只查 `CourseImportDatasetSourceRef.externalId` 的单一精确模式；当线上数据来自批次 payload、dataset source refs 尚未同步、或用户专业 code/name 与 PDF code 有差异时，会直接退回索引页。
+- 改动：
+  - `officialAcademicLinksForUser()` 增加三层解析：匹配用户当前 admission/专业课程规则里的 `sourceRefIds`、扫描已批准/待审批导入批次 payload 和 dataset source refs、最后实时读取 AR 索引页与对应 admission handbook 页面中的 programme PDF 链接。
+  - 增加按 `entryYear + majorCode + majorName` 的短期缓存，避免每次打开页面都请求 AR 官网。
+  - 链接匹配同时参考 programme code、programme name 关键词、PDF URL、规则 sourceRefId，不再只依赖单一 externalId。
+  - 未命中时提示语改为“暂未从已导入数据或 AR 页面定位到精确 PDF”，减少误导。
+- 验证：
+  - `curl` 确认 AR 索引页包含 2025/2024/2023 admission 子页面，子页面 HTML 包含各 programme PDF 链接。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。

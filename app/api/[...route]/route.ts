@@ -112,6 +112,7 @@ const courseInclude = {
 const BNBU_PROGRAMMES_URL = "https://www.bnbu.edu.cn/en/faculties_and_schools.htm";
 const BNBU_HANDBOOK_URL = "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm";
 const BNBU_MIS_URL = "https://mis.bnbu.edu.cn";
+const handbookLinkCache = new Map<string, { expiresAt: number; ref: HandbookSourceRef | null }>();
 
 async function routeOf(context: RouteContext) {
   const params = await context.params;
@@ -3281,19 +3282,296 @@ function ruleMatchesUserRelativeTerm(rule: any, user: any, semester: any) {
   return Boolean(code && relativeTermCodes.includes(code));
 }
 
+type HandbookSourceRef = {
+  externalId: string;
+  title: string;
+  url: string;
+  sourceType?: string;
+  provenance?: string;
+  score?: number;
+};
+
+function decodeHtmlEntity(entity: string) {
+  const named: Record<string, string> = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: "\"",
+    apos: "'",
+    nbsp: " "
+  };
+  if (entity.startsWith("#x")) {
+    const value = Number.parseInt(entity.slice(2), 16);
+    return Number.isFinite(value) ? String.fromCodePoint(value) : `&${entity};`;
+  }
+  if (entity.startsWith("#")) {
+    const value = Number.parseInt(entity.slice(1), 10);
+    return Number.isFinite(value) ? String.fromCodePoint(value) : `&${entity};`;
+  }
+  return named[entity] ?? `&${entity};`;
+}
+
+function decodeHtmlText(value: string) {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&([a-zA-Z]+|#\d+|#x[\da-fA-F]+);/g, (_, entity: string) => decodeHtmlEntity(entity))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizedSearchText(value: string) {
+  return decodeHtmlText(value)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function significantWords(value: string) {
+  const stopWords = new Set([
+    "and",
+    "the",
+    "of",
+    "for",
+    "programme",
+    "program",
+    "studies",
+    "study",
+    "management",
+    "science",
+    "sciences",
+    "technology",
+    "department",
+    "faculty",
+    "school"
+  ]);
+  return normalizedSearchText(value)
+    .split(" ")
+    .filter((word) => word.length >= 3 && !stopWords.has(word));
+}
+
+function anchorLinksFromHtml(html: string) {
+  const links: Array<{ href: string; text: string }> = [];
+  const anchorPattern = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  for (const match of html.matchAll(anchorPattern)) {
+    const href = decodeHtmlText(match[1] ?? "");
+    const text = decodeHtmlText(match[2] ?? "");
+    if (href) links.push({ href, text });
+  }
+  return links;
+}
+
+function sourceRefFromRecord(value: unknown, provenance: string): HandbookSourceRef | null {
+  if (!isPlainRecord(value)) return null;
+  const url = textValue(value.url);
+  if (!url) return null;
+  return {
+    externalId: textValue(value.externalId) || textValue(value.id),
+    title: textValue(value.title),
+    url,
+    sourceType: textValue(value.sourceType),
+    provenance
+  };
+}
+
+function handbookRefScore(
+  ref: HandbookSourceRef,
+  context: { entryYear: number; majorCode: string; majorName: string; sourceRefIds: Set<string> }
+) {
+  const majorCode = context.majorCode.toLowerCase();
+  const decodedUrl = decodeURIComponent(ref.url).toLowerCase();
+  const searchText = normalizedSearchText(`${ref.externalId} ${ref.title} ${decodedUrl}`);
+  const sourceId = ref.externalId.toLowerCase();
+  let score = 0;
+
+  if (!decodedUrl.includes(".pdf") && !searchText.includes("pdf")) score -= 50;
+  if (context.sourceRefIds.has(ref.externalId) || context.sourceRefIds.has(sourceId)) score += 240;
+  if (majorCode && sourceId === `handbook-${context.entryYear}-${majorCode}`) score += 180;
+  if (sourceId.includes(`handbook-${context.entryYear}`)) score += 40;
+  if (majorCode && sourceId.includes(majorCode)) score += 80;
+  if (majorCode && decodedUrl.includes(majorCode)) score += 80;
+  if (decodedUrl.includes(String(context.entryYear)) || searchText.includes(String(context.entryYear))) score += 50;
+  if (normalizedSearchText(ref.title).includes(normalizedSearchText(context.majorName))) score += 70;
+
+  const targetWords = significantWords(context.majorName);
+  const matchedWords = targetWords.filter((word) => searchText.includes(word));
+  score += matchedWords.length * 18;
+  if (targetWords.length > 0 && matchedWords.length === targetWords.length) score += 40;
+  if (searchText.includes("handbook")) score += 10;
+
+  return score;
+}
+
+async function matchingRuleSourceRefIdsForUser(user: any, entryYear: number) {
+  if (!user.schoolId || !user.profile) return [];
+  const currentSemester = await prisma.semester.findFirst({ where: { schoolId: user.schoolId, isCurrent: true } });
+  const rules = await prisma.courseCurriculumRule.findMany({
+    where: {
+      status: "active",
+      course: { schoolId: user.schoolId }
+    },
+    select: {
+      audience: true,
+      relativeTermCodes: true,
+      sourceRefIds: true,
+      semester: true
+    }
+  });
+  const sourceIds = new Set<string>();
+  for (const rule of rules) {
+    const audience = audienceForRule(rule);
+    const cohortYears = cohortYearsForRule(rule);
+    if (cohortYears.length && !cohortYears.includes(entryYear)) continue;
+    const matches = currentSemester
+      ? curriculumRuleMatchesUser(rule, user, currentSemester)
+      : audience.allMajors === true ||
+        textValues(audience.majorCodes).includes(textValue(user.profile?.major?.code)) ||
+        textValues(audience.facultyCodes).includes(textValue(user.profile?.faculty?.code));
+    if (!matches) continue;
+    for (const sourceRefId of textValues(rule.sourceRefIds)) sourceIds.add(sourceRefId);
+  }
+  return Array.from(sourceIds);
+}
+
+function bestHandbookRef(
+  refs: HandbookSourceRef[],
+  context: { entryYear: number; majorCode: string; majorName: string; sourceRefIds: Set<string> }
+) {
+  return refs
+    .map((ref) => ({ ...ref, score: handbookRefScore(ref, context) }))
+    .filter((ref) => (ref.score ?? 0) > 0)
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0] ?? null;
+}
+
+async function findHandbookRefFromDatasetSources(
+  user: any,
+  context: { entryYear: number; majorCode: string; majorName: string; sourceRefIds: Set<string> }
+) {
+  if (!user.schoolId) return null;
+  const rows = await prisma.courseImportDatasetSourceRef.findMany({
+    where: {
+      dataset: { schoolId: user.schoolId }
+    },
+    orderBy: { id: "desc" },
+    take: 800
+  });
+  return bestHandbookRef(
+    rows.map((row: any) => ({
+      externalId: row.externalId,
+      title: row.title ?? "",
+      url: row.url ?? "",
+      sourceType: row.sourceType ?? "",
+      provenance: "dataset_source_ref"
+    })),
+    context
+  );
+}
+
+async function findHandbookRefFromImportPayloads(
+  user: any,
+  context: { entryYear: number; majorCode: string; majorName: string; sourceRefIds: Set<string> }
+) {
+  if (!user.schoolId) return null;
+  const batches = await prisma.courseImportBatch.findMany({
+    where: {
+      schoolId: user.schoolId,
+      status: { in: ["approved", "pending"] }
+    },
+    select: {
+      payload: true,
+      cohortYears: true,
+      dataset: { include: { sourceRefs: true } }
+    },
+    orderBy: { createdAt: "desc" },
+    take: 20
+  });
+  const refs: HandbookSourceRef[] = [];
+  for (const batch of batches) {
+    const cohortYears = textValues(batch.cohortYears).map(Number).filter(Number.isFinite);
+    if (cohortYears.length && !cohortYears.includes(context.entryYear)) continue;
+    for (const sourceRef of batch.dataset?.sourceRefs ?? []) {
+      const ref = sourceRefFromRecord(sourceRef, "batch_dataset_source_ref");
+      if (ref) refs.push(ref);
+    }
+    if (isPlainRecord(batch.payload)) {
+      for (const sourceRef of records(batch.payload.sourceRefs)) {
+        const ref = sourceRefFromRecord(sourceRef, "batch_payload_source_ref");
+        if (ref) refs.push(ref);
+      }
+    }
+  }
+  return bestHandbookRef(refs, context);
+}
+
+async function fetchTextWithTimeout(url: string, timeoutMs = 6000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return "";
+    return await response.text();
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function findHandbookRefFromLiveAr(
+  context: { entryYear: number; majorCode: string; majorName: string; sourceRefIds: Set<string> }
+) {
+  const indexHtml = await fetchTextWithTimeout(BNBU_HANDBOOK_URL);
+  if (!indexHtml) return null;
+  const yearLink = anchorLinksFromHtml(indexHtml).find((link) => {
+    const text = normalizedSearchText(link.text);
+    return text.includes(`${context.entryYear} admission`) || text.includes(`${context.entryYear} ${context.entryYear + 1}`);
+  });
+  if (!yearLink) return null;
+  const yearPageUrl = new URL(yearLink.href, BNBU_HANDBOOK_URL).toString();
+  const yearHtml = await fetchTextWithTimeout(yearPageUrl);
+  if (!yearHtml) return null;
+  const refs = anchorLinksFromHtml(yearHtml)
+    .map((link) => ({
+      externalId: `ar-live-${context.entryYear}-${normalizedSearchText(link.text).replace(/\s+/g, "-").slice(0, 80)}`,
+      title: link.text,
+      url: new URL(link.href, yearPageUrl).toString(),
+      sourceType: "programme_structure",
+      provenance: "ar_live"
+    }))
+    .filter((ref) => ref.url.toLowerCase().includes(".pdf") || normalizedSearchText(ref.title).includes("programme"));
+  return bestHandbookRef(refs, context);
+}
+
+async function resolveProgrammeHandbookRef(user: any) {
+  const entryYear = typeof user.profile?.entryYear === "number" ? user.profile.entryYear : null;
+  const majorCode = textValue(user.profile?.major?.code);
+  const majorName = textValue(user.profile?.major?.name);
+  if (!entryYear || (!majorCode && !majorName)) return null;
+
+  const cacheKey = `${user.schoolId ?? "school"}:${entryYear}:${majorCode}:${majorName}`;
+  const cached = handbookLinkCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.ref;
+
+  const sourceRefIds = new Set((await matchingRuleSourceRefIdsForUser(user, entryYear)).flatMap((id) => [id, id.toLowerCase()]));
+  const context = { entryYear, majorCode, majorName, sourceRefIds };
+  const ref =
+    (await findHandbookRefFromDatasetSources(user, context)) ??
+    (await findHandbookRefFromImportPayloads(user, context)) ??
+    (await findHandbookRefFromLiveAr(context));
+
+  handbookLinkCache.set(cacheKey, { ref, expiresAt: Date.now() + 10 * 60 * 1000 });
+  return ref;
+}
+
 async function officialAcademicLinksForUser(user: any) {
   const entryYear = typeof user.profile?.entryYear === "number" ? user.profile.entryYear : null;
   const majorCode = textValue(user.profile?.major?.code);
-  const handbookRef = entryYear && majorCode
-    ? await prisma.courseImportDatasetSourceRef.findFirst({
-        where: {
-          externalId: {
-            contains: `handbook-${entryYear}-${majorCode.toLowerCase()}`
-          }
-        },
-        orderBy: { id: "desc" }
-      })
-    : null;
+  const majorName = textValue(user.profile?.major?.name);
+  const handbookRef = await resolveProgrammeHandbookRef(user);
+  const programmeLabel = [entryYear ? `${entryYear} admission` : "", majorCode || majorName].filter(Boolean).join(" · ");
 
   return [
     {
@@ -3309,8 +3587,8 @@ async function officialAcademicLinksForUser(user: any) {
       label: "AR 官方四年课程安排",
       href: handbookRef?.url ?? BNBU_HANDBOOK_URL,
       description: handbookRef?.url
-        ? `${entryYear} admission · ${majorCode} handbook source`
-        : "未定位到当前专业的精确 handbook PDF，先打开 AR programme handbook 索引。"
+        ? `${programmeLabel} · 官方 programme handbook PDF`
+        : "暂未从已导入数据或 AR 页面定位到精确 PDF，先打开 AR programme handbook 索引。"
     },
     {
       key: "mis",
