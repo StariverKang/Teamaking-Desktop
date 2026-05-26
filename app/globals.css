@@ -126,6 +126,36 @@ tbody tr:hover {
   background: rgba(17, 19, 15, 0.035);
 }
 
+.admin-page,
+.admin-page > *,
+.admin-page :where(.grid, .border, .shadow-soft) {
+  min-width: 0;
+}
+
+.admin-page :where(.overflow-x-auto, .overflow-auto):has(> table) {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-gutter: stable;
+}
+
+.admin-page :where(.overflow-x-auto, .overflow-auto):has(> table)::-webkit-scrollbar {
+  height: 10px;
+}
+
+.admin-page :where(.overflow-x-auto, .overflow-auto):has(> table)::-webkit-scrollbar-track {
+  background: rgba(17, 19, 15, 0.06);
+}
+
+.admin-page :where(.overflow-x-auto, .overflow-auto):has(> table)::-webkit-scrollbar-thumb {
+  background: rgba(17, 19, 15, 0.34);
+}
+
+.admin-page table {
+  width: max-content;
+  min-width: 100%;
+}
+
 ::selection {
   background: rgba(143, 56, 43, 0.18);
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ArrowRight, Award, Check, Copy, FileText, Folder, Handshake, Image as ImageIcon, KeyRound, Link as LinkIcon, MailCheck, MessageCircle, Music, Plus, Search, Send, Settings, Trash2, UserRound, X } from "lucide-react";
@@ -110,6 +110,23 @@ function Field({
 }
 
 const inputClass = "focus-ring w-full border border-ink/30 bg-chalk/80 px-3 py-2 text-sm text-ink";
+
+function majorsForFaculty(majors: any[], facultyId?: string) {
+  return majors.filter((major) => !facultyId || major.facultyId === facultyId);
+}
+
+function normalizeAcademicSelection(faculties: any[], majors: any[], preferredFacultyId?: string | null, preferredMajorId?: string | null) {
+  const facultyExists = (id?: string | null) => Boolean(id && faculties.some((faculty) => faculty.id === id));
+  const preferredMajor = preferredMajorId ? majors.find((major) => major.id === preferredMajorId) : null;
+  const facultyId = facultyExists(preferredFacultyId)
+    ? String(preferredFacultyId)
+    : preferredMajor?.facultyId ?? faculties[0]?.id ?? "";
+  const scopedMajors = majorsForFaculty(majors, facultyId);
+  const majorId = preferredMajor && (!facultyId || preferredMajor.facultyId === facultyId)
+    ? preferredMajor.id
+    : scopedMajors[0]?.id ?? "";
+  return { facultyId, majorId };
+}
 
 function MarkdownRenderer({ children }: { children: string }) {
   return (
@@ -1009,14 +1026,20 @@ export function OnboardingPage() {
 
   useEffect(() => {
     if (data?.user) {
+      const academicSelection = normalizeAcademicSelection(
+        data.faculties ?? [],
+        data.majors ?? [],
+        data.user.profile?.facultyId,
+        data.user.profile?.majorId
+      );
       setForm((current) => ({
         ...current,
         displayName: data.user.profile?.displayName ?? data.user.email?.split("@")[0] ?? "",
         grade: data.academicLock?.grade ?? data.user.profile?.grade ?? current.grade,
         entryYear: data.academicLock?.entryYear ?? data.user.profile?.entryYear ?? current.entryYear,
         entryTerm: data.academicLock?.entryTerm ?? data.user.profile?.entryTerm ?? current.entryTerm,
-        facultyId: data.faculties?.[0]?.id ?? "",
-        majorId: data.majors?.[0]?.id ?? ""
+        facultyId: academicSelection.facultyId,
+        majorId: academicSelection.majorId
       }));
     }
   }, [data]);
@@ -1094,7 +1117,11 @@ export function OnboardingPage() {
                 </Field>
               </div>
               <Field label="Faculty / College">
-                <select className={inputClass} value={form.facultyId} onChange={(event) => setForm({ ...form, facultyId: event.target.value, majorId: "" })}>
+                <select
+                  className={inputClass}
+                  value={form.facultyId}
+                  onChange={(event) => setForm({ ...form, ...normalizeAcademicSelection(data.faculties ?? [], data.majors ?? [], event.target.value, null) })}
+                >
                   {(data.faculties ?? []).map((faculty: any) => (
                     <option key={faculty.id} value={faculty.id}>
                       {faculty.name}
@@ -1103,7 +1130,8 @@ export function OnboardingPage() {
                 </select>
               </Field>
               <Field label="Major">
-                <select className={inputClass} value={form.majorId} onChange={(event) => setForm({ ...form, majorId: event.target.value })}>
+                <select className={inputClass} value={form.majorId} onChange={(event) => setForm({ ...form, majorId: event.target.value })} disabled={majors.length === 0}>
+                  {majors.length === 0 ? <option value="">请先选择 Faculty</option> : null}
                   {majors.map((major: any) => (
                     <option key={major.id} value={major.id}>
                       {major.name}
@@ -1334,6 +1362,9 @@ export function ProfileEditorPage() {
   });
   const [editingPortfolioId, setEditingPortfolioId] = useState("");
   const academicLock = data?.user?.profile?.academicLock ?? onboarding?.academicLock;
+  const profileFaculties = useMemo(() => onboarding?.faculties ?? [], [onboarding?.faculties]);
+  const profileMajors = useMemo(() => onboarding?.majors ?? [], [onboarding?.majors]);
+  const filteredProfileMajors = useMemo(() => majorsForFaculty(profileMajors, form.facultyId), [profileMajors, form.facultyId]);
 
   function resetPortfolioForm() {
     setEditingPortfolioId("");
@@ -1364,6 +1395,12 @@ export function ProfileEditorPage() {
   useEffect(() => {
     if (data?.user) {
       const profile = data.user.profile;
+      const academicSelection = normalizeAcademicSelection(
+        onboarding?.faculties ?? [],
+        onboarding?.majors ?? [],
+        profile?.facultyId,
+        profile?.majorId
+      );
       setForm({
         displayName: profile?.displayName ?? "",
         nickname: profile?.nickname ?? "",
@@ -1372,8 +1409,8 @@ export function ProfileEditorPage() {
         grade: profile?.grade ?? "Year 2",
         entryYear: profile?.entryYear ?? defaultEntryYear,
         entryTerm: profile?.entryTerm ?? "Fall",
-        facultyId: profile?.facultyId ?? onboarding?.faculties?.[0]?.id ?? "",
-        majorId: profile?.majorId ?? onboarding?.majors?.[0]?.id ?? "",
+        facultyId: academicSelection.facultyId,
+        majorId: academicSelection.majorId,
         avatarUrl: profile?.avatarUrl ?? "",
         backgroundImageUrl: profile?.backgroundImageUrl ?? "",
         outputTagsText: tagsToText(profile?.outputTags),
@@ -1609,13 +1646,18 @@ export function ProfileEditorPage() {
                   </select>
                 </Field>
                 <Field label="Faculty">
-                  <select className={inputClass} value={form.facultyId} onChange={(event) => setForm({ ...form, facultyId: event.target.value })}>
-                    {(onboarding?.faculties ?? []).map((faculty: any) => <option key={faculty.id} value={faculty.id}>{faculty.name}</option>)}
+                  <select
+                    className={inputClass}
+                    value={form.facultyId}
+                    onChange={(event) => setForm({ ...form, ...normalizeAcademicSelection(profileFaculties, profileMajors, event.target.value, null) })}
+                  >
+                    {profileFaculties.map((faculty: any) => <option key={faculty.id} value={faculty.id}>{faculty.name}</option>)}
                   </select>
                 </Field>
                 <Field label="Major">
-                  <select className={inputClass} value={form.majorId} onChange={(event) => setForm({ ...form, majorId: event.target.value })}>
-                    {(onboarding?.majors ?? []).map((major: any) => <option key={major.id} value={major.id}>{major.name}</option>)}
+                  <select className={inputClass} value={form.majorId} onChange={(event) => setForm({ ...form, majorId: event.target.value })} disabled={filteredProfileMajors.length === 0}>
+                    {filteredProfileMajors.length === 0 ? <option value="">请先选择 Faculty</option> : null}
+                    {filteredProfileMajors.map((major: any) => <option key={major.id} value={major.id}>{major.name}</option>)}
                   </select>
                 </Field>
               </div>
@@ -3415,6 +3457,7 @@ export function AdminResourcePage({
   const [importPage, setImportPage] = useState(1);
   const [importEdit, setImportEdit] = useState<{ kind: string; id: string; draft: Record<string, string | boolean>; raw: any } | null>(null);
   const [courseDraft, setCourseDraft] = useState<Record<string, string>>({});
+  const courseEditorRef = useRef<HTMLDivElement | null>(null);
   const [adminTableQuery, setAdminTableQuery] = useState("");
   const [contentTreeQuery, setContentTreeQuery] = useState("");
   const [contentTab, setContentTab] = useState<"developer_contact" | "developer_log" | "help" | "announcements">(initialContentTab);
@@ -3424,11 +3467,11 @@ export function AdminResourcePage({
   const [contentAnnouncementCreating, setContentAnnouncementCreating] = useState(false);
 
   useEffect(() => {
-    if (resource === "content") return;
+    if (resource === "content" || resource === "courses") return;
     if (primaryRows.length > 0 && !selectedId) setSelectedId(primaryRows[0].id ?? primaryRows[0].key ?? "");
   }, [primaryRows, resource, selectedId]);
 
-  const selectedCourse = resource === "courses" ? (data?.courses ?? []).find((course: any) => course.id === selectedId) ?? data?.courses?.[0] : null;
+  const selectedCourse = resource === "courses" ? (data?.courses ?? []).find((course: any) => course.id === selectedId) ?? null : null;
 
   useEffect(() => {
     if (resource !== "courses" || !selectedCourse) return;
@@ -3662,6 +3705,12 @@ export function AdminResourcePage({
 
   function selectedLabel(row: any) {
     return row.profile?.displayName ?? row.title ?? row.name ?? row.key ?? row.email ?? row.id;
+  }
+
+  function openCourseEditor(course: any) {
+    setSelectedId(course.id);
+    setResult({ type: "info", message: `正在编辑课程：${course.code} · ${course.title}` });
+    window.setTimeout(() => courseEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   }
 
   function courseDraftPayload(draft: Record<string, string> = courseDraft) {
@@ -5046,13 +5095,23 @@ export function AdminResourcePage({
                       <td className="max-w-[260px] px-3 py-2 text-xs text-ink/62">{Array.isArray(course.categoryTags) ? course.categoryTags.join(", ") : ""}</td>
                       <td className="px-3 py-2 text-xs text-ink/62">{course.usage?.totalRules ?? 0} rules · {course._count?.offerings ?? 0} offerings</td>
                       <td className="px-3 py-2">
-                        <button type="button" className="rounded-sm border border-ink/30 px-2 py-1 text-xs font-semibold" onClick={() => setSelectedId(course.id)}>Edit</button>
+                        <button type="button" className="rounded-sm border border-ink/30 px-2 py-1 text-xs font-semibold" onClick={() => openCourseEditor(course)}>Edit</button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {selectedCourse ? (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-ink/15 bg-mist/30 px-3 py-2 text-sm">
+                <p className="font-semibold text-ink">正在编辑：{selectedCourse.code} · {selectedCourse.title}</p>
+                <button type="button" className="rounded-sm border border-ink/30 px-3 py-1 font-semibold" onClick={() => courseEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+                  跳到编辑表单
+                </button>
+              </div>
+            ) : (
+              <p className="mt-4 border border-ink/10 bg-paper px-3 py-2 text-sm text-ink/62">点击某门课程右侧的 Edit 后，会打开这门课的视觉化编辑表单。</p>
+            )}
           </div>
 
           <form
@@ -5082,7 +5141,7 @@ export function AdminResourcePage({
           </form>
 
           {selectedCourse ? (
-            <div className="grid gap-4 border border-ink/15 p-4">
+            <div ref={courseEditorRef} className="scroll-mt-24 grid gap-4 border border-ink/15 p-4">
               <div>
                 <h3 className="text-lg font-semibold text-ink">Edit {selectedCourse.code} · {selectedCourse.title}</h3>
                 <p className="mt-1 text-sm text-ink/62">保存后这些字段会被标记为管理员手动覆盖，后续 JSON 导入默认不覆盖它们。</p>

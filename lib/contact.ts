@@ -11,6 +11,7 @@ type ContactLike = {
 
 export type ContactViewerContext = {
   isOwner?: boolean;
+  isAdmin?: boolean;
   isSameSchool?: boolean;
   hasSentTeamUp?: boolean;
   hasMutualTeamUp?: boolean;
@@ -40,7 +41,7 @@ export function normalizeContactVisibility(value?: string) {
 }
 
 function canShow(field: keyof typeof defaultContactVisibility, contact: ContactLike, context: ContactViewerContext) {
-  if (context?.isOwner) return true;
+  if (context?.isOwner || context?.isAdmin) return true;
   const settings = settingsOf(contact);
   const visibility = normalizeContactVisibility(settings[field]) ?? defaultContactVisibility[field];
 

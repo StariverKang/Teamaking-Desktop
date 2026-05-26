@@ -105,7 +105,7 @@ export function PageShell({
   return (
     <main className="mx-auto grid max-w-[1440px] gap-4 px-3 pb-24 pt-5 md:px-5 md:py-7 lg:grid-cols-[228px_1fr]">
       {aside !== "none" ? <Sidebar items={nav} admin={aside === "admin"} /> : null}
-      <section className={clsx("min-w-0", aside === "none" && "lg:col-span-2")}>
+      <section className={clsx("min-w-0", aside === "admin" && "admin-page", aside === "none" && "lg:col-span-2")}>
         <div className="mb-5 border-b border-ink/18 pb-4">
           {eyebrow ? <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-coral">{eyebrow}</p> : null}
           <h1 className="font-serif text-3xl font-semibold leading-tight text-ink md:text-5xl">
@@ -153,7 +153,7 @@ function MobileNav({ items, admin }: { items: { href: string; label: string }[];
 }
 
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={clsx("border border-ink/70 bg-chalk/92 p-4 shadow-soft md:p-5", className)}>{children}</div>;
+  return <div className={clsx("min-w-0 border border-ink/70 bg-chalk/92 p-4 shadow-soft md:p-5", className)}>{children}</div>;
 }
 
 export function EmptyState({ title, body }: { title: string; body: string }) {

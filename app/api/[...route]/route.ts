@@ -475,6 +475,7 @@ async function shareActiveBoard(ownerId: string, viewerId: string) {
 async function publicPortfolioItems(items: any[] = [], owner: any, viewer: any) {
   if (!owner?.id || !viewer?.id) return [];
   if (owner.id === viewer.id) return items;
+  if (isAdminRole(viewer.role)) return items;
 
   const isVerifiedSameSchool = Boolean(owner.schoolId && viewer.schoolId && owner.schoolId === viewer.schoolId && viewer.isEmailVerified);
   const needsSharedBoard = items.some((item) => item.visibility === "same_course_board");
@@ -490,6 +491,7 @@ async function publicPortfolioItems(items: any[] = [], owner: any, viewer: any) 
 
 async function contactContextForViewer(ownerId: string, viewer: any, postId?: string) {
   if (ownerId === viewer.id) return { isOwner: true, isSameSchool: true };
+  if (isAdminRole(viewer.role)) return { isAdmin: true, isSameSchool: true };
 
   const [sentInterest, mutualInterest, mutualFollow] = await Promise.all([
     prisma.teamUpRequest.findFirst({
@@ -1615,7 +1617,7 @@ async function handleProfile(method: string, path: string[], request: NextReques
     });
 
     if (!target) throw new ApiError(404, "找不到这个用户。");
-    if (target.schoolId !== user.schoolId) {
+    if (!isAdminRole(user.role) && target.schoolId !== user.schoolId) {
       throw new ApiError(403, "MVP 中仅允许同校已验证用户互相查看基础资料。");
     }
 

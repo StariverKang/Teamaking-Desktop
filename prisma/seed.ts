@@ -93,7 +93,8 @@ async function main() {
       data: {
         schoolId: school.id,
         facultyId: faculties["Faculty of Humanities and Social Sciences"].id,
-        name: "Media and Communication",
+        code: "MCOM",
+        name: "Media and Communication Studies Programme",
         degreeType: "undergraduate"
       }
     }),
@@ -101,7 +102,8 @@ async function main() {
       data: {
         schoolId: school.id,
         facultyId: faculties["Faculty of Humanities and Social Sciences"].id,
-        name: "Applied Translation",
+        code: "ATS",
+        name: "Applied Translation Studies Programme",
         degreeType: "undergraduate"
       }
     }),
@@ -109,7 +111,8 @@ async function main() {
       data: {
         schoolId: school.id,
         facultyId: faculties["Faculty of Science and Technology"].id,
-        name: "Computer Science",
+        code: "CST",
+        name: "Computer Science and Technology Programme",
         degreeType: "undergraduate"
       }
     }),
@@ -117,7 +120,8 @@ async function main() {
       data: {
         schoolId: school.id,
         facultyId: faculties["Faculty of Business and Management"].id,
-        name: "Finance",
+        code: "FIN",
+        name: "Finance Programme",
         degreeType: "undergraduate"
       }
     }),
@@ -125,7 +129,8 @@ async function main() {
       data: {
         schoolId: school.id,
         facultyId: faculties["Faculty of Business and Management"].id,
-        name: "Marketing",
+        code: "MKT",
+        name: "Marketing Management Programme",
         degreeType: "undergraduate"
       }
     })

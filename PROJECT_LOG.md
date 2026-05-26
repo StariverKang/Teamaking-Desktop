@@ -923,3 +923,60 @@
   - `npm run lint` 通过（0 warnings）。
   - `npm run test` 通过（3 files passed，9 passed，1 skipped）。
   - `npm run build` 通过（0 warnings）。
+
+### Profile 专业下拉废弃专业名修复
+
+- 背景：
+  - 用户反馈 Profile 的 `Major` 下拉仍出现 `Media and Communication` 这类已废弃短名，并且专业选项过多，没有先按 Faculty 收窄。
+  - 数据库检查显示当前 active BNBU 版本只剩 32 个 handbook 正式专业；旧短名主要来自前端 demo fallback 与 seed 数据，Profile 编辑页也存在 `onboarding.majors` 全量渲染问题。
+- 改动：
+  - `ProfileEditorPage` 的 Major 下拉改为按当前 Faculty 过滤；切换 Faculty 时自动选择该 Faculty 下的第一个 Major，避免保留跨学院或已废弃 majorId。
+  - `OnboardingPage` 使用同一套 Faculty/Major 规范化逻辑，初始化时也会校验当前 Major 是否属于当前 Faculty。
+  - `lib/demo-data.ts` 与 `prisma/seed.ts` 中旧短名专业改为官方 handbook 名称，并在 seed 中补充正式 major code。
+- 验证：
+  - `rg` 确认运行时代码中不再直接生成旧短名专业。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+
+### 管理员后台表格横向滚动修复
+
+- 背景：
+  - 用户反馈管理员端多列表格在桌面宽度不足时没有清晰的左右滚动条，导致页面被表格撑得很长、右侧内容溢出。
+  - 根因是后台页面中的 Card/grid 子项默认 `min-width:auto`，表格即使包了 `overflow-x-auto` 也可能继续撑宽父级。
+- 改动：
+  - `PageShell` 为管理员页面增加 `admin-page` 标记。
+  - `Card` 默认增加 `min-w-0`，允许表格所在卡片在 grid 中收缩。
+  - 全局 CSS 针对 `.admin-page` 下直接包裹 table 的 `overflow-x-auto/overflow-auto` 容器统一启用横向滚动、稳定滚动条和横向 overscroll 限制。
+  - 后台表格统一使用 `width: max-content; min-width: 100%`，保证列多时在表格内部横向滚动，而不是撑宽整页。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。
+
+### 管理员查看用户 Profile 权限修复
+
+- 背景：
+  - 用户反馈从管理员端查看/编辑用户数据时进入 Profile 页面会触发 `API_FORBIDDEN`，提示仅允许同校已验证用户互相查看资料。
+  - 根因是 `/api/profile/:userId` 复用了学生端同校可见性规则，没有把后台管理员角色作为审计/管理场景放行。
+- 改动：
+  - 管理员角色查看他人 Profile 时跳过同校限制。
+  - 联系方式可见性上下文增加 `isAdmin`，管理员查看用户资料时可看到完整联系方式。
+  - 作品证明列表同样对管理员完整返回，避免页面能打开但关键管理数据被普通用户规则过滤。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。
+
+### Course Management 编辑入口交互修复
+
+- 背景：
+  - 用户反馈管理员端 Course Management 列表里的 `Edit` 看起来无法编辑。
+  - 根因是按钮只更新了内部选中课程，实际编辑表单在页面更下方，点击后没有明显反馈，也会默认把第一页第一门课程设为编辑对象，交互语义不清楚。
+- 改动：
+  - Course Management 不再默认选中第一页第一门课程。
+  - 点击课程行 `Edit` 后显示“正在编辑”提示，并自动滚动到视觉化编辑表单。
+  - 课程列表下方增加当前编辑课程提示和“跳到编辑表单”按钮，避免管理员误以为按钮无效。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。

@@ -489,6 +489,8 @@ v2 推荐在 `curriculumRules[]` 中提供 `relativeTermCodes`，例如 `["Y2S1"
 
 个人 Profile 支持昵称、头像、主页背景、一句话定位、个人简介、技能标签和“擅长产出的领域”标签。学校邮箱来自登录邮箱，只读且默认展示；WeChat ID、WeChat QR、LinkedIn/主页、个人邮箱可以选择性填写，并配置可见范围。
 
+Profile 和 onboarding 的专业选择先按 Faculty/College 收窄 Major 列表，只展示该 Faculty 下的正式 handbook 专业名称；切换 Faculty 时会自动切换到该 Faculty 下的可用专业，避免保留已废弃短名或跨学院专业。
+
 作品证明支持个人作品、课程作品、报告、PPT、代码、设计稿、图像、音频、GPA 截图、获奖证书、技能/职业认证、简历等类型。文件后缀覆盖 md、Word、表格、PDF、PPT、图像、音频、设计稿、代码和压缩包等常见格式。
 
 本地上传写入 `public/uploads/<userId>/...`，该目录已加入 `.gitignore`。接口返回并保存 `fileUrl`、`storageKey`、`storageMode`、`storageProvider`、`objectKey`、`fileName`、`fileMimeType`、`fileSize`、`fileExtension`、`previewKind`、`scanStatus`、`parsedText`、`resumeParsedData`。生产可设置 `UPLOAD_STORAGE_MODE=r2` 并配置 Cloudflare R2 环境变量切换对象存储。

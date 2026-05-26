@@ -27,7 +27,7 @@ export const demoAccounts: Record<
     entryYear: 2025,
     entryTerm: "Fall",
     faculty: "Faculty of Humanities and Social Sciences",
-    major: "Media and Communication",
+    major: "Media and Communication Studies Programme",
     bio: "演示账号：擅长研究、学术写作和 slides 结构。",
     redirectPath: "/dashboard"
   },
@@ -39,7 +39,7 @@ export const demoAccounts: Record<
     entryYear: 2025,
     entryTerm: "Fall",
     faculty: "Faculty of Science and Technology",
-    major: "Computer Science",
+    major: "Computer Science and Technology Programme",
     bio: "演示账号：擅长 coding、数据处理和 demo 搭建。",
     redirectPath: "/dashboard"
   },
@@ -51,7 +51,7 @@ export const demoAccounts: Record<
     entryYear: 2025,
     entryTerm: "Fall",
     faculty: "Faculty of Business and Management",
-    major: "Marketing",
+    major: "Marketing Management Programme",
     bio: "演示管理员账号：用于验收无代码后台。",
     redirectPath: "/admin"
   }
@@ -84,9 +84,9 @@ const faculties = [
 ];
 
 const majors = [
-  { id: "demo-major-media", schoolId: school.id, facultyId: faculties[0].id, name: "Media and Communication", degreeType: "undergraduate", school, faculty: faculties[0] },
-  { id: "demo-major-cs", schoolId: school.id, facultyId: faculties[1].id, name: "Computer Science", degreeType: "undergraduate", school, faculty: faculties[1] },
-  { id: "demo-major-marketing", schoolId: school.id, facultyId: faculties[2].id, name: "Marketing", degreeType: "undergraduate", school, faculty: faculties[2] }
+  { id: "demo-major-media", schoolId: school.id, facultyId: faculties[0].id, name: "Media and Communication Studies Programme", degreeType: "undergraduate", school, faculty: faculties[0] },
+  { id: "demo-major-cs", schoolId: school.id, facultyId: faculties[1].id, name: "Computer Science and Technology Programme", degreeType: "undergraduate", school, faculty: faculties[1] },
+  { id: "demo-major-marketing", schoolId: school.id, facultyId: faculties[2].id, name: "Marketing Management Programme", degreeType: "undergraduate", school, faculty: faculties[2] }
 ];
 
 const semester = {
