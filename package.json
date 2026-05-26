@@ -13,6 +13,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:validate": "prisma validate",
     "seed": "tsx prisma/seed.ts",
+    "data:cleanup-demo": "tsx scripts/cleanup-demo-data.ts",
     "admin:list": "tsx scripts/admin-users.ts list",
     "admin:create": "tsx scripts/admin-users.ts create",
     "admin:reset-password": "tsx scripts/admin-users.ts reset",

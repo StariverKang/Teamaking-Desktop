@@ -783,3 +783,19 @@
 - 验证：
   - `npm run lint` 通过（0 warnings）。
   - `npm run build` 通过（0 warnings）。
+
+### Seed 测试数据清理工具与本地清理
+
+- 背景：
+  - 用户反馈旧测试专业分类、假用户、假 Teamaking Post 和假课程仍出现在界面中，需要清理。
+  - 截图中的旧短名专业主要来自早期 `prisma/seed.ts`：`Media and Communication`、`Computer Science`、`Marketing`、`Applied Translation`、`Finance`。
+- 改动：
+  - 新增 `npm run data:cleanup-demo` 维护脚本，默认 dry-run，只列出将清理的 seed/demo 数据。
+  - 只有加 `-- --execute` 才会删除；远程数据库还必须额外加 `--allow-remote`，防止误删生产数据。
+  - 脚本目标包括早期 seed 用户、seed 课程、旧无 code 专业、测试 Teamaking Post、测试 TeamUp 请求、测试工单和 COM3999 测试课程提交。
+- 本地执行结果：
+  - 删除 TeamUp 请求 4 条、测试工单 2 条、测试课程提交 1 条、Teamaking Post 3 条、CourseBoard membership 6 条、PortfolioItem 5 条、CourseMajorMapping 5 条、CourseOffering 5 条、Course 5 条、User 3 条、Major 5 条。
+  - 清理后 dry-run 结果为空，旧短名专业查询结果为空。
+- 验证：
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run typecheck` 通过。
