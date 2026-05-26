@@ -47,3 +47,65 @@ test("dashboard shows official reference links for logged-in users", async ({ pa
   await expect(page.getByRole("link", { name: /AR 官方四年课程安排/ })).toBeVisible();
   await expect(page.getByRole("link", { name: /MIS 本学期真实选课 \/ 课表/ })).toBeVisible();
 });
+
+test("matches pagination avoids support widget and hides same-school tag", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.route("**/api/matches?**", async (route) => {
+    const users = Array.from({ length: 9 }, (_, index) => ({
+      user: {
+        id: `mock-user-${index}`,
+        email: `mock-user-${index}@mail.bnbu.edu.cn`,
+        profile: {
+          displayName: `Mock User ${index + 1}`,
+          grade: "Year 1",
+          major: { name: index % 2 ? "Accounting Programme" : "Artificial Intelligence Programme" },
+          bio: "还没有填写个人介绍。"
+        },
+        skills: []
+      },
+      score: 100 - index,
+      reasons: index === 0
+        ? ["同一课程记录", "同校可发现"]
+        : index === 1
+          ? ["二度"]
+          : index === 2
+            ? ["三度"]
+            : ["同校可发现"]
+    }));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        posts: [],
+        users: users.slice(0, 8),
+        usersPagination: { page: 1, pageSize: 8, total: users.length, totalPages: 2 }
+      })
+    });
+  });
+
+  await page.goto("/matches");
+  await expect(page.getByText("Mock User 1")).toBeVisible();
+  await expect(page.getByText("同一课程记录", { exact: true })).toBeVisible();
+  await expect(page.getByText("二度", { exact: true })).toBeVisible();
+  await expect(page.getByText("三度", { exact: true })).toBeVisible();
+  await expect(page.getByText("同校可发现", { exact: true })).toHaveCount(0);
+
+  const supportButton = page.getByTestId("support-widget-toggle");
+  const nextButton = page.getByTestId("matches-users-pagination").getByRole("button", { name: "Next" });
+  await expect(supportButton).toBeVisible();
+  await expect(nextButton).toBeVisible();
+
+  const supportBox = await supportButton.boundingBox();
+  const nextBox = await nextButton.boundingBox();
+  expect(supportBox).not.toBeNull();
+  expect(nextBox).not.toBeNull();
+  const overlaps = Boolean(
+    supportBox &&
+    nextBox &&
+    supportBox.x < nextBox.x + nextBox.width &&
+    supportBox.x + supportBox.width > nextBox.x &&
+    supportBox.y < nextBox.y + nextBox.height &&
+    supportBox.y + supportBox.height > nextBox.y
+  );
+  expect(overlaps).toBe(false);
+});

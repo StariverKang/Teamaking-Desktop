@@ -117,6 +117,23 @@ function Field({
 
 const inputClass = "focus-ring w-full border border-ink/30 bg-chalk/80 px-3 py-2 text-sm text-ink";
 
+function visibleMatchReasonTags(reasons: string[] = []) {
+  const tags = new Set<string>();
+  for (const value of reasons) {
+    const reason = String(value ?? "").trim();
+    const normalized = reason.toLowerCase();
+    if (!reason) continue;
+    if (reason === "同一课程记录" || reason.includes("同一门课程") || normalized.includes("same course")) {
+      tags.add("同一课程记录");
+    } else if (reason === "二度" || reason.includes("二度") || normalized.includes("second-degree")) {
+      tags.add("二度");
+    } else if (reason === "三度" || reason.includes("三度") || normalized.includes("third-degree")) {
+      tags.add("三度");
+    }
+  }
+  return [...tags];
+}
+
 function majorsForFaculty(majors: any[], facultyId?: string) {
   return majors.filter((major) => !facultyId || major.facultyId === facultyId);
 }
@@ -652,7 +669,7 @@ function PaginatedGrid({
     <div className="grid gap-3">
       <div className={gridClassName}>{visible.map(render)}</div>
       {items.length > pageSize ? (
-        <div className="flex items-center justify-between border border-ink/20 bg-paper px-3 py-2 text-sm">
+        <div className="pagination-safe-zone flex items-center justify-between border border-ink/20 bg-paper px-3 py-2 text-sm">
           <button type="button" className="focus-ring border border-ink/30 px-3 py-1 font-semibold disabled:opacity-40" disabled={safePage === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
             Previous
           </button>
@@ -2252,7 +2269,7 @@ export function SupportWidget() {
   if (pathname?.startsWith("/admin") || pathname?.startsWith("/crawler")) return null;
 
   return (
-    <div className="fixed bottom-5 right-5 z-40">
+    <div className="fixed bottom-20 right-4 z-40 lg:bottom-5 lg:right-5">
       {open ? (
         <div className="mb-3 w-[min(360px,calc(100vw-40px))] border-2 border-ink bg-paper p-4 shadow-hard">
           <div className="flex items-center justify-between gap-3">
@@ -2277,7 +2294,7 @@ export function SupportWidget() {
           {message ? <p className="mt-2 text-sm font-medium text-forest">{message}</p> : null}
         </div>
       ) : null}
-      <button type="button" onClick={() => setOpen((value) => !value)} className="focus-ring inline-flex h-12 w-12 items-center justify-center rounded-full border-2 border-ink bg-coral text-paper shadow-hard" aria-label="提交支持工单">
+      <button type="button" onClick={() => setOpen((value) => !value)} data-testid="support-widget-toggle" className="focus-ring inline-flex h-12 w-12 items-center justify-center rounded-full border-2 border-ink bg-coral text-paper shadow-hard" aria-label="提交支持工单">
         <MessageCircle size={22} aria-hidden />
       </button>
     </div>
@@ -2504,7 +2521,7 @@ export function CoursesPage() {
                 ) : null}
               </div>
               {searchPagination.totalPages > 1 ? (
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-ink/15 pt-3">
+                <div className="pagination-safe-zone mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-ink/15 pt-3">
                   <p className="text-xs text-ink/52">
                     Showing {(searchPagination.page - 1) * searchPagination.pageSize + 1}
                     {"-"}
@@ -2700,7 +2717,7 @@ function CourseCommentsSection({ courseId }: { courseId: string }) {
         ))}
         {(data?.comments ?? []).length === 0 ? <p className="text-sm text-ink/56">还没有课程评价。</p> : null}
       </div>
-      <div className="mt-4 flex items-center justify-between border border-ink/15 bg-chalk px-3 py-2 text-sm">
+      <div className="pagination-safe-zone mt-4 flex items-center justify-between border border-ink/15 bg-chalk px-3 py-2 text-sm">
         <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1} className="border border-ink/30 px-3 py-1 font-semibold disabled:opacity-40">上一页</button>
         <span>{pagination.page} / {pagination.totalPages} · {pagination.total} 条</span>
         <button type="button" onClick={() => setPage((value) => Math.min(pagination.totalPages, value + 1))} disabled={page >= pagination.totalPages} className="border border-ink/30 px-3 py-1 font-semibold disabled:opacity-40">下一页</button>
@@ -3170,12 +3187,12 @@ export function MatchesPage() {
   const [usersPage, setUsersPage] = useState(1);
   const usersPageSize = 8;
   const { data, error, loading } = useApi(`/api/matches?usersPage=${usersPage}&usersPageSize=${usersPageSize}`, [usersPage, usersPageSize]);
-  const hiddenPostReasons = new Set(["same school", "open to team"]);
+  const hiddenPostReasons = new Set(["same school", "open to team", "同校可发现"]);
   const visiblePostReasons = (reasons: string[] = []) => reasons.filter((reason) => !hiddenPostReasons.has(String(reason).trim().toLowerCase()));
   const usersPagination = data?.usersPagination ?? { page: usersPage, pageSize: usersPageSize, total: 0, totalPages: 1 };
 
   return (
-    <PageShell title="Matches" eyebrow="Discovery" description="优先推荐上过同一门课程、二度/三度好友网络、同一个专业、同校开放展示的同学；不使用 AI，也不依赖官方选课数据库。">
+    <PageShell title="Matches" eyebrow="Discovery" description="优先推荐同一课程记录、二度/三度好友网络；同专业和同校开放展示只作为补充排序，不再显示为标签。">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       <div className="grid gap-6">
         <section>
@@ -3211,16 +3228,18 @@ export function MatchesPage() {
                 {(data?.users ?? []).map((item: any) => (
                   <div key={item.user.id} className="grid gap-2">
                     <ProfileCard user={item.user} />
-                    <div className="flex flex-wrap gap-2">
-                      {(item.reasons ?? []).map((reason: string) => (
-                        <SkillBadge key={reason}>{reason}</SkillBadge>
-                      ))}
-                    </div>
+                    {visibleMatchReasonTags(item.reasons ?? []).length ? (
+                      <div className="flex flex-wrap gap-2">
+                        {visibleMatchReasonTags(item.reasons ?? []).map((reason) => (
+                          <SkillBadge key={reason}>{reason}</SkillBadge>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
               {usersPagination.totalPages > 1 ? (
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-ink/18 bg-paper/70 px-3 py-2 text-xs">
+                <div data-testid="matches-users-pagination" className="pagination-safe-zone mt-4 flex flex-wrap items-center justify-between gap-3 border border-ink/18 bg-paper/70 px-3 py-2 text-xs">
                   <span className="text-ink/56">
                     Showing {(usersPagination.page - 1) * usersPagination.pageSize + 1}
                     {"-"}

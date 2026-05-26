@@ -3123,7 +3123,7 @@ async function handleMatches(request: NextRequest) {
     const demoUsers = demoPeople().map((membership, index) => ({
       user: publicUser(membership.user),
       score: index === 0 ? 95 : 50,
-      reasons: index === 0 ? ["上过同一门课程", "同一个专业"] : ["同校可发现"]
+      reasons: index === 0 ? ["同一课程记录"] : []
     }));
     const pagedDemoUsers = paginateUsers(demoUsers);
     return ok({
@@ -3179,7 +3179,7 @@ async function handleMatches(request: NextRequest) {
     }
   >();
 
-  const addCandidate = (matchedUser: any, score: number, reason: string, sharedCourseCode?: string) => {
+  const addCandidate = (matchedUser: any, score: number, reason?: string, sharedCourseCode?: string) => {
     if (!matchedUser || matchedUser.id === user.id) return;
     const existing = candidateMap.get(matchedUser.id) ?? {
       user: matchedUser,
@@ -3189,7 +3189,7 @@ async function handleMatches(request: NextRequest) {
       sharedCourses: new Set<string>()
     };
     existing.score += score;
-    if (!existing.reasonSet.has(reason)) {
+    if (reason && !existing.reasonSet.has(reason)) {
       existing.reasonSet.add(reason);
       existing.reasons.push(reason);
     }
@@ -3217,7 +3217,7 @@ async function handleMatches(request: NextRequest) {
 
     for (const membership of sameCourseMemberships) {
       const courseCode = membership.board.courseOffering.course.code;
-      addCandidate(membership.user, 80, `上过同一门课程：${courseCode}`, courseCode);
+      addCandidate(membership.user, 80, "同一课程记录", courseCode);
     }
   }
 
@@ -3270,7 +3270,7 @@ async function handleMatches(request: NextRequest) {
     });
     for (const matchedUser of networkUsers) {
       const degree = networkDistances.get(matchedUser.id);
-      addCandidate(matchedUser, degree === 2 ? 34 : 20, degree === 2 ? "二度好友网络" : "三度好友网络");
+      addCandidate(matchedUser, degree === 2 ? 34 : 20, degree === 2 ? "二度" : "三度");
     }
   }
 
@@ -3287,7 +3287,7 @@ async function handleMatches(request: NextRequest) {
     : [];
 
   for (const matchedUser of sameMajorUsers) {
-    addCandidate(matchedUser, 45, "同一个专业");
+    addCandidate(matchedUser, 45);
   }
 
   const crossMajorUsers = await prisma.user.findMany({
@@ -3304,7 +3304,7 @@ async function handleMatches(request: NextRequest) {
   });
 
   for (const matchedUser of crossMajorUsers) {
-    addCandidate(matchedUser, 12, "同校可发现");
+    addCandidate(matchedUser, 12);
   }
 
   const sortedUsers = Array.from(candidateMap.values())
