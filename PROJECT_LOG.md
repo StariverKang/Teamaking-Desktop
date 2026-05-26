@@ -649,3 +649,18 @@
   - `npm run test:e2e` 通过（2 passed，0 warnings）。
   - `npm run build` 通过（0 warnings）。
   - `npm audit --omit=dev --registry=https://registry.npmjs.org --json` 通过，0 vulnerabilities。
+
+### BNBU Crawler 2023 Admission 修复
+
+- 背景：
+  - 线上 crawler 跑 `2025,2024,2023` admission 时失败，日志显示 `ERR_MODULE_NOT_FOUND: Cannot find package 'pdfjs-dist'`。
+  - 页面同时显示 2024/2025 输出，是因为失败任务回退展示了历史输出文件，不代表本次任务成功生成。
+- 改动：
+  - 将 `pdfjs-dist` 加入正式 dependencies，确保 Vercel serverless 运行 `scripts/bnbu-crawler/run-handbook-preview.mjs` 时能够加载 PDF parser。
+  - PDF standard fonts 路径改为通过 `import.meta.resolve("pdfjs-dist/standard_fonts/")` 从实际安装包解析，避免本地/线上目录结构不同导致文本抽取为空。
+  - PDF 文本抽取改为按 PDF.js items 重组行：空字符串视为换行、空白片段视为列分隔，修复新版 PDF.js 将 `course code / title / units` 拆成多个 text item 后课程行匹配不到的问题。
+  - PDF.js verbosity 调整为只输出错误，隐藏不影响解析结果的字体 warning。
+  - Crawler job 失败时不再用旧的历史文件作为本次 job outputs fallback，避免管理员误以为失败任务生成了部分旧 JSON。
+- 验证：
+  - `node scripts/bnbu-crawler/run-handbook-preview.mjs --cohorts=2025,2024,2023 --limit=1 --academicYear=2026 --term=Fall --semesterCode=2026-Fall --semesterName='2026 Fall' --outDir=/tmp/teamaking-crawler-smoke` 通过，生成 2023/2024/2025 三个文件，每个 ACCT 输出 49 门课程和 49 条规则。
+  - `node scripts/bnbu-crawler/run-handbook-preview.mjs --cohorts=2023 --limit=all --academicYear=2026 --term=Fall --semesterCode=2026-Fall --semesterName='2026 Fall' --outDir=/tmp/teamaking-crawler-2023-full` 通过，2023 admission 输出 4 个 faculty、31 个 major、1060 门课程、1462 条规则、`offerings=0`。

@@ -4048,7 +4048,7 @@ async function startCrawlerJob(body: Record<string, unknown>, admin: any) {
     job.finishedAt = new Date().toISOString();
     const allOutputs = await listCrawlerOutputs();
     job.outputs = crawlerOutputsChangedAfter(beforeOutputs, allOutputs);
-    if (!job.outputs.length) {
+    if (code === 0 && !job.outputs.length) {
       job.outputs = allOutputs.filter((file) => input.cohorts.some((cohort: string) => file.name.includes(`-${cohort}-`)));
     }
     if (code !== 0 && !job.errorMessage) {

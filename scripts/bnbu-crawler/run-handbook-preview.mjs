@@ -3,10 +3,10 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { getDocument, VerbosityLevel } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { fileURLToPath } from "node:url";
 
-GlobalWorkerOptions.standardFontDataUrl = path.dirname(fileURLToPath(import.meta.url)) + "/node_modules/pdfjs-dist/standard_fonts/";
+const pdfStandardFontDataUrl = fileURLToPath(import.meta.resolve("pdfjs-dist/standard_fonts/"));
 
 const ROOT = process.cwd();
 const DEFAULT_HANDBOOK_URL = "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm";
@@ -140,14 +140,33 @@ async function fetchBuffer(url) {
 
 async function pdfText(buffer) {
   const data = new Uint8Array(buffer);
-  const doc = await getDocument({ data }).promise;
+  const doc = await getDocument({
+    data,
+    standardFontDataUrl: pdfStandardFontDataUrl,
+    disableWorker: true,
+    verbosity: VerbosityLevel.ERRORS
+  }).promise;
   const lines = [];
+  let currentLine = "";
+  const flushLine = () => {
+    const line = currentLine.replace(/\s+/g, " ").trim();
+    if (line) lines.push(line);
+    currentLine = "";
+  };
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
     for (const item of content.items) {
-      if (item.str) lines.push(item.str);
+      const text = typeof item.str === "string" ? item.str : "";
+      if (text === "") {
+        flushLine();
+      } else if (/^\s+$/.test(text)) {
+        if (currentLine && !currentLine.endsWith(" ")) currentLine += " ";
+      } else {
+        currentLine += text;
+      }
     }
+    flushLine();
   }
   doc.destroy();
   return lines.join("\n");
