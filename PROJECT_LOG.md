@@ -860,3 +860,21 @@
   - `npm run typecheck` 通过。
   - `npm run lint` 通过（0 warnings）。
   - `npm run build` 通过（0 warnings）。
+
+### BNBU 专业介绍入口定位到专业层
+
+- 背景：
+  - 用户反馈“BNBU 专业介绍”入口只跳到 BNBU 学院/学校索引，不能直接进入用户当前专业的官方 programme 页面。
+- 改动：
+  - `officialAcademicLinksForUser()` 增加 programme introduction 解析。
+  - 按用户 Profile 的 faculty code 优先读取对应学院/学校官网首页，再用 major code 和 major name 匹配具体 programme 链接；找不到才退回 BNBU faculties and schools 总入口。
+  - 增加 1 小时缓存，避免频繁请求 BNBU 学院官网。
+- 抽样确认：
+  - FHSS + Media and Communication 命中 `http://fhss.bnbu.edu.cn/mcom_en`。
+  - FST + Computer Science and Technology 命中 `http://fst.bnbu.edu.cn/cst_en`。
+  - FBM + Accounting 命中 `http://fbm.bnbu.edu.cn/acct_en`。
+  - SCC + Cinema and Television 命中 `http://scc.bnbu.edu.cn/ctv_en`。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。

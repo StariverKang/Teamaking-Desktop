@@ -113,6 +113,15 @@ const BNBU_PROGRAMMES_URL = "https://www.bnbu.edu.cn/en/faculties_and_schools.ht
 const BNBU_HANDBOOK_URL = "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm";
 const BNBU_MIS_URL = "https://mis.bnbu.edu.cn";
 const handbookLinkCache = new Map<string, { expiresAt: number; ref: HandbookSourceRef | null }>();
+const programmeIntroCache = new Map<string, { expiresAt: number; ref: ProgrammeIntroRef | null }>();
+const BNBU_FACULTY_PROGRAMME_PAGES = [
+  { code: "FBM", url: "https://fbm.bnbu.edu.cn/en" },
+  { code: "FHSS", url: "https://fhss.bnbu.edu.cn/en" },
+  { code: "FST", url: "https://fst.bnbu.edu.cn/en" },
+  { code: "SCC", url: "https://scc.bnbu.edu.cn/en" },
+  { code: "SAI", url: "https://sai.bnbu.edu.cn/en" },
+  { code: "SGE", url: "https://sge.bnbu.edu.cn/en" }
+];
 
 async function routeOf(context: RouteContext) {
   const params = await context.params;
@@ -3291,6 +3300,14 @@ type HandbookSourceRef = {
   score?: number;
 };
 
+type ProgrammeIntroRef = {
+  title: string;
+  url: string;
+  facultyCode?: string;
+  provenance?: string;
+  score?: number;
+};
+
 function decodeHtmlEntity(entity: string) {
   const named: Record<string, string> = {
     amp: "&",
@@ -3566,10 +3583,79 @@ async function resolveProgrammeHandbookRef(user: any) {
   return ref;
 }
 
+function programmeIntroScore(
+  ref: ProgrammeIntroRef,
+  context: { majorCode: string; majorName: string }
+) {
+  const majorCode = context.majorCode.toLowerCase();
+  const url = decodeURIComponent(ref.url).toLowerCase();
+  const searchText = normalizedSearchText(`${ref.title} ${url}`);
+  let score = 0;
+
+  if (url.includes("graduate") || searchText.includes("master") || searchText.includes("phd")) score -= 70;
+  if (majorCode && (url.includes(`/${majorCode}_en`) || url.includes(`${majorCode}_en`))) score += 180;
+  if (majorCode && searchText.split(" ").includes(majorCode)) score += 80;
+  if (normalizedSearchText(ref.title).includes(normalizedSearchText(context.majorName))) score += 110;
+
+  const targetWords = significantWords(context.majorName);
+  const matchedWords = targetWords.filter((word) => searchText.includes(word));
+  score += matchedWords.length * 24;
+  if (targetWords.length > 0 && matchedWords.length === targetWords.length) score += 60;
+  if (url.endsWith("_en") || url.includes("_en/") || url.includes("_en/index.htm")) score += 25;
+  if (searchText.includes("programme") || searchText.includes("program")) score += 10;
+
+  return score;
+}
+
+function bestProgrammeIntroRef(refs: ProgrammeIntroRef[], context: { majorCode: string; majorName: string }) {
+  return refs
+    .map((ref) => ({ ...ref, score: programmeIntroScore(ref, context) }))
+    .filter((ref) => (ref.score ?? 0) > 0)
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0] ?? null;
+}
+
+function facultyProgrammePagesForUser(user: any) {
+  const facultyCode = textValue(user.profile?.faculty?.code).toUpperCase();
+  const direct = BNBU_FACULTY_PROGRAMME_PAGES.find((page) => page.code === facultyCode);
+  return direct ? [direct] : BNBU_FACULTY_PROGRAMME_PAGES;
+}
+
+async function resolveProgrammeIntroRef(user: any) {
+  const majorCode = textValue(user.profile?.major?.code);
+  const majorName = textValue(user.profile?.major?.name);
+  if (!majorCode && !majorName) return null;
+
+  const facultyCode = textValue(user.profile?.faculty?.code).toUpperCase();
+  const cacheKey = `${facultyCode || "all"}:${majorCode}:${majorName}`;
+  const cached = programmeIntroCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.ref;
+
+  const context = { majorCode, majorName };
+  const refs: ProgrammeIntroRef[] = [];
+  for (const page of facultyProgrammePagesForUser(user)) {
+    const html = await fetchTextWithTimeout(page.url);
+    if (!html) continue;
+    for (const link of anchorLinksFromHtml(html)) {
+      const url = new URL(link.href, page.url).toString();
+      if (!/^https?:\/\//i.test(url)) continue;
+      refs.push({
+        title: link.text,
+        url,
+        facultyCode: page.code,
+        provenance: "faculty_site"
+      });
+    }
+  }
+  const ref = bestProgrammeIntroRef(refs, context);
+  programmeIntroCache.set(cacheKey, { ref, expiresAt: Date.now() + 60 * 60 * 1000 });
+  return ref;
+}
+
 async function officialAcademicLinksForUser(user: any) {
   const entryYear = typeof user.profile?.entryYear === "number" ? user.profile.entryYear : null;
   const majorCode = textValue(user.profile?.major?.code);
   const majorName = textValue(user.profile?.major?.name);
+  const programmeRef = await resolveProgrammeIntroRef(user);
   const handbookRef = await resolveProgrammeHandbookRef(user);
   const programmeLabel = [entryYear ? `${entryYear} admission` : "", majorCode || majorName].filter(Boolean).join(" · ");
 
@@ -3577,9 +3663,11 @@ async function officialAcademicLinksForUser(user: any) {
     {
       key: "programme",
       label: "BNBU 专业介绍",
-      href: BNBU_PROGRAMMES_URL,
-      description: user.profile?.major?.name
-        ? `查看 ${user.profile.major.name} 所属学院和专业官方介绍。`
+      href: programmeRef?.url ?? BNBU_PROGRAMMES_URL,
+      description: programmeRef?.url
+        ? `查看 ${majorName || majorCode} 的官方 programme 页面。`
+        : user.profile?.major?.name
+          ? `查看 ${user.profile.major.name} 所属学院和专业官方介绍。`
         : "查看 BNBU 官方学院与专业介绍。"
     },
     {
