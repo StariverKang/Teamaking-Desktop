@@ -878,3 +878,17 @@
   - `npm run typecheck` 通过。
   - `npm run lint` 通过（0 warnings）。
   - `npm run build` 通过（0 warnings）。
+
+### 课程搜索分页修复
+
+- 背景：
+  - 用户反馈课程搜索结果无法翻页；例如搜索 `Introduction` 时只能看到前几条课程，无法继续查看后续匹配项。
+  - 根因是 `/api/courses/search` 只返回固定前 50 条，前端又只渲染前 8 条，没有分页状态和翻页控件。
+- 改动：
+  - `/api/courses/search` 支持 `page` 和 `pageSize`，返回 `pagination: { page, pageSize, total, totalPages }`。
+  - 课程页 `Search / Free elective` tab 增加结果总数、当前页、上一页/下一页按钮。
+  - 搜索词变化时自动回到第一页，避免旧页码造成空结果。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。

@@ -2052,13 +2052,24 @@ async function handleCourses(method: string, path: string[], request: NextReques
   if (method === "GET" && path[1] === "search") {
     const url = new URL(request.url);
     const q = (url.searchParams.get("q") ?? "").trim();
+    const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+    const pageSize = Math.min(50, Math.max(1, Number.parseInt(url.searchParams.get("pageSize") ?? "10", 10) || 10));
+    const start = (page - 1) * pageSize;
     const user = await requireUser();
     if (isDemoUser(user)) {
       const courses = demoCourses
         .map((course) => ({ ...course, ...scoreCourseMatch(course, q) }))
         .filter((course) => !q || course.score > 0)
         .sort((a, b) => b.score - a.score || a.code.localeCompare(b.code));
-      return ok({ courses });
+      return ok({
+        courses: courses.slice(start, start + pageSize),
+        pagination: {
+          page,
+          pageSize,
+          total: courses.length,
+          totalPages: Math.max(1, Math.ceil(courses.length / pageSize))
+        }
+      });
     }
 
     const rawCourses = await prisma.course.findMany({
@@ -2072,10 +2083,17 @@ async function handleCourses(method: string, path: string[], request: NextReques
     const courses = rawCourses
       .map((course) => ({ ...course, ...scoreCourseMatch(course, q) }))
       .filter((course) => !q || course.score > 0)
-      .sort((a, b) => b.score - a.score || a.code.localeCompare(b.code))
-      .slice(0, 50);
+      .sort((a, b) => b.score - a.score || a.code.localeCompare(b.code));
 
-    return ok({ courses });
+    return ok({
+      courses: courses.slice(start, start + pageSize),
+      pagination: {
+        page,
+        pageSize,
+        total: courses.length,
+        totalPages: Math.max(1, Math.ceil(courses.length / pageSize))
+      }
+    });
   }
 
   if (method === "POST" && path[1] && path[2] === "join") {

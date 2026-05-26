@@ -2329,12 +2329,18 @@ export function CoursesPage() {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [tab, setTab] = useState<"recommended" | "mine" | "search">("recommended");
+  const [searchPage, setSearchPage] = useState(1);
+  const searchPageSize = 10;
   const { data: me, loading: authLoading } = useApi("/api/auth/me");
   const isAuthed = Boolean(me?.user);
   const { data: recommended } = useApi(isAuthed ? "/api/courses/recommended" : null, [isAuthed]);
   const { data: myCourses } = useApi(isAuthed ? "/api/courses/my" : null, [isAuthed]);
-  const { data: search } = useApi(isAuthed ? `/api/courses/search?q=${encodeURIComponent(q)}` : null, [q, isAuthed]);
+  const { data: search, error: searchError, loading: searchLoading } = useApi(
+    isAuthed ? `/api/courses/search?q=${encodeURIComponent(q)}&page=${searchPage}&pageSize=${searchPageSize}` : null,
+    [q, searchPage, searchPageSize, isAuthed]
+  );
   const officialLinks = recommended?.officialLinks ?? myCourses?.officialLinks ?? [];
+  const searchPagination = search?.pagination ?? { page: searchPage, pageSize: searchPageSize, total: 0, totalPages: 1 };
 
   async function joinFirstBoard(course: any) {
     const result = await api(`/api/courses/${course.id}/join`, { method: "POST" });
@@ -2409,6 +2415,7 @@ export function CoursesPage() {
               value={q}
               onChange={(event) => {
                 setQ(event.target.value);
+                setSearchPage(1);
                 if (event.target.value.trim()) setTab("search");
               }}
               placeholder="搜索课程代码或课程名称，例如 COM3003；free elective 可直接搜索加入"
@@ -2416,9 +2423,16 @@ export function CoursesPage() {
           </div>
           {tab === "search" && q.trim() ? (
             <div className="mt-4 border-t border-ink/15 pt-3">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink/50">Recommended by match score</p>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-ink/50">Recommended by match score</p>
+                <p className="text-xs text-ink/52">
+                  {searchPagination.total} results · page {searchPagination.page} / {searchPagination.totalPages}
+                </p>
+              </div>
+              {searchLoading ? <LoadingState /> : null}
+              <ErrorBox message={searchError} />
               <div className="grid gap-2">
-                {(search?.courses ?? []).slice(0, 8).map((course: any) => {
+                {(search?.courses ?? []).map((course: any) => {
                   return (
                     <div key={course.id} className="grid gap-3 border border-ink/15 bg-paper px-3 py-3 md:grid-cols-[1fr_auto] md:items-center">
                       <div>
@@ -2436,7 +2450,37 @@ export function CoursesPage() {
                     </div>
                   );
                 })}
+                {!searchLoading && (search?.courses ?? []).length === 0 ? (
+                  <EmptyState title="没有找到匹配课程" body="可以换一个课程代码、英文关键词，或通过右下角工单提交缺失课程。" />
+                ) : null}
               </div>
+              {searchPagination.totalPages > 1 ? (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-ink/15 pt-3">
+                  <p className="text-xs text-ink/52">
+                    Showing {(searchPagination.page - 1) * searchPagination.pageSize + 1}
+                    {"-"}
+                    {Math.min(searchPagination.page * searchPagination.pageSize, searchPagination.total)} of {searchPagination.total}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={searchPagination.page <= 1}
+                      onClick={() => setSearchPage((page) => Math.max(1, page - 1))}
+                      className="border border-ink/30 px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Prev
+                    </button>
+                    <button
+                      type="button"
+                      disabled={searchPagination.page >= searchPagination.totalPages}
+                      onClick={() => setSearchPage((page) => Math.min(searchPagination.totalPages, page + 1))}
+                      className="border border-ink/30 px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </Card>
