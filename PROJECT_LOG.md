@@ -726,3 +726,18 @@
   - `npm run test` 通过（3 files passed，8 passed，1 skipped）。
   - `npm run test:e2e` 通过（2 passed）。
   - `npm audit --omit=dev --registry=https://registry.npmjs.org --json` 通过，0 vulnerabilities。
+
+### Portfolio 文件预览入口补齐
+
+- 背景：
+  - 用户在 Profile 的 Past work / Paperwork 卡片中看到作品类型和编辑按钮，但没有明显的已上传文件预览入口。
+  - 现有卡片只在 `fileUrl` 存在时显示“预览”，对仅有外部链接、解析文本、旧存储字段或缺少文件名的记录没有明确反馈。
+- 改动：
+  - Portfolio 卡片统一计算预览状态：`fileUrl`、`externalUrl`、`parsedText` 或 metadata 摘要任一存在，都显示“预览”按钮并打开站内 `FilePreviewModal`。
+  - 没有可预览内容时显示“暂无文件预览”，并在可编辑场景提示“点击编辑可补传”，避免管理员/用户误以为按钮漏渲染。
+  - 文件名缺失但存在存储字段时显示“已上传文件”，减少旧数据或迁移数据的空白状态。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。
+  - `npm run test` 通过（3 files passed，8 passed，1 skipped）。

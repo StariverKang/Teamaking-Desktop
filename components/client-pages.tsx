@@ -593,6 +593,18 @@ function fileFamily(item: any) {
   return "other";
 }
 
+function portfolioPreviewState(item: any) {
+  const parsedText = item.parsedText || item.metadata?.parsedText || item.metadata?.summary || "";
+  const previewUrl = item.fileUrl || item.externalUrl || "";
+  const hasStoredFile = Boolean(item.fileName || item.storageKey || item.objectKey || item.fileUrl);
+  return {
+    hasPreview: Boolean(previewUrl || parsedText),
+    hasStoredFile,
+    previewUrl,
+    parsedText
+  };
+}
+
 function PaginatedGrid({
   items,
   render,
@@ -1192,6 +1204,7 @@ export function DashboardPage() {
 function PortfolioEvidenceCard({ item, editable, onDelete, onEdit }: { item: any; editable?: boolean; onDelete?: (id: string) => void; onEdit?: (item: any) => void }) {
   const typeLabel = portfolioTypeLabels[item.type] ?? item.type ?? "作品";
   const [previewing, setPreviewing] = useState(false);
+  const previewState = portfolioPreviewState(item);
   return (
     <div className="border-2 border-ink bg-paper p-4">
       <FilePreviewModal item={previewing ? item : null} onClose={() => setPreviewing(false)} />
@@ -1223,21 +1236,32 @@ function PortfolioEvidenceCard({ item, editable, onDelete, onEdit }: { item: any
         <div className="grid gap-2 text-sm text-ink/62">
           {item.myRole ? <p>我的角色：{item.myRole}</p> : null}
           {item.semesterText ? <p>时间：{item.semesterText}</p> : null}
-          {item.fileName ? <p>文件：{item.fileName} {formatFileSize(item.fileSize) ? `· ${formatFileSize(item.fileSize)}` : ""}</p> : null}
+          {item.fileName ? (
+            <p>文件：{item.fileName} {formatFileSize(item.fileSize) ? `· ${formatFileSize(item.fileSize)}` : ""}</p>
+          ) : previewState.hasStoredFile ? (
+            <p>文件：已上传文件 {formatFileSize(item.fileSize) ? `· ${formatFileSize(item.fileSize)}` : ""}</p>
+          ) : (
+            <p className="text-ink/46">文件：暂无上传文件{editable ? "，点击编辑可补传。" : "。"}</p>
+          )}
         </div>
         <div className="flex flex-wrap items-start gap-2">
-            {item.fileUrl ? (
-              <button type="button" onClick={() => setPreviewing(true)} className="inline-flex items-center gap-1 border border-ink/40 px-2 py-1 text-xs font-semibold">
-                {previewIcon(item.previewKind)}
-                预览
-              </button>
-            ) : null}
-            {item.externalUrl ? (
-              <a href={item.externalUrl} target="_blank" className="inline-flex items-center gap-1 border border-ink/40 px-2 py-1 text-xs font-semibold" rel="noreferrer">
-                <LinkIcon size={13} aria-hidden />
-                外部链接
-              </a>
-            ) : null}
+          {previewState.hasPreview ? (
+            <button type="button" onClick={() => setPreviewing(true)} className="inline-flex items-center gap-1 border border-ink/40 px-2 py-1 text-xs font-semibold">
+              {previewIcon(item.previewKind)}
+              预览
+            </button>
+          ) : (
+            <span className="inline-flex items-center gap-1 border border-ink/20 bg-chalk px-2 py-1 text-xs font-semibold text-ink/46">
+              <FileText size={13} aria-hidden />
+              暂无文件预览
+            </span>
+          )}
+          {item.externalUrl ? (
+            <a href={item.externalUrl} target="_blank" className="inline-flex items-center gap-1 border border-ink/40 px-2 py-1 text-xs font-semibold" rel="noreferrer">
+              <LinkIcon size={13} aria-hidden />
+              外部链接
+            </a>
+          ) : null}
         </div>
       </div>
     </div>
