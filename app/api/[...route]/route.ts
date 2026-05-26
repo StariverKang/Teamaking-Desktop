@@ -1993,6 +1993,120 @@ async function handleCourses(method: string, path: string[], request: NextReques
     return ok({ courses });
   }
 
+  if (method === "POST" && path[1] && path[2] === "join") {
+    const user = await requireUser();
+    const courseId = path[1];
+    if (isDemoUser(user)) {
+      const course = demoCourseById(courseId);
+      const board = course.offerings?.[0]?.boards?.[0];
+      return ok({
+        board,
+        membership: { id: "demo-membership-current", userId: user.id, boardId: board?.id },
+        message: "本地视觉演示模式已模拟加入 Course Board。"
+      });
+    }
+
+    const body = await readBody(request);
+    const sectionCode = normalizeSectionCode(body.sectionCode);
+    const course = await prisma.course.findUnique({ where: { id: courseId } });
+    if (!course || course.status !== "active") throw new ApiError(404, "找不到可加入的课程。");
+    assertSameSchool(user, course.schoolId);
+
+    const currentSemester = await prisma.semester.findFirst({
+      where: { schoolId: course.schoolId, isCurrent: true }
+    });
+    if (!currentSemester) {
+      throw new ApiError(400, "当前学校还没有配置 current semester，暂时无法创建 Course Board。");
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const offeringWithBoard = await tx.courseOffering.findFirst({
+        where: {
+          courseId: course.id,
+          semesterId: currentSemester.id,
+          status: { not: "cancelled" },
+          boards: { some: { status: "active" } }
+        },
+        include: { boards: { where: { status: "active" }, orderBy: { createdAt: "asc" }, take: 1 } },
+        orderBy: { createdAt: "asc" }
+      });
+      let board = offeringWithBoard?.boards?.[0] ?? null;
+      let offeringId = offeringWithBoard?.id ?? "";
+
+      if (!board) {
+        const reusableOffering = await tx.courseOffering.findFirst({
+          where: {
+            courseId: course.id,
+            semesterId: currentSemester.id,
+            status: { not: "cancelled" }
+          },
+          orderBy: { createdAt: "asc" }
+        });
+        const offering = reusableOffering ?? await tx.courseOffering.create({
+          data: {
+            courseId: course.id,
+            semesterId: currentSemester.id,
+            teacherName: null,
+            section: null,
+            sourceRefIds: ["manual_search_join"],
+            status: "active"
+          }
+        });
+        offeringId = offering.id;
+        board = await tx.courseBoard.findFirst({
+          where: { courseOfferingId: offeringId, status: "active" },
+          orderBy: { createdAt: "asc" }
+        });
+        if (!board) {
+          board = await tx.courseBoard.create({
+            data: {
+              courseOfferingId: offeringId,
+              title: `${course.code} ${course.title}`,
+              rules: "这是 TEAMAKING 平台内自选加入的 Course Board，可用于自由选修、跨专业合作或兴趣组队；不代表官方选课名单。"
+            }
+          });
+        }
+      }
+
+      const section = await findOrCreateBoardSection(tx, board.id, sectionCode, user.id);
+      const membership = await tx.courseBoardMembership.upsert({
+        where: { userId_boardId: { userId: user.id, boardId: board.id } },
+        update: { status: "active", source: "manual", sectionId: section.id, sectionCode, leftAt: null },
+        create: {
+          userId: user.id,
+          boardId: board.id,
+          sectionId: section.id,
+          sectionCode,
+          source: "manual",
+          status: "active"
+        }
+      });
+      return { board, membership };
+    });
+
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "course.manual_join",
+      targetType: "Course",
+      targetId: course.id,
+      method,
+      path: request.nextUrl.pathname,
+      summary: {
+        courseCode: course.code,
+        boardId: result.board.id,
+        sectionCode,
+        reason: "student_search_or_free_elective"
+      }
+    });
+
+    return ok({
+      board: result.board,
+      membership: result.membership,
+      message: `你已加入 ${result.board.title} 的 ${sectionCode} section。自由选修/手动加入只代表平台内自选，不代表官方选课名单。`
+    });
+  }
+
   if (method === "POST" && path[1] === "submit") {
     const user = await requireUser();
     if (isDemoUser(user)) {

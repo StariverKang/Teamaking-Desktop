@@ -2288,10 +2288,9 @@ export function CoursesPage() {
   const { data: search } = useApi(isAuthed ? `/api/courses/search?q=${encodeURIComponent(q)}` : null, [q, isAuthed]);
 
   async function joinFirstBoard(course: any) {
-    const board = course.offerings?.[0]?.boards?.[0];
-    if (!board) return;
-    await api(`/api/boards/${board.id}/join`, { method: "POST" });
-    router.push(`/boards/${board.id}`);
+    const result = await api(`/api/courses/${course.id}/join`, { method: "POST" });
+    const boardId = result?.board?.id ?? course.offerings?.[0]?.boards?.[0]?.id;
+    if (boardId) router.push(`/boards/${boardId}`);
   }
 
   return (
@@ -2341,7 +2340,6 @@ export function CoursesPage() {
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink/50">Recommended by match score</p>
               <div className="grid gap-2">
                 {(search?.courses ?? []).slice(0, 8).map((course: any) => {
-                  const board = course.offerings?.[0]?.boards?.[0];
                   return (
                     <div key={course.id} className="grid gap-3 border border-ink/15 bg-paper px-3 py-3 md:grid-cols-[1fr_auto] md:items-center">
                       <div>
@@ -2352,11 +2350,9 @@ export function CoursesPage() {
                         <Link href={`/courses/${course.id}`} className="rounded-sm border border-ink/30 px-3 py-2 text-xs font-semibold">
                           详情
                         </Link>
-                        {board ? (
-                          <button onClick={() => joinFirstBoard(course)} className="rounded-sm bg-ink px-3 py-2 text-xs font-semibold text-paper">
-                            加入课程板
-                          </button>
-                        ) : null}
+                        <button onClick={() => joinFirstBoard(course)} className="rounded-sm bg-ink px-3 py-2 text-xs font-semibold text-paper">
+                          加入课程板
+                        </button>
                       </div>
                     </div>
                   );
@@ -2492,8 +2488,19 @@ function CourseCommentsSection({ courseId }: { courseId: string }) {
 }
 
 export function CourseDetailPage({ courseId }: { courseId: string }) {
+  const router = useRouter();
   const { data, error, loading } = useApi(`/api/courses/${courseId}`);
   const course = data?.course;
+  const [joinMessage, setJoinMessage] = useState("");
+
+  async function joinCourse() {
+    if (!course) return;
+    setJoinMessage("");
+    const result = await api(`/api/courses/${course.id}/join`, { method: "POST" });
+    const boardId = result?.board?.id;
+    if (boardId) router.push(`/boards/${boardId}`);
+    else setJoinMessage(result?.message ?? "已加入课程板。");
+  }
 
   return (
     <PageShell title={course ? `${course.code} ${course.title}` : "Course Detail"} eyebrow="Course" description="课程详情、开课学期和对应 Course Board。">
@@ -2504,6 +2511,13 @@ export function CourseDetailPage({ courseId }: { courseId: string }) {
             <p className="text-sm font-semibold text-coral">{course.code}</p>
             <h2 className="mt-1 text-2xl font-semibold text-ink">{course.title}</h2>
             <p className="mt-3 text-sm leading-6 text-ink/68">{course.description || "暂无课程描述。"}</p>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button type="button" onClick={joinCourse} className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">
+                加入课程板
+              </button>
+              <p className="text-xs leading-5 text-ink/56">可用于自由选修或手动加入；只代表 TEAMAKING 平台内自选，不代表官方选课。</p>
+            </div>
+            {joinMessage ? <p className="mt-3 text-sm font-medium text-forest">{joinMessage}</p> : null}
           </Card>
           <CourseCommentsSection courseId={course.id} />
           <div className="grid gap-4 md:grid-cols-2">

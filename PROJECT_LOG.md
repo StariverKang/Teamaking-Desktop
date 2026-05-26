@@ -756,3 +756,19 @@
   - `npm run typecheck` 通过。
   - `npm run lint` 通过（0 warnings）。
   - `npm run build` 通过（0 warnings）。
+
+### Free Elective / 手动课程加入范围修复
+
+- 背景：
+  - 用户指出课程搜索结果里部分课程只有“详情”没有“加入课程板”，这会让 free elective 被误限制在个人课程大纲内。
+  - 复查后确认：搜索接口已经返回同校 active 课程，但前端只有在课程已有 CourseBoard 时才显示加入按钮；没有当前学期 CourseBoard 的课程无法手动加入。
+- 改动：
+  - 新增 `POST /api/courses/:courseId/join`：同校 active 课程均可手动加入；如果当前学期没有 CourseOffering/CourseBoard，会即时创建一个平台内自选 CourseBoard 并加入默认 `1001` section。
+  - 搜索结果不再依赖已有 board，所有可搜索 active 课程都显示“加入课程板”。
+  - 课程详情页增加“加入课程板”按钮，并明确说明自由选修/手动加入只代表 TEAMAKING 平台内自选，不代表官方选课。
+  - 新建的手动 CourseOffering 使用 `sourceRefIds: ["manual_search_join"]` 标记，便于后续区分官方配置激活与学生自选创建。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run test` 通过（3 files passed，9 passed，1 skipped）。
+  - `npm run build` 通过（0 warnings）。
