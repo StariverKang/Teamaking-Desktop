@@ -3875,6 +3875,7 @@ export function AdminResourcePage({
               <p className="text-sm font-semibold uppercase tracking-wide text-ink/50">Step 1</p>
               <h3 className="mt-1 text-lg font-semibold text-ink">Paste and validate JSON</h3>
               <p className="mt-1 text-sm text-ink/60">校验只读取 JSON，不写入数据库；创建待审批配置只会生成一条 pending 操作。系统会把 JSON 理解为课程目录、admission-year 配置规则和来源证据，便于之后查询、编辑、审计和回溯。</p>
+              <p className="mt-1 text-xs text-ink/50">如果 JSON 来自 crawler，请粘贴单个 “可导入 JSON：bnbu-YYYY-admission-handbook.teamaking.json”。“下载整包备份”包含多个文件，不能作为一份配置直接导入。</p>
             </div>
             <input
               className={inputClass}
@@ -4819,10 +4820,10 @@ export function CrawlerPortalPage() {
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-2">
                         {job.outputs?.length ? (
-                          <a className="rounded-sm border border-ink/30 px-2 py-1 text-xs font-semibold" href={`/api/crawler/jobs/${job.id}/download`}>下载本次爬取内容</a>
+                          <a className="rounded-sm border border-ink/30 px-2 py-1 text-xs font-semibold" href={`/api/crawler/jobs/${job.id}/download`}>下载整包备份</a>
                         ) : null}
                         {job.outputs?.map((output: any) => (
-                          <a key={output.storageKey} className="rounded-sm border border-ink/20 px-2 py-1 text-xs font-semibold text-ink/70" href={output.downloadUrl}>{output.name}</a>
+                          <a key={output.storageKey} className="rounded-sm border border-ink/20 px-2 py-1 text-xs font-semibold text-ink/70" href={output.downloadUrl}>可导入 JSON：{output.name}</a>
                         ))}
                       </div>
                     </td>

@@ -664,3 +664,15 @@
 - 验证：
   - `node scripts/bnbu-crawler/run-handbook-preview.mjs --cohorts=2025,2024,2023 --limit=1 --academicYear=2026 --term=Fall --semesterCode=2026-Fall --semesterName='2026 Fall' --outDir=/tmp/teamaking-crawler-smoke` 通过，生成 2023/2024/2025 三个文件，每个 ACCT 输出 49 门课程和 49 条规则。
   - `node scripts/bnbu-crawler/run-handbook-preview.mjs --cohorts=2023 --limit=all --academicYear=2026 --term=Fall --semesterCode=2026-Fall --semesterName='2026 Fall' --outDir=/tmp/teamaking-crawler-2023-full` 通过，2023 admission 输出 4 个 faculty、31 个 major、1060 门课程、1462 条规则、`offerings=0`。
+
+### Crawler 输出整包误导导入修复
+
+- 背景：
+  - 用户在 course import 页面看到 `schemaVersion must be ...`、`school is required`、`offerings must contain at least one offering` 等错误。
+  - 复盘后确认这是把 crawler 的“本次爬取内容”整包 `{ job, files }` 粘贴进导入框导致的；该整包不是单个 admission JSON，因此顶层没有 `schemaVersion`、`school`、`semester` 等字段。
+- 改动：
+  - Course import payload 解析器会识别 crawler output bundle：单文件 bundle 自动解出其中的 `payload`；多文件 bundle 返回明确中文错误，提示下载单个 `bnbu-YYYY-admission-handbook.teamaking.json`，或在 crawler 的 `After crawl` 中选择 `create_pending` / `approve_import`。
+  - Crawler job 的整包下载按钮改为“下载整包备份”，单个输出按钮改为“可导入 JSON：文件名”，避免管理员把备份整包当作可导入配置。
+  - 整包下载文件名增加 `outputs-backup-not-direct-import.bundle.json` 后缀，进一步提示它不是直接导入文件。
+- 验证：
+  - 待运行 `npm run typecheck`、`npm run lint`、`npm run build`、`npm run test`、`npm run test:e2e`。
