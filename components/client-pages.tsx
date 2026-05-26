@@ -1532,7 +1532,7 @@ export function ProfileEditorPage() {
           <Card className="p-0">
             <div
               className="min-h-[170px] border-b-2 border-ink bg-mist p-5"
-              style={form.backgroundImageUrl ? { backgroundImage: `linear-gradient(rgba(248,246,239,.72), rgba(248,246,239,.88)), url(${form.backgroundImageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
+              style={form.backgroundImageUrl ? { backgroundImage: `linear-gradient(90deg, rgba(248,246,239,.78) 0%, rgba(248,246,239,.42) 48%, rgba(248,246,239,.16) 100%), url(${form.backgroundImageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
             >
               <div className="flex flex-wrap items-end gap-4">
                 <div className="grid h-24 w-24 place-items-center overflow-hidden border-2 border-ink bg-chalk">
@@ -1904,7 +1904,7 @@ export function PublicProfilePage({ userId }: { userId: string }) {
           <Card>
             <div
               className="min-h-[180px] border-2 border-ink bg-mist p-5"
-              style={profile?.backgroundImageUrl ? { backgroundImage: `linear-gradient(rgba(248,246,239,.72), rgba(248,246,239,.9)), url(${profile.backgroundImageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
+              style={profile?.backgroundImageUrl ? { backgroundImage: `linear-gradient(90deg, rgba(248,246,239,.78) 0%, rgba(248,246,239,.42) 48%, rgba(248,246,239,.16) 100%), url(${profile.backgroundImageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
             >
               <div className="flex flex-wrap items-end gap-4">
                 <div className="grid h-24 w-24 place-items-center overflow-hidden border-2 border-ink bg-chalk">

@@ -772,3 +772,14 @@
   - `npm run lint` 通过（0 warnings）。
   - `npm run test` 通过（3 files passed，9 passed，1 skipped）。
   - `npm run build` 通过（0 warnings）。
+
+### Profile 背景图遮罩调轻
+
+- 背景：
+  - 用户反馈主页/Profile preview 背景图的不透明遮罩太高，背景图片被过度泛白，视觉层次不明显。
+- 改动：
+  - Profile 编辑预览和公开 Profile 展示页的背景遮罩，从整块高不透明度纵向渐变改为左强右弱的横向渐变。
+  - 左侧保留文字可读性，右侧显著降低遮罩，让背景图片主体更清楚。
+- 验证：
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。
