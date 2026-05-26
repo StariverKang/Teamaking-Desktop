@@ -192,6 +192,7 @@ function serializeContentDocument(document: any) {
   return {
     id: document.id,
     kind: document.kind,
+    nodeType: document.nodeType ?? "document",
     parentId: document.parentId,
     slug: document.slug,
     title: document.title,
@@ -6283,6 +6284,7 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
         data: {
           appVersionId,
           kind,
+          nodeType: optionalString(body.nodeType) === "folder" ? "folder" : "document",
           parentId: optionalString(body.parentId),
           slug: optionalString(body.slug) ?? `${kind}-${Date.now()}`,
           title: assertString(body.title, "title"),
@@ -6310,6 +6312,7 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
         where: { id },
         data: {
           kind: optionalString(body.kind) ?? before.kind,
+          nodeType: optionalString(body.nodeType) === "folder" ? "folder" : optionalString(body.nodeType) === "document" ? "document" : before.nodeType,
           parentId: Object.prototype.hasOwnProperty.call(body, "parentId") ? optionalString(body.parentId) : before.parentId,
           slug: optionalString(body.slug) ?? before.slug,
           title: optionalString(body.title) ?? before.title,

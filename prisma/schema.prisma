@@ -869,6 +869,7 @@ model ContentDocument {
   id              String    @id @default(cuid())
   appVersionId    String    @default("legacy")
   kind            String
+  nodeType        String    @default("document")
   parentId        String?
   slug            String
   title           String
@@ -888,6 +889,7 @@ model ContentDocument {
 
   @@unique([appVersionId, kind, slug])
   @@index([appVersionId, kind, status])
+  @@index([nodeType])
   @@index([parentId])
   @@index([displayOrder])
 }

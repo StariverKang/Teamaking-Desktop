@@ -702,3 +702,27 @@
   - `npm run test:e2e` 通过（2 passed，0 warnings）。
   - `npm run prisma:validate` 通过。
   - `npm audit --omit=dev --registry=https://registry.npmjs.org --json` 通过，0 vulnerabilities。
+
+### Content & Announcements 分区管理
+
+- 背景：
+  - 用户指出内容后台把“新建内容”和“编辑已有内容”混在一起，管理员看不清现有结构，也不方便在目录树中直接创建内容。
+  - 用户要求后台内容管理分成“联系开发者 / 开发者日志 / 帮助中心 / 全站公告”几个子 tab；公告要纳入同一套内容管理入口，但保留未读弹窗提醒。
+  - 用户进一步明确：新建分类文件夹和新建文档是两个独立动作，最好直接发生在文件树上。
+- 改动：
+  - `ContentDocument` 增加 `nodeType` 字段，区分 `folder` 和 `document`；旧内容默认作为 `document` 兼容显示。
+  - `/admin/content` 改为 `Content & Announcements` 工作台：联系开发者为单页内容列表，开发者日志和帮助中心为可展开/收起的目录树，全站公告为独立公告管理 tab。
+  - 文件树支持在根节点或任意文件夹上分别“新建文件夹”和“新建文档”；新建模式和编辑已有模式有独立标题、说明和表单状态。
+  - 文件夹只保存结构字段，不显示 Markdown 正文和图片上传；文档继续支持 Markdown、摘要、图片、发布/隐藏和预览。
+  - `/admin/announcements` 重定向到 `/admin/content`，后台导航不再暴露两个重复入口。
+  - 用户侧帮助中心、开发者日志继续使用树状阅读；文件夹作为目录节点，点击文件夹只显示说明，不当正文文档阅读。
+- 数据迁移：
+  - 新增 `prisma/migrations/20260526043000_content_document_node_type/migration.sql`，为 `ContentDocument.nodeType` 添加默认值和索引。
+- 验证：
+  - `npm run prisma:validate` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。
+  - `npm run test` 通过（3 files passed，8 passed，1 skipped）。
+  - `npm run test:e2e` 通过（2 passed）。
+  - `npm audit --omit=dev --registry=https://registry.npmjs.org --json` 通过，0 vulnerabilities。

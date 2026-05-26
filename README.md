@@ -46,7 +46,7 @@ Agent 开发原则：
 - Auth：学校邮箱注册 + 密码登录；注册和找回密码使用学校邮箱验证码；本地验收可使用 `/demo-access` 绕过验证码
 - File upload：本地验收写入 `public/uploads`，生产可用 Cloudflare R2；数据库记录 `fileUrl/storageKey/objectKey/mime/extension/scanStatus/metadata`
 - I18n：系统框架支持简体中文 / English；首次访问按 IP 国家/地区写入语言 cookie，用户可手动切换，用户可编辑内容不自动翻译
-- Announcements：管理员可发布双语全站公告；用户会在任意页面顶部看到公告入口和弹窗，也可进入 `/announcements` 查看历史
+- Content & Announcements：管理员在 `/admin/content` 统一维护联系开发者、开发者日志、帮助中心和全站公告；帮助中心/开发者日志支持文件夹树和文档树，公告仍会在用户未阅读前弹窗提醒
 
 ## 本地启动
 
@@ -604,7 +604,7 @@ DATABASE_URL="Neon direct connection string" npx prisma migrate deploy
 - 管理员能用数据库中的正式管理员账号登录。
 - 管理后台 `Users`、`Boards`、`Support Tickets`、`Metrics` 页面能读取数据库。
 - 管理后台编辑用户状态、Course Board 或工单后，数据能刷新显示。
-- 管理后台 `Announcements` 可以创建草稿、发布公告、归档公告；主站任意页面顶部能看到公告条和弹窗，`/announcements` 能查看历史。
+- 管理后台 `Content & Announcements` 可以按 tab 管理联系开发者、开发者日志、帮助中心和全站公告；帮助中心/开发者日志支持在树上分别新建分类文件夹和文档；主站任意页面顶部能看到公告条和弹窗，`/announcements` 能查看历史。
 - 主站语言切换器能在中文/英文间切换；用浏览器无痕窗口模拟非中文地区时默认英文，手动切换后 cookie 会记住选择。
 - 邮件模板：注册验证码和找回密码验证码都能发送到真实学校邮箱；Vercel 中 `EMAIL_DEBUG_CODE_RESPONSE=false`，前端响应不暴露验证码。
 

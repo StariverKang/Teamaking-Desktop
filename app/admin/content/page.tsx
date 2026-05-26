@@ -3,9 +3,9 @@ import { AdminResourcePage } from "@/components/client-pages";
 export default function Page() {
   return (
     <AdminResourcePage
-      title="Content Documents"
+      title="Content & Announcements"
       endpoint="/api/admin/content"
-      description="管理帮助中心、开发者日志和联系开发者文档。支持 Markdown、父子级、发布/隐藏和最多三张日志图片。"
+      description="管理联系开发者、开发日志、帮助中心和全站公告。文档支持文件夹/文档树，公告会继续在全站弹窗提醒未读用户。"
     />
   );
 }
