@@ -26,18 +26,18 @@ export function CourseCard({ course }: { course: any }) {
         <CourseIcon />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-coral">{course.code}</p>
-          <h3 className="mt-1 text-lg font-semibold text-ink">{course.title}</h3>
+          <h3 className="mt-1 font-serif text-lg font-semibold text-ink">{course.title}</h3>
           <p className="mt-2 line-clamp-2 text-sm leading-6 text-ink/62">{course.description || "这门课还没有详细说明。"}</p>
           {course.recommendation ? <p className="mt-3 text-xs font-medium text-moss">{course.recommendation.reason}</p> : null}
         </div>
       </div>
-      <div className="mt-5 flex flex-wrap gap-2">
-        <Link href={`/courses/${course.id}`} className="focus-ring inline-flex items-center gap-2 rounded-lg border border-ink/12 px-3 py-2 text-sm font-semibold">
+      <div className="mt-4 flex flex-wrap gap-2 border-t border-ink/12 pt-3">
+        <Link href={`/courses/${course.id}`} className="focus-ring inline-flex items-center gap-2 border border-ink/25 px-3 py-2 text-sm font-semibold hover:bg-mist/60">
           课程详情
           <ArrowRight size={15} aria-hidden />
         </Link>
         {board ? (
-          <Link href={`/boards/${board.id}`} className="focus-ring inline-flex items-center gap-2 rounded-lg bg-ink px-3 py-2 text-sm font-semibold text-white">
+          <Link href={`/boards/${board.id}`} className="focus-ring inline-flex items-center gap-2 border border-ink bg-ink px-3 py-2 text-sm font-semibold text-white">
             进入 Course Board
             <ArrowRight size={15} aria-hidden />
           </Link>
@@ -64,7 +64,7 @@ export function ProfileCard({ user }: { user: any }) {
           <UserIcon />
         )}
         <div className="min-w-0 flex-1">
-          <h3 className="text-lg font-semibold text-ink">{profile?.displayName ?? user?.email ?? "未命名用户"}</h3>
+          <h3 className="font-serif text-lg font-semibold text-ink">{profile?.displayName ?? user?.email ?? "未命名用户"}</h3>
           {profile?.nickname || profile?.headline ? <p className="mt-1 text-sm font-medium text-rust">{profile?.nickname ?? profile?.headline}</p> : null}
           <p className="mt-1 text-sm text-ink/62">
             {profile?.grade ?? "未填写年级"} · {profile?.major?.name ?? "未填写专业"}
@@ -76,7 +76,7 @@ export function ProfileCard({ user }: { user: any }) {
           </div>
         </div>
       </div>
-      <Link href={`/profile/${user.id}`} className="focus-ring mt-5 inline-flex items-center gap-2 rounded-lg border border-ink/12 px-3 py-2 text-sm font-semibold">
+      <Link href={`/profile/${user.id}`} className="focus-ring mt-5 inline-flex items-center gap-2 border border-ink/25 px-3 py-2 text-sm font-semibold hover:bg-mist/60">
         <UserRound size={15} aria-hidden />
         View Profile
       </Link>
@@ -101,7 +101,7 @@ export function TeamakingPostCard({ post }: { post: any }) {
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-coral">Open to Team · {course?.code} {course?.title ? `· ${course.title}` : ""}</p>
-          <h3 className="mt-1 text-xl font-semibold text-ink">{post.title}</h3>
+          <h3 className="mt-1 font-serif text-xl font-semibold text-ink">{post.title}</h3>
           <p className="mt-2 text-sm text-ink/62">
             {profile?.displayName ?? post.user?.email} · {profile?.grade ?? "未填写年级"} · {profile?.major?.name ?? "未填写专业"}
           </p>

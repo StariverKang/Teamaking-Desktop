@@ -799,3 +799,23 @@
 - 验证：
   - `npm run lint` 通过（0 warnings）。
   - `npm run typecheck` 通过。
+
+### 全站研究档案风格 UI 与课程入口修复
+
+- 背景：
+  - 用户希望全站视觉从 MVP 线框感升级为 New York Times / Are.na / Read.cv / Obsidian 方向：米白背景、细线框、衬线标题、无衬线正文、信息密度高、研究档案卡片、轻 hover、避免圆润可爱。
+  - 同时课程推荐页没有按用户 admission year + major + 当前相对学期推荐课程，且 Course Board 缺少“我的课程”视图。
+- 改动：
+  - 重写全局设计 token：米白纸面背景、微弱网格/动态噪点、细边框、低阴影、全局 `bg-white` 收敛为米白，`border-2` 收敛为细线框。
+  - 调整全局字体栈：标题偏文楷/衬线气质，正文偏 IBM Plex / Geist / HarmonyOS Sans / 思源黑体，减少 Inter 默认感。
+  - 优化 `Navbar`、`PageShell`、`Sidebar`、移动端底部导航、`Card`、`CourseCard`、`ProfileCard`、Teamaking Post 卡片，使其更像模块化研究档案和信号面板。
+  - 首页/登录前入口右侧说明框从占位式课程流程示例改为面向用户的简短功能介绍：展示个人成果、按 A/A-/B+/过等目标成绩寻找组员、围绕课程内容讨论与评价。
+  - `/api/courses/recommended` 不再要求 handbook 课程必须有 offering；按当前 academic term、学生 admission year、专业和 `relativeTermCodes` 匹配 `CourseCurriculumRule`。
+  - 新增 `/api/courses/my`，课程页新增 `Recommended / 我的课程 / Search / Free elective` tabs；已加入课程不因 Profile 专业变化自动移除，但疑似非本专业专业课会显示轻提示。
+  - Profile 编辑页、课程页、课程详情页新增官方查询入口：BNBU 专业介绍、AR programme handbook、MIS 真实选课/课表。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run test` 通过（3 files passed，9 passed，1 skipped）。
+  - `npm run build` 通过（0 warnings）。
+  - Playwright 截图检查 `/`、`/courses`、`/admin/content` 桌面端和 `/courses` 移动端，确认页面非空、结构可见、移动端导航可横向滚动。

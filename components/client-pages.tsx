@@ -88,7 +88,7 @@ function useApi(path: string | null, deps: unknown[] = []) {
 
 function ErrorBox({ message }: { message?: string }) {
   if (!message) return null;
-  return <div className="rounded-lg border border-coral/25 bg-coral/10 px-4 py-3 text-sm text-coral">{message}</div>;
+  return <div className="border border-coral/35 bg-coral/10 px-4 py-3 text-sm text-coral">{message}</div>;
 }
 
 function Field({
@@ -109,7 +109,7 @@ function Field({
   );
 }
 
-const inputClass = "focus-ring w-full rounded-sm border border-ink/30 bg-paper px-3 py-2 text-sm text-ink";
+const inputClass = "focus-ring w-full border border-ink/30 bg-chalk/80 px-3 py-2 text-sm text-ink";
 
 function MarkdownRenderer({ children }: { children: string }) {
   return (
@@ -697,20 +697,27 @@ export function LandingPage() {
             </Link>
           </div>
         </div>
-        <div className="rounded-lg border border-ink/10 bg-white p-5 shadow-soft">
-          <div className="rounded-lg bg-mist p-4">
-            <div className="flex items-center justify-between">
-              <p className="font-semibold text-ink">COM3003 Media Ethics</p>
-              <span className="rounded-lg bg-coral px-2.5 py-1 text-xs font-semibold text-white">Open to Team</span>
+        <div className="border border-ink/18 bg-chalk/92 p-5 shadow-soft">
+          <div className="border border-ink/18 bg-mist/55 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink/16 pb-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-coral">What TEAMAKING is for</p>
+                <h2 className="mt-1 font-serif text-2xl font-semibold text-ink">把课程协作信号放到同一个地方</h2>
+              </div>
+              <span className="border border-coral/35 bg-coral/10 px-2.5 py-1 text-xs font-semibold text-coral">course + people + proof</span>
             </div>
             <div className="mt-4 grid gap-3">
-              {["Proof-of-Work Profile", "Course People", "Lightweight Team Up"].map((item, index) => (
-                <div key={item} className="rounded-lg bg-white p-4">
-                  <div className="flex items-center gap-3">
-                    <span className="grid h-8 w-8 place-items-center rounded-lg bg-gold/20 text-sm font-semibold text-ink">{index + 1}</span>
+              {[
+                ["展示个人成果", "用作品、证书、简历摘要和联系方式，让同学先看到你真实做过什么。"],
+                ["按目标成绩找组员", "在课程板里说明你希望冲 A / A- / B+，或只求稳过，匹配节奏相近的小组作业伙伴。"],
+                ["讨论课程内容", "围绕真实课程发帖、评价课程、整理经验，减少只靠群聊找信息的混乱。"]
+              ].map(([title, body], index) => (
+                <div key={title} className="border border-ink/16 bg-chalk/75 p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="grid h-7 w-7 shrink-0 place-items-center border border-ink/18 bg-paper text-xs font-semibold text-ink">{index + 1}</span>
                     <div>
-                      <p className="font-semibold text-ink">{item}</p>
-                      <p className="text-sm text-ink/58">学生展示贡献、加入课程板、轻量联系彼此。</p>
+                      <p className="font-semibold text-ink">{title}</p>
+                      <p className="mt-1 text-sm leading-6 text-ink/62">{body}</p>
                     </div>
                   </div>
                 </div>
@@ -1612,6 +1619,9 @@ export function ProfileEditorPage() {
                   </select>
                 </Field>
               </div>
+              <div className="mt-4">
+                <OfficialAcademicLinks links={data.officialLinks} compact />
+              </div>
               <div className="mt-4 grid gap-4">
                 <Field label="个人简介">
                   <textarea className={inputClass} rows={4} value={form.bio} onChange={(event) => setForm({ ...form, bio: event.target.value })} />
@@ -2279,13 +2289,52 @@ export function ContentDocumentsPage({ kind, title, eyebrow, description }: { ki
   );
 }
 
+function OfficialAcademicLinks({ links, compact = false }: { links?: any[]; compact?: boolean }) {
+  const rows = links ?? [];
+  if (!rows.length) return null;
+  const content = (
+    <>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-coral">Official references</p>
+          <h2 className="mt-1 font-serif text-xl font-semibold text-ink">官方查询入口</h2>
+        </div>
+        <p className="max-w-xl text-xs leading-5 text-ink/58">
+          TEAMAKING 的 Course Board 是平台内协作入口；专业介绍、官方四年安排和真实选课请以学校网站与 MIS 为准。
+        </p>
+      </div>
+      <div className="mt-4 grid gap-2 md:grid-cols-3">
+        {rows.map((link) => (
+          <a
+            key={link.key ?? link.href}
+            href={link.href}
+            target="_blank"
+            rel="noreferrer"
+            className="group border border-ink/18 bg-paper/70 p-3 hover:border-ink/42 hover:bg-mist/45"
+          >
+            <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink">
+              {link.label}
+              <LinkIcon size={14} aria-hidden className="text-coral" />
+            </span>
+            {link.description ? <span className="mt-2 block text-xs leading-5 text-ink/58">{link.description}</span> : null}
+          </a>
+        ))}
+      </div>
+    </>
+  );
+  return compact ? <div className="border border-ink/18 bg-paper/60 p-3">{content}</div> : <Card>{content}</Card>;
+}
+
 export function CoursesPage() {
   const router = useRouter();
   const [q, setQ] = useState("");
+  const [tab, setTab] = useState<"recommended" | "mine" | "search">("recommended");
   const { data: me, loading: authLoading } = useApi("/api/auth/me");
   const isAuthed = Boolean(me?.user);
   const { data: recommended } = useApi(isAuthed ? "/api/courses/recommended" : null, [isAuthed]);
+  const { data: myCourses } = useApi(isAuthed ? "/api/courses/my" : null, [isAuthed]);
   const { data: search } = useApi(isAuthed ? `/api/courses/search?q=${encodeURIComponent(q)}` : null, [q, isAuthed]);
+  const officialLinks = recommended?.officialLinks ?? myCourses?.officialLinks ?? [];
 
   async function joinFirstBoard(course: any) {
     const result = await api(`/api/courses/${course.id}/join`, { method: "POST" });
@@ -2330,12 +2379,42 @@ export function CoursesPage() {
       ) : null}
       {isAuthed ? (
       <div className="grid gap-5">
+        <OfficialAcademicLinks links={officialLinks} />
         <Card>
-          <div className="flex items-center gap-3">
-            <Search size={18} aria-hidden />
-            <input className={inputClass} value={q} onChange={(event) => setQ(event.target.value)} placeholder="搜索课程代码或课程名称，例如 COM3003" />
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink/15 pb-3">
+            <div className="flex flex-wrap gap-2">
+              {[
+                ["recommended", "Recommended"],
+                ["mine", "我的课程"],
+                ["search", "Search / Free elective"]
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setTab(key as typeof tab)}
+                  className={`border px-3 py-2 text-sm font-semibold ${tab === key ? "border-ink bg-ink text-paper" : "border-ink/25 bg-paper text-ink"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs leading-5 text-ink/55">
+              已加入课程不会因后续更改专业而自动移除；疑似非本专业专业课会在“我的课程”中提示。
+            </p>
           </div>
-          {q.trim() ? (
+          <div className="mt-4 flex items-center gap-3">
+            <Search size={18} aria-hidden />
+            <input
+              className={inputClass}
+              value={q}
+              onChange={(event) => {
+                setQ(event.target.value);
+                if (event.target.value.trim()) setTab("search");
+              }}
+              placeholder="搜索课程代码或课程名称，例如 COM3003；free elective 可直接搜索加入"
+            />
+          </div>
+          {tab === "search" && q.trim() ? (
             <div className="mt-4 border-t border-ink/15 pt-3">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink/50">Recommended by match score</p>
               <div className="grid gap-2">
@@ -2347,10 +2426,10 @@ export function CoursesPage() {
                         <p className="mt-1 text-xs text-ink/58">{course.matchReason} · score {course.score}</p>
                       </div>
                       <div className="flex gap-2">
-                        <Link href={`/courses/${course.id}`} className="rounded-sm border border-ink/30 px-3 py-2 text-xs font-semibold">
+                        <Link href={`/courses/${course.id}`} className="border border-ink/30 px-3 py-2 text-xs font-semibold hover:bg-mist/50">
                           详情
                         </Link>
-                        <button onClick={() => joinFirstBoard(course)} className="rounded-sm bg-ink px-3 py-2 text-xs font-semibold text-paper">
+                        <button onClick={() => joinFirstBoard(course)} className="border border-ink bg-ink px-3 py-2 text-xs font-semibold text-paper">
                           加入课程板
                         </button>
                       </div>
@@ -2361,20 +2440,70 @@ export function CoursesPage() {
             </div>
           ) : null}
         </Card>
+        {tab === "recommended" ? (
         <section>
-          <h2 className="mb-3 text-xl font-semibold text-ink">Recommended courses</h2>
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <h2 className="font-serif text-2xl font-semibold text-ink">Recommended courses</h2>
+            {recommended?.academicContext?.relativeTermCode ? (
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink/52">
+                {recommended.academicContext.semester?.name} · {recommended.academicContext.relativeTermCode}
+              </p>
+            ) : null}
+          </div>
           <div className="grid gap-4 md:grid-cols-2">
             {(recommended?.courses ?? []).map((course: any) => (
               <CourseCard key={course.id} course={course} />
             ))}
+            {(recommended?.courses ?? []).length === 0 ? (
+              <Card>
+                <h3 className="font-serif text-xl font-semibold text-ink">暂时没有匹配到本学期专业课程</h3>
+                <p className="mt-2 text-sm leading-6 text-ink/64">
+                  请确认个人 Profile 中的 admission year、major 已保存，并确认对应年份 handbook JSON 已由管理员批准导入。
+                </p>
+              </Card>
+            ) : null}
           </div>
         </section>
+        ) : null}
+        {tab === "mine" ? (
+        <section>
+          <h2 className="mb-3 font-serif text-2xl font-semibold text-ink">我的课程</h2>
+          <div className="grid gap-3">
+            {(myCourses?.memberships ?? []).map((membership: any) => {
+              const board = membership.board;
+              const offering = board?.courseOffering;
+              const course = offering?.course;
+              return (
+                <div key={membership.id} className="grid gap-3 border border-ink/35 bg-chalk/90 p-4 md:grid-cols-[1fr_auto] md:items-center">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-coral">{offering?.semester?.name ?? "Course Board"} · section {membership.sectionCode ?? "1001"}</p>
+                    <h3 className="mt-1 font-serif text-xl font-semibold text-ink">{course?.code} · {course?.title ?? board?.title}</h3>
+                    <p className="mt-2 text-xs text-ink/56">{membership.source?.startsWith("auto_") ? "BNBU admission 配置默认加入" : "手动加入 / free elective / 自选课程板"}</p>
+                    {membership.advisory ? (
+                      <p className="mt-3 border-l-2 border-coral bg-coral/8 px-3 py-2 text-sm leading-6 text-coral">{membership.advisory.message}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex gap-2">
+                    <Link href={`/courses/${course?.id}`} className="border border-ink/30 px-3 py-2 text-sm font-semibold hover:bg-mist/50">
+                      详情
+                    </Link>
+                    <Link href={`/boards/${board?.id}`} className="border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper">
+                      进入课程板
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+            {(myCourses?.memberships ?? []).length === 0 ? <EmptyState title="还没有加入课程板" body="你可以从推荐课程或搜索结果加入课程板；这不会改动学校官方选课。" /> : null}
+          </div>
+        </section>
+        ) : null}
         <Card>
-          <h2 className="text-xl font-semibold text-ink">缺失课程 / bug / 报错</h2>
+          <h2 className="font-serif text-xl font-semibold text-ink">缺失课程 / bug / 报错</h2>
           <p className="mt-2 text-sm leading-6 text-ink/64">
             缺失课程不再走复杂审核机制。请直接提交工单，管理员会私下确认并处理。
           </p>
-          <Link href="/support" className="focus-ring mt-4 inline-flex w-fit items-center gap-2 rounded-sm border border-ink/40 px-4 py-2 font-semibold">
+          <Link href="/support" className="focus-ring mt-4 inline-flex w-fit items-center gap-2 border border-ink/40 px-4 py-2 font-semibold hover:bg-mist/60">
             <Plus size={16} aria-hidden />
             提交工单
           </Link>
@@ -2507,12 +2636,13 @@ export function CourseDetailPage({ courseId }: { courseId: string }) {
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {course ? (
         <div className="grid gap-5">
+          <OfficialAcademicLinks links={data?.officialLinks} />
           <Card>
             <p className="text-sm font-semibold text-coral">{course.code}</p>
-            <h2 className="mt-1 text-2xl font-semibold text-ink">{course.title}</h2>
+            <h2 className="mt-1 font-serif text-2xl font-semibold text-ink">{course.title}</h2>
             <p className="mt-3 text-sm leading-6 text-ink/68">{course.description || "暂无课程描述。"}</p>
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              <button type="button" onClick={joinCourse} className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">
+              <button type="button" onClick={joinCourse} className="border border-ink bg-ink px-4 py-2 text-sm font-semibold text-paper">
                 加入课程板
               </button>
               <p className="text-xs leading-5 text-ink/56">可用于自由选修或手动加入；只代表 TEAMAKING 平台内自选，不代表官方选课。</p>

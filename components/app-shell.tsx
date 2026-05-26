@@ -1,23 +1,24 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { BookOpen, LayoutDashboard, MailCheck, Settings, Sparkles, UserRound, UsersRound } from "lucide-react";
+import { BookOpen, LayoutDashboard, MailCheck, Menu, Settings, Sparkles, UserRound, UsersRound } from "lucide-react";
 import { adminNav, studentNav } from "@/lib/ui-data";
 import { LanguageSwitcher } from "@/components/language-runtime";
 import clsx from "clsx";
 
 export function Navbar() {
   return (
-    <header className="sticky top-0 z-30 border-b-2 border-ink bg-paper/92 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3">
-        <Link href="/" className="flex items-center gap-2 font-semibold tracking-wide text-ink">
-          <span className="grid h-9 w-9 place-items-center border border-ink bg-ink text-paper">
-            <Sparkles size={18} aria-hidden />
+    <header className="sticky top-0 z-30 border-b border-ink/70 bg-paper/90 backdrop-blur">
+      <div className="mx-auto flex max-w-[1440px] items-center justify-between px-3 py-2.5 md:px-5">
+        <Link href="/" className="flex items-center gap-2 text-ink">
+          <span className="grid h-8 w-8 place-items-center border border-ink bg-ink text-paper">
+            <Sparkles size={16} aria-hidden />
           </span>
-          TEAMAKING
+          <span className="font-serif text-xl font-semibold tracking-normal">TEAMAKING</span>
         </Link>
-        <nav className="hidden items-center gap-1 text-sm text-ink/72 md:flex">
+        <nav className="hidden items-center gap-1 text-sm text-ink/70 lg:flex">
           <NavItem href="/dashboard" label="Dashboard" />
           <NavItem href="/courses" label="Courses" />
           <NavItem href="/matches" label="Matches" />
@@ -28,10 +29,10 @@ export function Navbar() {
           <LanguageSwitcher />
           <Link
             href="/login"
-            className="focus-ring inline-flex items-center gap-2 rounded-sm border border-ink bg-rust px-4 py-2 text-sm font-semibold text-paper shadow-soft"
+            className="focus-ring inline-flex items-center gap-2 border border-ink bg-rust px-3 py-2 text-sm font-semibold text-paper shadow-soft md:px-4"
           >
             <MailCheck size={16} aria-hidden />
-            登录 / 注册
+            <span className="hidden sm:inline">登录 / 注册</span>
           </Link>
         </div>
       </div>
@@ -41,6 +42,8 @@ export function Navbar() {
 
 function NavItem({ href, label }: { href: string; label: string }) {
   const [count, setCount] = useState(0);
+  const pathname = usePathname();
+  const active = pathname === href || (href !== "/admin" && href !== "/dashboard" && pathname.startsWith(`${href}/`));
 
   useEffect(() => {
     if (!["/team-up-requests", "/inbox"].includes(href)) return;
@@ -58,7 +61,13 @@ function NavItem({ href, label }: { href: string; label: string }) {
   }, [href]);
 
   return (
-    <Link href={href} className="relative rounded-sm px-3 py-2 hover:bg-mist">
+    <Link
+      href={href}
+      className={clsx(
+        "relative inline-flex shrink-0 items-center gap-1 whitespace-nowrap border border-transparent px-2.5 py-1.5 hover:border-ink/20 hover:bg-mist/60",
+        active && "border-ink/35 bg-mist/70 text-ink"
+      )}
+    >
       {label}
       {count > 0 ? <span className="ml-1 rounded-full bg-coral px-1.5 py-0.5 text-[10px] font-semibold text-paper">{count}</span> : null}
     </Link>
@@ -81,24 +90,25 @@ export function PageShell({
   const nav = aside === "admin" ? adminNav : studentNav;
 
   return (
-    <main className="mx-auto grid max-w-7xl gap-6 px-5 py-8 lg:grid-cols-[250px_1fr]">
+    <main className="mx-auto grid max-w-[1440px] gap-4 px-3 pb-24 pt-5 md:px-5 md:py-7 lg:grid-cols-[228px_1fr]">
       {aside !== "none" ? <Sidebar items={nav} admin={aside === "admin"} /> : null}
       <section className={clsx("min-w-0", aside === "none" && "lg:col-span-2")}>
-        <div className="mb-6">
-          {eyebrow ? <p className="mb-2 text-sm font-semibold uppercase tracking-wide text-coral">{eyebrow}</p> : null}
-          <h1 className="text-3xl font-semibold text-ink md:text-4xl">{title}</h1>
+        <div className="mb-5 border-b border-ink/18 pb-4">
+          {eyebrow ? <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-coral">{eyebrow}</p> : null}
+          <h1 className="font-serif text-3xl font-semibold leading-tight text-ink md:text-5xl">{title}</h1>
           {description ? <p className="mt-3 max-w-3xl text-base leading-7 text-ink/68">{description}</p> : null}
         </div>
         {children}
       </section>
+      {aside !== "none" ? <MobileNav items={nav} admin={aside === "admin"} /> : null}
     </main>
   );
 }
 
 function Sidebar({ items, admin }: { items: { href: string; label: string }[]; admin?: boolean }) {
   return (
-    <aside className="h-fit border-2 border-ink bg-chalk p-3 shadow-soft">
-      <div className="mb-3 flex items-center gap-2 px-2 py-2 text-sm font-semibold text-ink/70">
+    <aside className="hidden h-fit max-h-[calc(100vh-6.5rem)] overflow-auto border border-ink/70 bg-chalk/95 p-2 shadow-soft lg:sticky lg:top-20 lg:block">
+      <div className="mb-2 flex items-center gap-2 border-b border-ink/15 px-2 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-ink/58">
         {admin ? <Settings size={16} aria-hidden /> : <LayoutDashboard size={16} aria-hidden />}
         {admin ? "Admin Panel" : "Student App"}
       </div>
@@ -111,14 +121,30 @@ function Sidebar({ items, admin }: { items: { href: string; label: string }[]; a
   );
 }
 
+function MobileNav({ items, admin }: { items: { href: string; label: string }[]; admin?: boolean }) {
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-ink bg-chalk/98 px-2 py-2 shadow-[0_-1px_0_rgba(17,19,15,0.08)] lg:hidden">
+      <div className="sr-only">
+        <Menu size={13} aria-hidden />
+        {admin ? "Admin" : "Navigate"}
+      </div>
+      <div className="flex gap-2 overflow-x-auto pl-12 pr-16 pb-[env(safe-area-inset-bottom)]">
+        {items.map((item) => (
+          <NavItem key={item.href} href={item.href} label={item.label} />
+        ))}
+      </div>
+    </nav>
+  );
+}
+
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={clsx("border-2 border-ink bg-chalk p-5 shadow-soft", className)}>{children}</div>;
+  return <div className={clsx("border border-ink/70 bg-chalk/92 p-4 shadow-soft md:p-5", className)}>{children}</div>;
 }
 
 export function EmptyState({ title, body }: { title: string; body: string }) {
   return (
     <Card className="text-center">
-      <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-lg bg-mist text-moss">
+      <div className="mx-auto mb-3 grid h-9 w-9 place-items-center border border-ink/20 bg-mist text-moss">
         <UsersRound size={18} aria-hidden />
       </div>
       <h3 className="font-semibold text-ink">{title}</h3>
@@ -130,26 +156,26 @@ export function EmptyState({ title, body }: { title: string; body: string }) {
 export function LoadingState() {
   return (
     <Card>
-      <div className="h-4 w-32 animate-pulse rounded bg-ink/10" />
+      <div className="h-4 w-32 animate-pulse bg-ink/10" />
       <div className="mt-4 grid gap-3">
-        <div className="h-3 animate-pulse rounded bg-ink/10" />
-        <div className="h-3 w-5/6 animate-pulse rounded bg-ink/10" />
-        <div className="h-3 w-2/3 animate-pulse rounded bg-ink/10" />
+        <div className="h-3 animate-pulse bg-ink/10" />
+        <div className="h-3 w-5/6 animate-pulse bg-ink/10" />
+        <div className="h-3 w-2/3 animate-pulse bg-ink/10" />
       </div>
     </Card>
   );
 }
 
 export function SkillBadge({ children }: { children: React.ReactNode }) {
-  return <span className="border border-ink/25 bg-mist px-2.5 py-1 text-xs font-medium text-forest">{children}</span>;
+  return <span className="border border-ink/22 bg-mist/60 px-2.5 py-1 text-xs font-medium text-forest">{children}</span>;
 }
 
 export function StatusPill({ status }: { status?: string }) {
   const color =
     status === "mutual"
-      ? "bg-moss text-white"
-      : status === "reported"
-        ? "bg-coral text-white"
+      ? "bg-moss/18 text-moss"
+    : status === "reported"
+        ? "bg-coral/18 text-coral"
         : status === "viewed"
           ? "bg-gold/20 text-ink"
           : "bg-ink/8 text-ink/72";

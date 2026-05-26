@@ -109,6 +109,10 @@ const courseInclude = {
   }
 };
 
+const BNBU_PROGRAMMES_URL = "https://www.bnbu.edu.cn/en/faculties_and_schools.htm";
+const BNBU_HANDBOOK_URL = "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm";
+const BNBU_MIS_URL = "https://mis.bnbu.edu.cn";
+
 async function routeOf(context: RouteContext) {
   const params = await context.params;
   return params.route ?? [];
@@ -1367,7 +1371,7 @@ async function handleProfile(method: string, path: string[], request: NextReques
         const resumeParsedData = parseResumeText(resumeText, user.profile?.resumeFileName ?? "demo-resume.txt");
         return ok({ resumeParsedData, message: "本地视觉演示模式已模拟重新整理简历。" });
       }
-      if (method === "GET") return ok({ user: publicUser(user), contactInfo: user.contactInfo, portfolioItems: demoPortfolioItems(user.id.replace("demo-user-", "")) });
+      if (method === "GET") return ok({ user: publicUser(user), contactInfo: user.contactInfo, portfolioItems: demoPortfolioItems(user.id.replace("demo-user-", "")), officialLinks: [] });
       if (method === "PATCH") return ok({ profile: { ...user.profile, ...(await readBody(request)) }, message: "本地视觉演示模式已模拟保存 Profile。" });
     }
     if (method === "GET" && path[1]) {
@@ -1482,7 +1486,12 @@ async function handleProfile(method: string, path: string[], request: NextReques
           portfolioItems: { include: { relatedCourse: true }, orderBy: { createdAt: "desc" } }
         }
       });
-      return ok({ user: publicUser(fullUser), contactInfo: fullUser.contactInfo, portfolioItems: fullUser.portfolioItems });
+      return ok({
+        user: publicUser(fullUser),
+        contactInfo: fullUser.contactInfo,
+        portfolioItems: fullUser.portfolioItems,
+        officialLinks: await officialAcademicLinksForUser(fullUser)
+      });
     }
 
     if (method === "PATCH") {
@@ -1902,24 +1911,29 @@ async function handleCourses(method: string, path: string[], request: NextReques
     const currentSemester = user.schoolId
       ? await prisma.semester.findFirst({ where: { schoolId: user.schoolId, isCurrent: true } })
       : null;
+    const officialLinks = await officialAcademicLinksForUser(user);
 
     if (currentSemester) {
       const rules = await prisma.courseCurriculumRule.findMany({
         where: {
-          semesterId: currentSemester.id,
           status: "active",
-          studentAction: { in: ["default_join", "recommend_only"] }
+          studentAction: { in: ["default_join", "recommend_only"] },
+          course: { schoolId: user.schoolId ?? "" }
         },
         include: { semester: true, course: { include: courseInclude } },
         orderBy: [{ studentAction: "asc" }, { classification: "asc" }]
       });
       const matchedRules = rules.filter((rule) => {
-        if (!curriculumRuleMatchesUser(rule, user, currentSemester)) return false;
-        return rule.course.offerings.some((offering) => offering.semesterId === currentSemester.id && offering.status !== "cancelled");
+        return curriculumRuleMatchesUser(rule, user, currentSemester);
       });
       if (matchedRules.length) {
         const seenCourseIds = new Set<string>();
         return ok({
+          officialLinks,
+          academicContext: {
+            semester: currentSemester,
+            relativeTermCode: relativeTermCodeForProfile(user.profile, currentSemester)
+          },
           courses: matchedRules
             .filter((rule) => {
               if (seenCourseIds.has(rule.courseId)) return false;
@@ -1953,6 +1967,7 @@ async function handleCourses(method: string, path: string[], request: NextReques
       : [];
 
     return ok({
+      officialLinks,
       courses: mappings.map((mapping) => ({
         ...mapping.course,
         recommendation: {
@@ -1961,6 +1976,66 @@ async function handleCourses(method: string, path: string[], request: NextReques
           reason: "根据你的学校、专业、年级和当前学期推荐"
         }
       }))
+    });
+  }
+
+  if (method === "GET" && path[1] === "my") {
+    const user = await requireUser();
+    if (isDemoUser(user)) {
+      const course = demoCourses[0];
+      return ok({
+        memberships: [
+          {
+            id: "demo-membership-current",
+            source: "manual",
+            status: "active",
+            sectionCode: "1001",
+            joinedAt: new Date(),
+            board: course.offerings?.[0]?.boards?.[0]
+              ? {
+                  ...course.offerings[0].boards[0],
+                  courseOffering: {
+                    ...course.offerings[0],
+                    course,
+                    semester: course.offerings[0].semester
+                  }
+                }
+              : null
+          }
+        ],
+        officialLinks: []
+      });
+    }
+
+    const currentSemester = user.schoolId
+      ? await prisma.semester.findFirst({ where: { schoolId: user.schoolId, isCurrent: true } })
+      : null;
+    const rows = await prisma.courseBoardMembership.findMany({
+      where: { userId: user.id, status: "active" },
+      include: {
+        board: {
+          include: {
+            courseOffering: {
+              include: {
+                semester: true,
+                course: { include: courseInclude }
+              }
+            }
+          }
+        }
+      },
+      orderBy: { joinedAt: "desc" }
+    });
+    const memberships = await Promise.all(rows.map(async (membership) => ({
+      ...membership,
+      advisory: await courseJoinAdvisory(membership.board.courseOffering.courseId, user, currentSemester)
+    })));
+    return ok({
+      memberships,
+      officialLinks: await officialAcademicLinksForUser(user),
+      academicContext: currentSemester
+        ? { semester: currentSemester, relativeTermCode: relativeTermCodeForProfile(user.profile, currentSemester) }
+        : null
     });
   }
 
@@ -2216,7 +2291,7 @@ async function handleCourses(method: string, path: string[], request: NextReques
   if (method === "GET" && path[1]) {
     const user = await requireUser();
     if (isDemoUser(user)) {
-      return ok({ course: demoCourseById(path[1]) });
+      return ok({ course: demoCourseById(path[1]), officialLinks: [] });
     }
 
     const course = await prisma.course.findUnique({
@@ -2226,7 +2301,7 @@ async function handleCourses(method: string, path: string[], request: NextReques
 
     if (!course) throw new ApiError(404, "找不到这门课程。");
     assertSameSchool(user, course.schoolId);
-    return ok({ course });
+    return ok({ course, officialLinks: await officialAcademicLinksForUser(user) });
   }
 
   throw new ApiError(404, "找不到课程接口。");
@@ -3189,6 +3264,81 @@ function curriculumRuleMatchesUser(rule: any, user: any, semesterOverride?: any)
     (majorCodes.length > 0 && userMajorCode && majorCodes.includes(userMajorCode)) ||
     (facultyCodes.length > 0 && userFacultyCode && facultyCodes.includes(userFacultyCode))
   );
+}
+
+function ruleHasProgrammeScope(rule: Record<string, unknown>) {
+  const audience = audienceForRule(rule);
+  if (audience.allMajors === true) return false;
+  return textValues(audience.majorCodes).length > 0 || textValues(audience.facultyCodes).length > 0;
+}
+
+function ruleMatchesUserRelativeTerm(rule: any, user: any, semester: any) {
+  const relativeTermCodes = Array.isArray(rule.relativeTermCodes)
+    ? textValues(rule.relativeTermCodes).map((code) => code.toUpperCase())
+    : relativeTermCodesForRule(rule);
+  if (!relativeTermCodes.length) return true;
+  const code = relativeTermCodeForProfile(user.profile, semester);
+  return Boolean(code && relativeTermCodes.includes(code));
+}
+
+async function officialAcademicLinksForUser(user: any) {
+  const entryYear = typeof user.profile?.entryYear === "number" ? user.profile.entryYear : null;
+  const majorCode = textValue(user.profile?.major?.code);
+  const handbookRef = entryYear && majorCode
+    ? await prisma.courseImportDatasetSourceRef.findFirst({
+        where: {
+          externalId: {
+            contains: `handbook-${entryYear}-${majorCode.toLowerCase()}`
+          }
+        },
+        orderBy: { id: "desc" }
+      })
+    : null;
+
+  return [
+    {
+      key: "programme",
+      label: "BNBU 专业介绍",
+      href: BNBU_PROGRAMMES_URL,
+      description: user.profile?.major?.name
+        ? `查看 ${user.profile.major.name} 所属学院和专业官方介绍。`
+        : "查看 BNBU 官方学院与专业介绍。"
+    },
+    {
+      key: "handbook",
+      label: "AR 官方四年课程安排",
+      href: handbookRef?.url ?? BNBU_HANDBOOK_URL,
+      description: handbookRef?.url
+        ? `${entryYear} admission · ${majorCode} handbook source`
+        : "未定位到当前专业的精确 handbook PDF，先打开 AR programme handbook 索引。"
+    },
+    {
+      key: "mis",
+      label: "MIS 本学期真实选课 / 课表",
+      href: BNBU_MIS_URL,
+      description: "TEAMAKING 加入 Course Board 不等于官方选课，真实课表请以 MIS 为准。"
+    }
+  ];
+}
+
+async function courseJoinAdvisory(courseId: string, user: any, semester: any) {
+  if (!semester || !user.profile) return null;
+  const rules = await prisma.courseCurriculumRule.findMany({
+    where: {
+      courseId,
+      status: "active",
+      studentAction: { in: ["default_join", "recommend_only", "searchable_add"] }
+    },
+    include: { semester: true }
+  });
+  const scopedRules = rules.filter((rule) => ruleHasProgrammeScope(rule) && ruleMatchesUserRelativeTerm(rule, user, semester));
+  if (!scopedRules.length) return null;
+  const matchesUserProgramme = scopedRules.some((rule) => curriculumRuleMatchesUser(rule, user, semester));
+  if (matchesUserProgramme) return null;
+  return {
+    level: "warning",
+    message: "这门课在当前 admission 配置中更像其他专业/学院的专业课。已加入的课程不会因你更改专业而自动移除；如果你确实以自由选修、跨专业合作或兴趣方式加入，可以继续使用。"
+  };
 }
 
 function numberValue(value: unknown) {

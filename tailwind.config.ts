@@ -9,19 +9,24 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: "#151713",
-        paper: "#f5f1e8",
-        chalk: "#fffdf6",
-        forest: "#254536",
-        rust: "#9b3f2f",
-        graphite: "#5e625c",
-        moss: "#254536",
-        coral: "#9b3f2f",
-        gold: "#b38b34",
-        mist: "#e5e0d3"
+        ink: "#11130f",
+        paper: "#f2ecdf",
+        chalk: "#fbf7ed",
+        forest: "#233d31",
+        rust: "#8f382b",
+        graphite: "#5f5c54",
+        moss: "#233d31",
+        coral: "#8f382b",
+        gold: "#9f7e36",
+        mist: "#e0d7c7"
+      },
+      fontFamily: {
+        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        serif: ["Georgia", "Times New Roman", "Times", "ui-serif", "serif"]
       },
       boxShadow: {
-        soft: "3px 3px 0 rgba(21, 23, 19, 0.18)"
+        soft: "1px 1px 0 rgba(17, 19, 15, 0.18)",
+        hard: "2px 2px 0 rgba(17, 19, 15, 0.22)"
       }
     }
   },
