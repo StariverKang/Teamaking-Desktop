@@ -12,14 +12,20 @@ import { contributionTypes, strengths } from "@/lib/constants";
 import { contactVisibilityOptions, defaultContactVisibility } from "@/lib/contact";
 
 async function api(path: string, options: RequestInit = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers ?? {})
-    },
-    body: typeof options.body === "string" || options.body === undefined ? options.body : JSON.stringify(options.body)
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers ?? {})
+      },
+      body: typeof options.body === "string" || options.body === undefined ? options.body : JSON.stringify(options.body)
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "network request failed";
+    throw new Error(`无法连接 TEAMAKING API：${detail}。请确认当前域名允许访问该入口，或稍后刷新重试。`);
+  }
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -5674,6 +5680,7 @@ export function CrawlerPortalPage() {
       title="BNBU Crawler Portal"
       eyebrow="Crawler"
       aside="none"
+      workspace
       description="独立爬虫入口：以每年 admission programme handbook 为准生成 cleaned JSON；也可在管理员确认后创建导入批次或直接批准写入线上数据库。"
     >
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
@@ -5684,8 +5691,8 @@ export function CrawlerPortalPage() {
           <Link href="/admin-login" className="mt-4 inline-flex rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">进入管理员登录</Link>
         </Card>
       ) : null}
-      <div className="grid gap-5">
-        <Card>
+      <div className="grid gap-5 xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)] xl:items-start">
+        <Card className="xl:max-h-[calc(100vh-12rem)] xl:overflow-y-auto">
           <h2 className="text-xl font-semibold text-ink">Crawl request</h2>
           <p className="mt-2 text-sm leading-6 text-ink/62">当前唯一可执行目标是 programme handbook。它按 admission year 生成四年课程安排；BNBU class schedule 只是时间表，不作为课程存在或 CourseBoard 配置依据。Academic year / term 只用于预览“如果现在激活 Course Board，应匹配哪一批规则”。</p>
           {result ? (
@@ -5750,6 +5757,7 @@ export function CrawlerPortalPage() {
           </form>
         </Card>
 
+        <div className="grid min-w-0 gap-5">
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-xl font-semibold text-ink">Jobs</h2>
@@ -5821,6 +5829,7 @@ export function CrawlerPortalPage() {
             </table>
           </div>
         </Card>
+        </div>
       </div>
     </PageShell>
   );

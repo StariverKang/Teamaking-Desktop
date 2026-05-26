@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { PrismaClient } from "@prisma/client";
+import { legacyBnbuMajorReplacements, mergeLegacyBnbuMajorAliases } from "../lib/academic-options";
 
 const prisma = new PrismaClient();
 
@@ -10,7 +11,7 @@ const seedEmails = [
 ];
 
 const seedCourseCodes = ["COM3003", "COM2001", "EAP1020", "CST1001", "BUS2002"];
-const oldMajorNames = ["Media and Communication", "Computer Science", "Marketing", "Applied Translation", "Finance"];
+const oldMajorNames = [...new Set(["Media and Communication", "Computer Science", "Marketing", "Applied Translation", "Finance", ...Object.keys(legacyBnbuMajorReplacements)])];
 const seedPostTitles = [
   "Open to Team for COM3003",
   "Open to Team for CST1001 demo work",
@@ -95,6 +96,7 @@ async function buildPlan() {
     where: { code: null, name: { in: oldMajorNames } },
     select: {
       id: true,
+      schoolId: true,
       name: true,
       profiles: { select: { userId: true } },
       mappings: { select: { courseId: true } }
@@ -107,6 +109,28 @@ async function buildPlan() {
       return profilesAreSeed && mappingsAreSeed;
     })
     .map((major) => major.id);
+  const legacyMajorAliases = await prisma.major.findMany({
+    where: { name: { in: Object.keys(legacyBnbuMajorReplacements) } },
+    select: {
+      id: true,
+      schoolId: true,
+      name: true,
+      code: true,
+      profiles: { select: { userId: true } },
+      mappings: { select: { courseId: true, recommendedGrade: true } }
+    }
+  });
+  const canonicalMajorCodes = [...new Set(Object.values(legacyBnbuMajorReplacements).map((replacement) => replacement.code))];
+  const canonicalMajors = await prisma.major.findMany({
+    where: { code: { in: canonicalMajorCodes } },
+    select: { id: true, schoolId: true, code: true, name: true }
+  });
+  const canonicalBySchoolAndCode = new Map(canonicalMajors.map((major) => [`${major.schoolId}:${major.code}`, major]));
+  const mergeableLegacyMajorAliases = legacyMajorAliases.filter((major) => {
+    const replacement = legacyBnbuMajorReplacements[major.name];
+    const canonical = replacement ? canonicalBySchoolAndCode.get(`${major.schoolId}:${replacement.code}`) : null;
+    return Boolean(canonical && canonical.id !== major.id);
+  });
 
   const supportTickets = await prisma.supportTicket.findMany({
     where: {
@@ -140,6 +164,7 @@ async function buildPlan() {
     postIds,
     majors: majors.filter((major) => majorIds.includes(major.id)),
     majorIds,
+    legacyMajorAliases: mergeableLegacyMajorAliases,
     supportTickets,
     submittedCourses
   };
@@ -195,6 +220,10 @@ async function executeCleanup(plan: Awaited<ReturnType<typeof buildPlan>>) {
         ]
       }
     });
+    const mergedLegacyMajorAliases = [];
+    for (const schoolId of [...new Set(plan.legacyMajorAliases.map((major) => major.schoolId))]) {
+      mergedLegacyMajorAliases.push(...(await mergeLegacyBnbuMajorAliases(tx, schoolId)));
+    }
     const deletedCourseOfferings = await tx.courseOffering.deleteMany({ where: { courseId: { in: plan.courseIds.length ? plan.courseIds : ["__none__"] } } });
     const deletedCourses = await tx.course.deleteMany({ where: { id: { in: plan.courseIds.length ? plan.courseIds : ["__none__"] } } });
     const deletedUsers = await tx.user.deleteMany({ where: { id: { in: plan.userIds.length ? plan.userIds : ["__none__"] } } });
@@ -210,6 +239,7 @@ async function executeCleanup(plan: Awaited<ReturnType<typeof buildPlan>>) {
       deletedPortfolios: deletedPortfolios.count,
       detachedPortfolios: detachedPortfolios.count,
       deletedCourseMappings: deletedCourseMappings.count,
+      mergedLegacyMajorAliases,
       deletedCourseOfferings: deletedCourseOfferings.count,
       deletedCourses: deletedCourses.count,
       deletedUsers: deletedUsers.count,
@@ -235,6 +265,7 @@ async function main() {
     users: plan.users.map((user) => `${user.email} (${user.profile?.displayName ?? "no profile"})`),
     courses: plan.courses.map((course) => `${course.code} ${course.title} [${course.source}]`),
     majors: plan.majors.map((major) => major.name),
+    legacyMajorAliases: plan.legacyMajorAliases.map((major) => `${major.name} [${major.code ?? "no code"}]`),
     posts: plan.posts.map((post) => post.title),
     supportTickets: plan.supportTickets.map((ticket) => ticket.title),
     submittedCourses: plan.submittedCourses.map((course) => `${course.code} ${course.title}`)

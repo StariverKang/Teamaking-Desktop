@@ -92,26 +92,49 @@ export function PageShell({
   eyebrow,
   description,
   children,
-  aside = "student"
+  aside = "student",
+  workspace = false
 }: {
   title: string;
   eyebrow?: string;
   description?: string;
   children: React.ReactNode;
   aside?: "student" | "admin" | "none";
+  workspace?: boolean;
 }) {
   const nav = aside === "admin" ? adminNav : studentNav;
+  const workspaceMode = workspace || aside === "admin";
 
   return (
-    <main className="mx-auto grid max-w-[1440px] gap-4 px-3 pb-24 pt-5 md:px-5 md:py-7 lg:grid-cols-[228px_1fr]">
+    <main
+      className={clsx(
+        "mx-auto grid max-w-[1440px] gap-4 px-3 pb-24 pt-5 md:px-5 md:py-7",
+        aside === "none" ? "lg:grid-cols-1" : "lg:grid-cols-[228px_minmax(0,1fr)]",
+        workspaceMode && "lg:h-[calc(100vh-3.35rem)] lg:overflow-hidden lg:pb-4 lg:pt-4"
+      )}
+    >
       {aside !== "none" ? <Sidebar items={nav} admin={aside === "admin"} /> : null}
-      <section className={clsx("min-w-0", aside === "admin" && "admin-page", aside === "none" && "lg:col-span-2")}>
-        <div className="mb-5 border-b border-ink/18 pb-4">
+      <section
+        data-workspace-scroll={workspaceMode ? "true" : undefined}
+        className={clsx(
+          "min-w-0",
+          workspaceMode && "admin-page workspace-scroll-panel lg:h-full lg:overflow-y-auto lg:pr-2",
+          aside === "none" && !workspaceMode && "lg:col-span-2"
+        )}
+      >
+        <div
+          className={clsx(
+            "mb-5 border-b border-ink/18 pb-4",
+            workspaceMode && "lg:sticky lg:top-0 lg:z-20 lg:mb-4 lg:bg-paper/95 lg:pb-3 lg:pt-1 lg:backdrop-blur"
+          )}
+        >
           {eyebrow ? <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-coral">{eyebrow}</p> : null}
-          <h1 className="font-serif text-3xl font-semibold leading-tight text-ink md:text-5xl">
+          <h1 className={clsx("font-serif text-3xl font-semibold leading-tight text-ink", workspaceMode ? "md:text-3xl" : "md:text-5xl")}>
             <CourseLikeTitle title={title} />
           </h1>
-          {description ? <p className="mt-3 max-w-3xl text-base leading-7 text-ink/68">{description}</p> : null}
+          {description ? (
+            <p className={clsx("mt-3 max-w-3xl leading-7 text-ink/68", workspaceMode ? "text-sm" : "text-base")}>{description}</p>
+          ) : null}
         </div>
         {children}
       </section>

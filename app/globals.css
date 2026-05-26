@@ -156,6 +156,28 @@ tbody tr:hover {
   min-width: 100%;
 }
 
+.workspace-scroll-panel {
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.workspace-scroll-panel::-webkit-scrollbar,
+.workspace-scroll-panel :where(.overflow-auto, .overflow-y-auto)::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.workspace-scroll-panel::-webkit-scrollbar-track,
+.workspace-scroll-panel :where(.overflow-auto, .overflow-y-auto)::-webkit-scrollbar-track {
+  background: rgba(17, 19, 15, 0.06);
+}
+
+.workspace-scroll-panel::-webkit-scrollbar-thumb,
+.workspace-scroll-panel :where(.overflow-auto, .overflow-y-auto)::-webkit-scrollbar-thumb {
+  background: rgba(17, 19, 15, 0.34);
+  border: 2px solid rgba(251, 247, 237, 0.9);
+}
+
 ::selection {
   background: rgba(143, 56, 43, 0.18);
 }

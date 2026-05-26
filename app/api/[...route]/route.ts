@@ -12,6 +12,7 @@ import { hashPassword, verifyPassword } from "@/lib/password";
 import { allowedRequestTransitions, teamUpInterestStatuses } from "@/lib/constants";
 import { contactSnapshot, defaultContactVisibility } from "@/lib/contact";
 import { getActiveAppVersion, getActiveAppVersionId, getActiveSchool } from "@/lib/app-version";
+import { filterUserFacingMajors, mergeLegacyBnbuMajorAliases } from "@/lib/academic-options";
 import {
   bnbuClassificationLabels,
   membershipSourceForClassification,
@@ -1176,11 +1177,12 @@ async function handleOnboarding(method: string, path: string[], request: NextReq
   }
 
   if (method === "GET") {
-    const [faculties, majors, semesters] = await Promise.all([
+    const [faculties, rawMajors, semesters] = await Promise.all([
       prisma.faculty.findMany({ where: { schoolId: user.schoolId ?? undefined }, orderBy: { name: "asc" } }),
       prisma.major.findMany({ where: { schoolId: user.schoolId ?? undefined }, include: { faculty: true }, orderBy: { name: "asc" } }),
       prisma.semester.findMany({ where: { schoolId: user.schoolId ?? undefined }, orderBy: [{ year: "desc" }, { term: "asc" }] })
     ]);
+    const majors = filterUserFacingMajors(rawMajors);
 
     return ok({ user: publicUser(user), academicLock: academicLockForUser(user), faculties, majors, semesters });
   }
@@ -6588,6 +6590,7 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
           });
       majorByCode.set(code, major);
     }
+    const legacyMajorCleanup = await mergeLegacyBnbuMajorAliases(tx, school.id, majorByCode);
 
     const courseByCode = new Map<string, any>();
     for (const courseInput of records(payload.courses)) {
@@ -6789,7 +6792,8 @@ async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: 
       autoJoinResults,
       deactivatedRuleCount,
       rulesInAcademicTermContext,
-      autoJoinSkippedOutsideTerm
+      autoJoinSkippedOutsideTerm,
+      legacyMajorCleanup
     };
   }, { timeout: 60000, maxWait: 10000 });
 }

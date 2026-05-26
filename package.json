@@ -11,6 +11,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:validate": "prisma validate",
     "seed": "tsx prisma/seed.ts",
     "data:cleanup-demo": "tsx scripts/cleanup-demo-data.ts",
