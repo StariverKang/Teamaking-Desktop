@@ -36,3 +36,14 @@ test("admin and crawler pages use viewport-bounded workspaces", async ({ page })
     .poll(() => adminWorkspace.evaluate((node) => window.getComputedStyle(node).overflowY))
     .toBe("auto");
 });
+
+test("dashboard shows official reference links for logged-in users", async ({ page }) => {
+  const response = await page.request.post("/api/demo/login", { data: { account: "media" } });
+  expect(response.ok()).toBeTruthy();
+
+  await page.goto("/dashboard");
+  await expect(page.getByRole("heading", { name: "官方查询入口" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /BNBU 专业介绍/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /AR 官方四年课程安排/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /MIS 本学期真实选课 \/ 课表/ })).toBeVisible();
+});

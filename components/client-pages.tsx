@@ -1199,6 +1199,7 @@ export function DashboardPage() {
               </div>
             </Card>
           </div>
+          <OfficialAcademicLinks links={recommended?.officialLinks} />
           <section>
             <h2 className="mb-3 text-xl font-semibold text-ink">My current Course Boards</h2>
             <div className="grid gap-3 md:grid-cols-2">

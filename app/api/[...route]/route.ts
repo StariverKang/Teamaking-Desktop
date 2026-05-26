@@ -1385,7 +1385,14 @@ async function handleProfile(method: string, path: string[], request: NextReques
         const resumeParsedData = parseResumeText(resumeText, user.profile?.resumeFileName ?? "demo-resume.txt");
         return ok({ resumeParsedData, message: "本地视觉演示模式已模拟重新整理简历。" });
       }
-      if (method === "GET") return ok({ user: publicUser(user), contactInfo: user.contactInfo, portfolioItems: demoPortfolioItems(user.id.replace("demo-user-", "")), officialLinks: [] });
+      if (method === "GET") {
+        return ok({
+          user: publicUser(user),
+          contactInfo: user.contactInfo,
+          portfolioItems: demoPortfolioItems(user.id.replace("demo-user-", "")),
+          officialLinks: buildOfficialAcademicLinks(user)
+        });
+      }
       if (method === "PATCH") return ok({ profile: { ...user.profile, ...(await readBody(request)) }, message: "本地视觉演示模式已模拟保存 Profile。" });
     }
     if (method === "GET" && path[1]) {
@@ -1909,6 +1916,7 @@ async function handleCourses(method: string, path: string[], request: NextReques
     const user = await requireUser();
     if (isDemoUser(user)) {
       return ok({
+        officialLinks: buildOfficialAcademicLinks(user),
         courses: demoCourses.slice(0, 3).map((course) => ({
           ...course,
           recommendation: {
@@ -2017,7 +2025,7 @@ async function handleCourses(method: string, path: string[], request: NextReques
               : null
           }
         ],
-        officialLinks: []
+        officialLinks: buildOfficialAcademicLinks(user)
       });
     }
 
@@ -2323,7 +2331,7 @@ async function handleCourses(method: string, path: string[], request: NextReques
   if (method === "GET" && path[1]) {
     const user = await requireUser();
     if (isDemoUser(user)) {
-      return ok({ course: demoCourseById(path[1]), officialLinks: [] });
+      return ok({ course: demoCourseById(path[1]), officialLinks: buildOfficialAcademicLinks(user) });
     }
 
     const course = await prisma.course.findUnique({
@@ -3932,12 +3940,14 @@ async function resolveProgrammeIntroRef(user: any) {
   return ref;
 }
 
-async function officialAcademicLinksForUser(user: any) {
+function buildOfficialAcademicLinks(
+  user: any,
+  programmeRef?: ProgrammeIntroRef | null,
+  handbookRef?: HandbookSourceRef | null
+) {
   const entryYear = typeof user.profile?.entryYear === "number" ? user.profile.entryYear : null;
   const majorCode = textValue(user.profile?.major?.code);
   const majorName = textValue(user.profile?.major?.name);
-  const programmeRef = await resolveProgrammeIntroRef(user);
-  const handbookRef = await resolveProgrammeHandbookRef(user);
   const programmeLabel = [entryYear ? `${entryYear} admission` : "", majorCode || majorName].filter(Boolean).join(" · ");
 
   return [
@@ -3966,6 +3976,12 @@ async function officialAcademicLinksForUser(user: any) {
       description: "TEAMAKING 加入 Course Board 不等于官方选课，真实课表请以 MIS 为准。"
     }
   ];
+}
+
+async function officialAcademicLinksForUser(user: any) {
+  const programmeRef = await resolveProgrammeIntroRef(user);
+  const handbookRef = await resolveProgrammeHandbookRef(user);
+  return buildOfficialAcademicLinks(user, programmeRef, handbookRef);
 }
 
 async function courseJoinAdvisory(courseId: string, user: any, semester: any) {
