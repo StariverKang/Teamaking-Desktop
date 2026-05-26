@@ -741,3 +741,18 @@
   - `npm run lint` 通过（0 warnings）。
   - `npm run build` 通过（0 warnings）。
   - `npm run test` 通过（3 files passed，8 passed，1 skipped）。
+
+### 简历解析实习经历完整性修复
+
+- 背景：
+  - 用户反馈 Profile 简历解析的 Highlights 中，实习经历只显示开头几行，后续项目职责和复盘内容丢失。
+  - 根因是解析器先用关键词抓取前 5 条，再把 Highlights 限制到 6 条；同时 `experience/projects` section 也只保留 8 条，长实习经历容易被截断。
+- 改动：
+  - `experience` 和 `projects` section 的保留上限提高到 32 条，技能 section 提高到 20 条，普通 section 保留 14 条。
+  - Highlights 改为优先放入 `experience/projects` 的结构化内容，再补关键词命中的行，并把上限提高到 16 条。
+  - 新增单元测试覆盖多行实习经历，确认 O2O 闭环、达人合作、数据复盘、内容协作等后续行不会丢失。
+- 验证：
+  - `npm run test -- tests/unit/profile-assets.test.ts` 通过（6 passed）。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。

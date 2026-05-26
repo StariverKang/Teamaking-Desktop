@@ -332,6 +332,12 @@ function uniqueValues(values: string[], limit = 12) {
   return result;
 }
 
+function resumeSectionItemLimit(key: string) {
+  if (key === "experience" || key === "projects") return 32;
+  if (key === "skills") return 20;
+  return 14;
+}
+
 const resumeSectionMatchers = [
   { key: "education", label: "教育背景", pattern: /^(教育背景|教育|学历|academic background|education)(?=$|[\s:：-])/i },
   { key: "experience", label: "实习 / 工作经历", pattern: /^(实习经历|工作经历|实习|工作|work experience|experience|internship)(?=$|[\s:：-])/i },
@@ -361,7 +367,7 @@ function inferResumeSections(lines: string[]) {
 
   return Object.fromEntries(
     Object.entries(sections)
-      .map(([key, section]) => [key, { ...section, items: uniqueValues(section.items, 8) }])
+      .map(([key, section]) => [key, { ...section, items: uniqueValues(section.items, resumeSectionItemLimit(key)) }])
       .filter(([, section]) => (section as { items: string[] }).items.length)
   );
 }
@@ -407,10 +413,10 @@ export function parseResumeText(text: string, fileName: string) {
   const sections = inferResumeSections(lines);
   const skills = extractResumeSkills(cleaned);
   const highlights = uniqueValues([
-    ...findLines(lines, /项目|实习|运营|分析|策划|推广|访谈|project|intern|campaign|analysis/i, 5),
     ...(sections.experience?.items ?? []),
-    ...(sections.projects?.items ?? [])
-  ], 6);
+    ...(sections.projects?.items ?? []),
+    ...findLines(lines, /项目|实习|运营|分析|策划|推广|访谈|project|intern|campaign|analysis/i, 12)
+  ], 16);
 
   return {
     fileName,

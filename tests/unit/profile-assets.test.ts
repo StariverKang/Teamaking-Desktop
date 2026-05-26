@@ -4,6 +4,7 @@ import {
   fileExtensionOf,
   hasAcceptableMimeForExtension,
   isAllowedProfileFile,
+  parseResumeText,
   isRiskyProfileFile,
   safeUploadName
 } from "@/lib/profile-assets";
@@ -70,5 +71,32 @@ describe("profile upload safety checks", () => {
 
     await expect(extractReadableText("deck.pptx", pptxBuffer)).resolves.toContain("Campaign pitch");
     await expect(extractReadableText("legacy.ppt", Buffer.from("Legacy PowerPoint text block for presentation evidence"))).resolves.toContain("Legacy PowerPoint");
+  });
+
+  it("keeps complete internship lines before generic highlight matches", () => {
+    const parsed = parseResumeText(`
+      实习经历
+      新腾（珠海）体育文化发展有限公司 格盛一号项目 新媒体运营 2025.09-2025.10
+      项目背景：“格盛一号”作为新腾体育旗下的旗舰级体育文化综合体，旨在打造区域性的体育+商业地标。
+      本项目（新媒体项目）的核心目标是通过数字化阵地建设，构建从线上内容触达（流量层）到线下场馆转化（交易层）的 O2O 闭环。
+      用户增长：根据旅行项目内容，设计宣发海报，用于美团、携程等平台上的产品主页信息。
+      达人合作：建联 10+ KOL 合作产出推广视频，并跟进内容发布效果。
+      数据复盘：整理平台曝光、收藏、咨询和转化数据，形成运营复盘。
+      内容协作：协助公众号长文、选图、排版和封面制作。
+      项目经历
+      校园活动策划 demo
+    `, "resume.txt");
+
+    expect(parsed.sections.experience.items).toEqual(expect.arrayContaining([
+      expect.stringContaining("O2O 闭环"),
+      expect.stringContaining("达人合作"),
+      expect.stringContaining("数据复盘"),
+      expect.stringContaining("内容协作")
+    ]));
+    expect(parsed.highlights).toEqual(expect.arrayContaining([
+      expect.stringContaining("新媒体运营"),
+      expect.stringContaining("O2O 闭环"),
+      expect.stringContaining("数据复盘")
+    ]));
   });
 });
