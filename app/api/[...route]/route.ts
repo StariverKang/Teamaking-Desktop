@@ -2471,8 +2471,9 @@ async function handleBoards(method: string, path: string[], request: NextRequest
       });
     }
 
-    await prisma.courseBoardMembership.deleteMany({
-      where: { userId: user.id, boardId }
+    await prisma.courseBoardMembership.updateMany({
+      where: { userId: user.id, boardId },
+      data: { status: "left", leftAt: new Date() }
     });
 
     await operationLog({
@@ -2483,7 +2484,7 @@ async function handleBoards(method: string, path: string[], request: NextRequest
       targetId: boardId,
       method,
       path: request.nextUrl.pathname,
-      summary: { source: membership?.source ?? "manual", status: "deleted" }
+      summary: { source: membership?.source ?? "manual", status: "left" }
     });
     return ok({ message: "已离开这个 Course Board。" });
   }
@@ -2979,6 +2980,115 @@ async function handleFollowRequests(method: string, path: string[]) {
   throw new ApiError(404, "找不到关注申请接口。");
 }
 
+async function buildCourseTeamingMaintenanceSummary(appVersionId: string) {
+  const scopedCourse = { school: { appVersionId } };
+  const [activeMemberships, historicalMemberships, openPosts, activeTeamUpRequests, acceptedFriendships] = await Promise.all([
+    prisma.courseBoardMembership.count({
+      where: { status: "active", board: { courseOffering: { course: scopedCourse } } }
+    }),
+    prisma.courseBoardMembership.count({
+      where: { status: { in: ["history", "left"] }, board: { courseOffering: { course: scopedCourse } } }
+    }),
+    prisma.teamakingPost.count({
+      where: { status: { in: ["open", "paused"] }, board: { courseOffering: { course: scopedCourse } } }
+    }),
+    prisma.teamUpRequest.count({
+      where: { status: { in: ["sent", "viewed", "mutual"] }, post: { board: { courseOffering: { course: scopedCourse } } } }
+    }),
+    prisma.followRequest.count({
+      where: {
+        status: "accepted",
+        OR: [{ sender: { appVersionId } }, { receiver: { appVersionId } }]
+      }
+    })
+  ]);
+
+  return {
+    activeMemberships,
+    historicalMemberships,
+    openPosts,
+    activeTeamUpRequests,
+    acceptedFriendships
+  };
+}
+
+async function clearCurrentCourseTeamingState(admin: any, request: NextRequest) {
+  const body = await readBody(request);
+  const confirmation = optionalString(body.confirmation);
+  if (confirmation !== "CLEAR_TEAMING_STATE") {
+    throw new ApiError(400, "请输入 CLEAR_TEAMING_STATE 以确认清空当前课程组队状态。");
+  }
+
+  const appVersionId = await getActiveAppVersionId();
+  const scopedCourse = { school: { appVersionId } };
+  const before = await buildCourseTeamingMaintenanceSummary(appVersionId);
+  const now = new Date();
+
+  const [membershipRows, postRows, requestRows] = await Promise.all([
+    prisma.courseBoardMembership.findMany({
+      where: { status: "active", board: { courseOffering: { course: scopedCourse } } },
+      select: { id: true }
+    }),
+    prisma.teamakingPost.findMany({
+      where: { status: { in: ["open", "paused"] }, board: { courseOffering: { course: scopedCourse } } },
+      select: { id: true }
+    }),
+    prisma.teamUpRequest.findMany({
+      where: { status: { in: ["sent", "viewed", "mutual"] }, post: { board: { courseOffering: { course: scopedCourse } } } },
+      select: { id: true }
+    })
+  ]);
+
+  const membershipIds = membershipRows.map((row) => row.id);
+  const postIds = postRows.map((row) => row.id);
+  const requestIds = requestRows.map((row) => row.id);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const memberships = membershipIds.length
+      ? await tx.courseBoardMembership.updateMany({
+          where: { id: { in: membershipIds } },
+          data: { status: "history", leftAt: now }
+        })
+      : { count: 0 };
+    const posts = postIds.length
+      ? await tx.teamakingPost.updateMany({
+          where: { id: { in: postIds } },
+          data: { status: "closed" }
+        })
+      : { count: 0 };
+    const teamUpRequests = requestIds.length
+      ? await tx.teamUpRequest.updateMany({
+          where: { id: { in: requestIds } },
+          data: { status: "closed" }
+        })
+      : { count: 0 };
+    return {
+      membershipsMovedToHistory: memberships.count,
+      postsClosed: posts.count,
+      teamUpRequestsClosed: teamUpRequests.count
+    };
+  }, { timeout: 60000, maxWait: 10000 });
+
+  const after = await buildCourseTeamingMaintenanceSummary(appVersionId);
+  const summary = {
+    ...result,
+    retained: {
+      acceptedFriendships: after.acceptedFriendships,
+      courseMembershipRows: after.historicalMemberships,
+      teamakingPostRows: postIds.length,
+      teamUpRequestRows: requestIds.length
+    },
+    before,
+    after
+  };
+
+  await writeAudit(admin.id, "admin.maintenance.clear_course_teaming_state", "AppVersion", appVersionId, before, summary);
+  return ok({
+    summary,
+    message: `已清空当前课程组队状态：${result.membershipsMovedToHistory} 条课程加入记录转为历史，${result.postsClosed} 条组队帖关闭，${result.teamUpRequestsClosed} 条 TeamUp 请求关闭；好友关系和历史记录已保留。`
+  });
+}
+
 async function handleMatches(request: NextRequest) {
   const url = new URL(request.url);
   const usersPage = Math.max(1, Number.parseInt(url.searchParams.get("usersPage") ?? "1", 10) || 1);
@@ -3020,11 +3130,12 @@ async function handleMatches(request: NextRequest) {
     });
   }
 
+  const courseHistoryStatuses = ["active", "history", "left"];
   const memberships = await prisma.courseBoardMembership.findMany({
-    where: { userId: user.id, status: "active" },
+    where: { userId: user.id, status: { in: courseHistoryStatuses } },
     include: { board: { include: { courseOffering: { include: { course: true } } } } }
   });
-  const boardIds = [...new Set(memberships.map((membership) => membership.boardId))];
+  const boardIds = [...new Set(memberships.filter((membership) => membership.status === "active").map((membership) => membership.boardId))];
   const courseIds = [
     ...new Set(memberships.map((membership) => membership.board.courseOffering.courseId).filter(Boolean))
   ];
@@ -3077,7 +3188,7 @@ async function handleMatches(request: NextRequest) {
   if (courseIds.length) {
     const sameCourseMemberships = await prisma.courseBoardMembership.findMany({
       where: {
-        status: "active",
+        status: { in: courseHistoryStatuses },
         userId: { not: user.id },
         board: { courseOffering: { courseId: { in: courseIds } } },
         user: {
@@ -3095,6 +3206,59 @@ async function handleMatches(request: NextRequest) {
     for (const membership of sameCourseMemberships) {
       const courseCode = membership.board.courseOffering.course.code;
       addCandidate(membership.user, 80, `上过同一门课程：${courseCode}`, courseCode);
+    }
+  }
+
+  const acceptedFollows = await prisma.followRequest.findMany({
+    where: {
+      status: "accepted",
+      OR: [
+        { sender: { schoolId: user.schoolId ?? "" } },
+        { receiver: { schoolId: user.schoolId ?? "" } }
+      ]
+    },
+    select: { senderId: true, receiverId: true }
+  });
+  const friendGraph = new Map<string, Set<string>>();
+  const connectFriends = (a: string, b: string) => {
+    if (!friendGraph.has(a)) friendGraph.set(a, new Set());
+    if (!friendGraph.has(b)) friendGraph.set(b, new Set());
+    friendGraph.get(a)?.add(b);
+    friendGraph.get(b)?.add(a);
+  };
+  for (const follow of acceptedFollows) {
+    connectFriends(follow.senderId, follow.receiverId);
+  }
+  const networkDistances = new Map<string, number>();
+  let frontier = new Set<string>([user.id]);
+  const visited = new Set<string>([user.id]);
+  for (let degree = 1; degree <= 3; degree += 1) {
+    const next = new Set<string>();
+    for (const currentUserId of frontier) {
+      for (const friendId of friendGraph.get(currentUserId) ?? []) {
+        if (visited.has(friendId)) continue;
+        visited.add(friendId);
+        networkDistances.set(friendId, degree);
+        next.add(friendId);
+      }
+    }
+    frontier = next;
+  }
+  const networkCandidateIds = [...networkDistances.entries()]
+    .filter(([, degree]) => degree === 2 || degree === 3)
+    .map(([id]) => id);
+  if (networkCandidateIds.length) {
+    const networkUsers = await prisma.user.findMany({
+      where: {
+        id: { in: networkCandidateIds },
+        schoolId: user.schoolId,
+        profile: { openToBeDiscovered: true }
+      },
+      include: userInclude
+    });
+    for (const matchedUser of networkUsers) {
+      const degree = networkDistances.get(matchedUser.id);
+      addCandidate(matchedUser, degree === 2 ? 34 : 20, degree === 2 ? "二度好友网络" : "三度好友网络");
     }
   }
 
@@ -6751,6 +6915,30 @@ async function handleAdmin(method: string, path: string[], request: NextRequest)
         item: { id: `demo-${resource}-created`, action, ...body },
         message: `本地视觉演示模式已模拟创建/处理 ${resource}。`
       });
+    }
+  }
+
+  if (resource === "maintenance") {
+    const appVersionId = await getActiveAppVersionId();
+    if (method === "GET") {
+      const summary = await buildCourseTeamingMaintenanceSummary(appVersionId);
+      return ok({
+        summary,
+        policy: {
+          clearCourseTeamingState: {
+            confirmation: "CLEAR_TEAMING_STATE",
+            changes: [
+              "active CourseBoardMembership -> history，保留 joinedAt/leftAt 作为课程参与历史",
+              "open/paused TeamakingPost -> closed，保留发帖记录",
+              "sent/viewed/mutual TeamUpRequest -> closed，保留发送和处理记录",
+              "FollowRequest accepted 不变，好友关系保留"
+            ]
+          }
+        }
+      });
+    }
+    if (method === "POST" && id === "clear-course-teaming-state") {
+      return clearCurrentCourseTeamingState(admin, request);
     }
   }
 

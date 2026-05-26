@@ -47,6 +47,7 @@ Agent 开发原则：
 - File upload：本地验收写入 `public/uploads`，生产可用 Cloudflare R2；数据库记录 `fileUrl/storageKey/objectKey/mime/extension/scanStatus/metadata`
 - I18n：系统框架支持简体中文 / English；首次访问按 IP 国家/地区写入语言 cookie，用户可手动切换，用户可编辑内容不自动翻译
 - Content & Announcements：管理员在 `/admin/content` 统一维护联系开发者、开发者日志、帮助中心和全站公告；帮助中心/开发者日志支持文件夹树和文档树，公告仍会在用户未阅读前弹窗提醒
+- Admin Maintenance：管理员可在 `/admin/maintenance` 软清空当前课程组队状态；好友关系、课程加入历史、Teamaking Post 和 TeamUp Interest 记录会保留，用于后续推荐和审计追溯
 
 ## 本地启动
 

@@ -900,9 +900,26 @@
   - 用户询问 Matches 页面 `Relevant Users` 的显示逻辑；旧逻辑只按同专业和同校开放展示粗略排列，没有把“上过同一门课程”作为优先信号，也没有分页。
 - 改动：
   - `/api/matches` 增加 `usersPage/usersPageSize` 查询参数，并返回 `usersPagination`。
-  - 相关用户排序改为：同一课程 CourseBoard 记录优先，其次同专业，再用同校开放展示兜底；同一个用户命中多个信号时合并理由并累加分数。
+  - 相关用户排序改为：同一课程 CourseBoard 记录优先，其次二度/三度好友网络和同专业，再用同校开放展示兜底；同一个用户命中多个信号时合并理由并累加分数。
   - Matches 页面显示推荐依据、总数、页码、上一页/下一页，空状态文案说明如何产生更多推荐。
 - 验证：
   - `npm run typecheck` 通过。
   - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。
+
+### 管理员软清空当前课程组队状态
+
+- 背景：
+  - 用户要求管理员后台增加“清空目前所有课程组队状态”，但必须保留好友关系、加入过的课程记录、发送过的 Teamaking Post 和 TeamUp Interest 记录。
+- 改动：
+  - 新增 `/admin/maintenance` 页面和 `/api/admin/maintenance` 接口。
+  - 高风险操作需要输入 `CLEAR_TEAMING_STATE` 才能执行。
+  - 执行后只做软清空：active `CourseBoardMembership` 改为 `history` 并写入 `leftAt`；open/paused `TeamakingPost` 改为 `closed`；sent/viewed/mutual `TeamUpRequest` 改为 `closed`。
+  - accepted `FollowRequest` 不变，好友关系保留。
+  - 用户手动离开课程板从删除 membership 改成 `left` 状态，保留加入过的课程记录。
+  - Matches 现在会把 `active/history/left` 课程记录作为“上过同一门课程”的推荐依据，同时加入二度/三度好友网络信号。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run test` 通过（3 files passed，9 passed，1 skipped）。
   - `npm run build` 通过（0 warnings）。
