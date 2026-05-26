@@ -677,6 +677,7 @@
 - 验证：
   - `npm run typecheck` 通过。
   - `npm run lint` 通过（0 warnings）。
+  - `npm run test` 通过（3 files passed，9 passed，1 skipped）。
   - `npm run build` 通过（0 warnings）。
   - `npm run test` 通过（3 files passed，8 passed，1 skipped）。
   - `npm run test:e2e` 通过（2 passed，0 warnings）。
@@ -888,6 +889,19 @@
   - `/api/courses/search` 支持 `page` 和 `pageSize`，返回 `pagination: { page, pageSize, total, totalPages }`。
   - 课程页 `Search / Free elective` tab 增加结果总数、当前页、上一页/下一页按钮。
   - 搜索词变化时自动回到第一页，避免旧页码造成空结果。
+- 验证：
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 warnings）。
+  - `npm run build` 通过（0 warnings）。
+
+### Matches 相关用户推荐与分页
+
+- 背景：
+  - 用户询问 Matches 页面 `Relevant Users` 的显示逻辑；旧逻辑只按同专业和同校开放展示粗略排列，没有把“上过同一门课程”作为优先信号，也没有分页。
+- 改动：
+  - `/api/matches` 增加 `usersPage/usersPageSize` 查询参数，并返回 `usersPagination`。
+  - 相关用户排序改为：同一课程 CourseBoard 记录优先，其次同专业，再用同校开放展示兜底；同一个用户命中多个信号时合并理由并累加分数。
+  - Matches 页面显示推荐依据、总数、页码、上一页/下一页，空状态文案说明如何产生更多推荐。
 - 验证：
   - `npm run typecheck` 通过。
   - `npm run lint` 通过（0 warnings）。

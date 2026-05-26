@@ -2979,25 +2979,55 @@ async function handleFollowRequests(method: string, path: string[]) {
   throw new ApiError(404, "找不到关注申请接口。");
 }
 
-async function handleMatches() {
+async function handleMatches(request: NextRequest) {
+  const url = new URL(request.url);
+  const usersPage = Math.max(1, Number.parseInt(url.searchParams.get("usersPage") ?? "1", 10) || 1);
+  const usersPageSize = Math.min(24, Math.max(4, Number.parseInt(url.searchParams.get("usersPageSize") ?? "8", 10) || 8));
+  const paginateUsers = (items: any[]) => {
+    const total = items.length;
+    const totalPages = Math.max(1, Math.ceil(total / usersPageSize));
+    const page = Math.min(usersPage, totalPages);
+    const start = (page - 1) * usersPageSize;
+    return {
+      page,
+      total,
+      totalPages,
+      items: items.slice(start, start + usersPageSize)
+    };
+  };
+
   const user = await requireUser();
   if (isDemoUser(user)) {
+    const demoUsers = demoPeople().map((membership, index) => ({
+      user: publicUser(membership.user),
+      score: index === 0 ? 95 : 50,
+      reasons: index === 0 ? ["上过同一门课程", "同一个专业"] : ["同校可发现"]
+    }));
+    const pagedDemoUsers = paginateUsers(demoUsers);
     return ok({
       posts: demoPosts().map((post, index) => ({
         ...post,
         score: index === 0 ? 90 : 62,
         reasons: index === 0 ? ["Joined the same course board"] : ["Cross-major collaboration"]
       })),
-      users: demoPeople().map((membership, index) => ({
-        user: publicUser(membership.user),
-        score: index === 0 ? 70 : 45,
-        reasons: index === 0 ? ["Same major", "Open to be discovered"] : ["Same school", "Cross-major collaboration"]
-      }))
+      users: pagedDemoUsers.items,
+      usersPagination: {
+        page: pagedDemoUsers.page,
+        pageSize: usersPageSize,
+        total: pagedDemoUsers.total,
+        totalPages: pagedDemoUsers.totalPages
+      }
     });
   }
 
-  const memberships = await prisma.courseBoardMembership.findMany({ where: { userId: user.id, status: "active" } });
-  const boardIds = memberships.map((membership) => membership.boardId);
+  const memberships = await prisma.courseBoardMembership.findMany({
+    where: { userId: user.id, status: "active" },
+    include: { board: { include: { courseOffering: { include: { course: true } } } } }
+  });
+  const boardIds = [...new Set(memberships.map((membership) => membership.boardId))];
+  const courseIds = [
+    ...new Set(memberships.map((membership) => membership.board.courseOffering.courseId).filter(Boolean))
+  ];
 
   const posts = await prisma.teamakingPost.findMany({
     where: {
@@ -3015,6 +3045,59 @@ async function handleMatches() {
     take: 20
   });
 
+  const candidateMap = new Map<
+    string,
+    {
+      user: any;
+      score: number;
+      reasons: string[];
+      reasonSet: Set<string>;
+      sharedCourses: Set<string>;
+    }
+  >();
+
+  const addCandidate = (matchedUser: any, score: number, reason: string, sharedCourseCode?: string) => {
+    if (!matchedUser || matchedUser.id === user.id) return;
+    const existing = candidateMap.get(matchedUser.id) ?? {
+      user: matchedUser,
+      score: 0,
+      reasons: [],
+      reasonSet: new Set<string>(),
+      sharedCourses: new Set<string>()
+    };
+    existing.score += score;
+    if (!existing.reasonSet.has(reason)) {
+      existing.reasonSet.add(reason);
+      existing.reasons.push(reason);
+    }
+    if (sharedCourseCode) existing.sharedCourses.add(sharedCourseCode);
+    candidateMap.set(matchedUser.id, existing);
+  };
+
+  if (courseIds.length) {
+    const sameCourseMemberships = await prisma.courseBoardMembership.findMany({
+      where: {
+        status: "active",
+        userId: { not: user.id },
+        board: { courseOffering: { courseId: { in: courseIds } } },
+        user: {
+          schoolId: user.schoolId ?? "",
+          profile: { openToBeDiscovered: true }
+        }
+      },
+      include: {
+        user: { include: userInclude },
+        board: { include: { courseOffering: { include: { course: true } } } }
+      },
+      take: 80
+    });
+
+    for (const membership of sameCourseMemberships) {
+      const courseCode = membership.board.courseOffering.course.code;
+      addCandidate(membership.user, 80, `上过同一门课程：${courseCode}`, courseCode);
+    }
+  }
+
   const sameMajorUsers = user.profile?.majorId
     ? await prisma.user.findMany({
         where: {
@@ -3023,9 +3106,13 @@ async function handleMatches() {
           profile: { majorId: user.profile.majorId, openToBeDiscovered: true }
         },
         include: userInclude,
-        take: 12
+        take: 40
       })
     : [];
+
+  for (const matchedUser of sameMajorUsers) {
+    addCandidate(matchedUser, 45, "同一个专业");
+  }
 
   const crossMajorUsers = await prisma.user.findMany({
     where: {
@@ -3037,8 +3124,21 @@ async function handleMatches() {
       }
     },
     include: userInclude,
-    take: 12
+    take: 40
   });
+
+  for (const matchedUser of crossMajorUsers) {
+    addCandidate(matchedUser, 12, "同校可发现");
+  }
+
+  const sortedUsers = Array.from(candidateMap.values())
+    .map((candidate) => ({
+      user: publicUser(candidate.user),
+      score: candidate.score + Math.min(candidate.sharedCourses.size * 5, 20),
+      reasons: candidate.reasons
+    }))
+    .sort((a, b) => b.score - a.score || (a.user.profile?.displayName ?? a.user.email ?? "").localeCompare(b.user.profile?.displayName ?? b.user.email ?? ""));
+  const pagedUsers = paginateUsers(sortedUsers);
 
   return ok({
     posts: posts.map((post) => ({
@@ -3049,18 +3149,13 @@ async function handleMatches() {
         ...(post.user.profile?.majorId === user.profile?.majorId ? ["Same major"] : [])
       ]
     })),
-    users: [
-      ...sameMajorUsers.map((matchedUser) => ({
-        user: publicUser(matchedUser),
-        score: 70,
-        reasons: ["Same major", "Open to be discovered"]
-      })),
-      ...crossMajorUsers.map((matchedUser) => ({
-        user: publicUser(matchedUser),
-        score: 45,
-        reasons: ["Same school", "Cross-major collaboration"]
-      }))
-    ]
+    users: pagedUsers.items,
+    usersPagination: {
+      page: pagedUsers.page,
+      pageSize: usersPageSize,
+      total: pagedUsers.total,
+      totalPages: pagedUsers.totalPages
+    }
   });
 }
 
@@ -7878,7 +7973,7 @@ async function dispatch(method: string, context: RouteContext, request: NextRequ
   if (root === "support-tickets") return handleSupportTickets(method, request);
   if (root === "announcements") return handleAnnouncements(method, path);
   if (root === "uploads") return handleUploads(method, request);
-  if (root === "matches" && method === "GET") return handleMatches();
+  if (root === "matches" && method === "GET") return handleMatches(request);
   if (root === "admin") return handleAdmin(method, path, request);
   if (root === "crawler") return handleCrawler(method, path, request);
 

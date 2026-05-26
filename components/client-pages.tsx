@@ -3118,12 +3118,15 @@ export function FriendsPage() {
 }
 
 export function MatchesPage() {
-  const { data, error, loading } = useApi("/api/matches");
+  const [usersPage, setUsersPage] = useState(1);
+  const usersPageSize = 8;
+  const { data, error, loading } = useApi(`/api/matches?usersPage=${usersPage}&usersPageSize=${usersPageSize}`, [usersPage, usersPageSize]);
   const hiddenPostReasons = new Set(["same school", "open to team"]);
   const visiblePostReasons = (reasons: string[] = []) => reasons.filter((reason) => !hiddenPostReasons.has(String(reason).trim().toLowerCase()));
+  const usersPagination = data?.usersPagination ?? { page: usersPage, pageSize: usersPageSize, total: 0, totalPages: 1 };
 
   return (
-    <PageShell title="Matches" eyebrow="Discovery" description="MVP 使用简单规则推荐，不使用 AI，也不依赖官方选课数据库。">
+    <PageShell title="Matches" eyebrow="Discovery" description="优先推荐上过同一门课程、同一个专业、同校开放展示的同学；不使用 AI，也不依赖官方选课数据库。">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       <div className="grid gap-6">
         <section>
@@ -3144,19 +3147,60 @@ export function MatchesPage() {
           </div>
         </section>
         <section>
-          <h2 className="mb-3 text-xl font-semibold text-ink">Relevant Users</h2>
-          <div className="grid gap-4 md:grid-cols-2">
-            {(data?.users ?? []).map((item: any) => (
-              <div key={item.user.id} className="grid gap-2">
-                <ProfileCard user={item.user} />
-                <div className="flex flex-wrap gap-2">
-                  {(item.reasons ?? []).map((reason: string) => (
-                    <SkillBadge key={reason}>{reason}</SkillBadge>
-                  ))}
-                </div>
-              </div>
-            ))}
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h2 className="text-xl font-semibold text-ink">Relevant Users</h2>
+              <p className="mt-1 text-xs leading-5 text-ink/56">排序依据：同一课程记录优先，其次同专业，再用同校开放展示补充。</p>
+            </div>
+            <p className="text-xs text-ink/52">
+              {usersPagination.total} users · page {usersPagination.page} / {usersPagination.totalPages}
+            </p>
           </div>
+          {(data?.users ?? []).length ? (
+            <>
+              <div className="grid gap-4 md:grid-cols-2">
+                {(data?.users ?? []).map((item: any) => (
+                  <div key={item.user.id} className="grid gap-2">
+                    <ProfileCard user={item.user} />
+                    <div className="flex flex-wrap gap-2">
+                      {(item.reasons ?? []).map((reason: string) => (
+                        <SkillBadge key={reason}>{reason}</SkillBadge>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {usersPagination.totalPages > 1 ? (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-ink/18 bg-paper/70 px-3 py-2 text-xs">
+                  <span className="text-ink/56">
+                    Showing {(usersPagination.page - 1) * usersPagination.pageSize + 1}
+                    {"-"}
+                    {Math.min(usersPagination.page * usersPagination.pageSize, usersPagination.total)} of {usersPagination.total}
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={usersPagination.page <= 1}
+                      onClick={() => setUsersPage((page) => Math.max(1, page - 1))}
+                      className="border border-ink/30 px-3 py-2 font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Prev
+                    </button>
+                    <button
+                      type="button"
+                      disabled={usersPagination.page >= usersPagination.totalPages}
+                      onClick={() => setUsersPage((page) => Math.min(usersPagination.totalPages, page + 1))}
+                      className="border border-ink/30 px-3 py-2 font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : !loading ? (
+            <EmptyState title="暂时没有相关用户" body="加入课程板、完善专业信息，或等待更多同学开放 Profile 后，这里会优先显示同课和同专业的人。" />
+          ) : null}
         </section>
       </div>
     </PageShell>
