@@ -17,7 +17,81 @@
 
 ## Open
 
-No open pre-launch issues currently recorded.
+### PLI-2026-05-27-001 - Independent DB import/approve smoke not rerun in current shell
+
+Status: `Open`
+
+Source: 2026-05-27 local pre-launch closure.
+
+Current impact:
+
+- Local architecture guards, typecheck, lint, unit/integration tests, build, e2e, and crawler limit smokes can be verified locally.
+- `TEST_DATABASE_URL` is not set in the current shell or `.env`, so the DB-backed CourseImportWorkflow create pending / approve effect check cannot be rerun without risking development or production data.
+
+Next action before next launch:
+
+1. Configure an isolated PostgreSQL database whose name clearly includes `test`.
+2. Run the DB-backed integration suite:
+
+```bash
+TEST_DATABASE_URL="postgresql://..." npm run test -- tests/integration/course-import-workflow.integration.test.ts
+```
+
+3. Run a 2023 `limit=1` programme handbook JSON through CourseImportWorkflow create pending / approve and verify BNBU school, FBM faculty, ACCT major, ACCT2003 course, curriculum rule, and `2026-Fall` Programme Plan board effects.
+
+Blocking current local commit: `No`
+
+Required before next production launch: `Yes`
+
+### PLI-2026-05-27-002 - Deployed crawler serverless parser trace still needs post-redeploy proof
+
+Status: `Open`
+
+Source: 2026-05-26 production crawler failure and 2026-05-27 local closure.
+
+Current impact:
+
+- Local crawler smokes prove the scripts and PDF parser dependencies work in this workspace.
+- The original failure happened inside Vercel serverless under `/var/task`, so the final proof is a deployed retry after this commit is redeployed.
+
+Observed production failure:
+
+```text
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'pdfjs-dist' imported from /var/task/scripts/bnbu-crawler/run-handbook-preview.mjs
+```
+
+Next action before next launch:
+
+1. Redeploy the commit that contains the crawler tracing and architecture guard changes.
+2. In the deployed admin/crawler UI, run `programme_handbook` for `2023 limit=1`.
+3. Run `programme_handbook` for `2025,2024,2023 limit=1`.
+4. Confirm there is no `ERR_MODULE_NOT_FOUND` for `pdfjs-dist` or `pdf-parse`, and confirm the output files belong to the current job.
+
+Blocking current local commit: `No`
+
+Required before next production launch: `Yes`
+
+### PLI-2026-05-27-003 - Production env, email, admin bootstrap, and manual acceptance remain external launch checks
+
+Status: `Open`
+
+Source: 2026-05-27 local pre-launch closure.
+
+Current impact:
+
+- Local automated e2e covers the main student/admin/demo smoke surface.
+- Production-only dependencies still require manual verification in Vercel, Neon, Tencent SES, object/file storage, DNS/host routing, and real browser sessions.
+
+Next action before next launch:
+
+1. Complete the production environment checklist in `docs/ENVIRONMENT_VARIABLES.md`.
+2. Confirm Neon migrations and admin/bootstrap account setup.
+3. Verify Tencent SES registration and password-reset email delivery with debug code responses disabled.
+4. Run the manual acceptance flows in `docs/ACCEPTANCE_CHECKLIST.md`: registration/login, admin access, profile upload preview, course search/join, Course Board post, TeamUp Interest, Follow Request, support ticket, announcements, and version checkpoint/restore.
+
+Blocking current local commit: `No`
+
+Required before next production launch: `Yes`
 
 ## Resolved History
 

@@ -12,6 +12,8 @@
 6. 检查 Coverage、Courses、Rules、Diff。
 7. 创建 pending 批次，再由管理员批准或拒绝。
 
+上线前验收必须用 BNBU 真实 handbook/PDF。推荐先跑 `Admission year = 2023`、`Limit = 1`，确认下载到单个 JSON，再走 `/admin/course-imports` pending/approve 并查数据库效果；随后跑 `2025,2024,2023`、`Limit = 1`，确认不会出现 `pdfjs-dist` 或 `pdf-parse` 缺包。不要用 mock JSON 或旧下载文件代替这两条 smoke。
+
 ## Input Variables
 
 | 页面字段 | API 字段 | 类型 / 格式 | 必填 | 默认值 | 示例 | 作用 | 注意事项 |
@@ -158,3 +160,5 @@
 ## Ownership Boundary
 
 Crawler 页面默认只负责“生成可审查 JSON”。如果管理员选择 `直接批准并更新线上数据库`，主系统数据库变化会在 crawler job 完成后立即发生；该动作仍会创建 `CourseImportBatch`、`CourseImportDataset` 和操作日志。完整 version checkpoint 由管理员在版本管理页手动创建，避免大导入请求同步生成完整快照导致超时。任何课程目录、admission-year curriculum rules、Course Board 激活、默认加入、操作日志和版本 checkpoint，都以管理员导入页和管理员版本页为准。
+
+部署时要确认 Next/Vercel tracing 带上 `scripts/bnbu-crawler`、`pdfjs-dist` 和 `pdf-parse` 相关文件；否则本地能跑的 PDF 解析可能在线上 serverless 里变成 `ERR_MODULE_NOT_FOUND`。

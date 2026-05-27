@@ -1,4 +1,4 @@
-import { FriendsPage } from "@/components/client-pages";
+import { FriendsPage } from "@/components/pages/social-pages";
 
 export default function Page() {
   return <FriendsPage />;

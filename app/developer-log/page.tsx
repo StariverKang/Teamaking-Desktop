@@ -1,4 +1,4 @@
-import { ContentDocumentsPage } from "@/components/client-pages";
+import { ContentDocumentsPage } from "@/components/pages/content-pages";
 
 export default function Page() {
   return (

@@ -1,4 +1,4 @@
-import { TeamUpRequestsPage } from "@/components/client-pages";
+import { TeamUpRequestsPage } from "@/components/pages/social-pages";
 
 export default function Page() {
   return <TeamUpRequestsPage />;

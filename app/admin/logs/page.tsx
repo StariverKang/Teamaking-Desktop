@@ -1,12 +1,5 @@
-import { AdminResourcePage } from "@/components/client-pages";
+import { LogsWorkbench } from "@/components/pages/admin-workbenches";
 
 export default function Page() {
-  return (
-    <AdminResourcePage
-      title="Admin Audit Logs"
-      endpoint="/api/admin/logs"
-      defaultActionPath="/api/admin/logs"
-      description="查看所有管理端变更记录。"
-    />
-  );
+  return <LogsWorkbench />;
 }

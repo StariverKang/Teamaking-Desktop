@@ -1,6 +1,6 @@
 # BNBU Course Crawler And Cleaning Requirements
 
-本文档用于指导 BNBU 课程数据采集与处理程序。Crawler 可以作为独立子域名/本地端口运行，但它仍与主 TEAMAKING 系统解耦：crawler 负责采集、保留原始证据、清洗结构化数据，并最终输出 TEAMAKING 可导入的业务 JSON；主系统只通过管理员粘贴并审批 cleaned JSON 入库。
+本文档用于指导 BNBU 课程数据采集与处理程序。Crawler 可以作为独立子域名/本地端口运行，但它仍与主 TEAMAKING 系统解耦：crawler 负责采集、保留原始证据、清洗结构化数据，并最终输出 TEAMAKING 可导入的业务 JSON；主系统只通过 `CourseImportWorkflow` 审批 cleaned JSON 入库。管理员可以手动粘贴，也可以让 crawler job 在完成后创建 pending 批次或直接批准。
 
 当前产品边界：BNBU 课程配置以每年 admission programme handbook 为准。BNBU class schedule 只是学期时间安排，不作为课程存在、真实开课或 CourseBoard 配置依据；`semester_offerings` 与 `syllabus_teamwork` 不属于当前必要管线。Handbook import 可以保持 `offerings[]` 为空，系统会通过当前 academic term、学生 admission year、major 和 `relativeTermCodes` 激活 CourseBoard。
 
@@ -18,7 +18,7 @@ JSON（业务结构）
 Frontend/API
 ```
 
-最终 JSON 会由管理员在 TEAMAKING `/admin/course-imports` 粘贴、命名、校验、创建待审批批次，并在人工批准后写入正式数据库。线上 crawler 生成的文件应先下载到本地，再人工复制到主系统；不要让 crawler 直接写主系统数据库。
+最终 JSON 会由 `CourseImportWorkflow` 校验、创建待审批批次，并在批准后写入正式数据库。安全默认流程仍是：线上 crawler 生成文件后下载单个 `.teamaking.json`，再到 TEAMAKING `/admin/course-imports` 粘贴、命名、校验和人工批准；若管理员在 crawler 页面明确选择 `create_pending` 或 `approve_import`，crawler module 会把本次真实输出交给同一个 workflow，不走另一套导入逻辑。
 
 ## 1. 总体目标
 
@@ -206,6 +206,8 @@ v2 语义：
 4. 校验通过后创建待审批批次。
 5. 管理员人工检查 source、counts、warnings。
 6. 批准导入或拒绝。
+
+Crawler 完成后的 `After crawl` 动作使用同一个 workflow：`download_only` 不改数据库，`create_pending` 只创建待审批批次，`approve_import` 创建后立即批准。任何路径都必须保留 `CourseImportBatch`、`CourseImportDataset` 和操作日志。
 
 API：
 
@@ -942,15 +944,18 @@ Should warn:
 A crawler/cleaning implementation is acceptable when:
 
 - It can run from a clean machine with documented commands.
-- It writes raw JSONL before cleaning.
-- It writes a single cleaned JSON file for one target semester.
+- It keeps raw/source evidence outside TEAMAKING or in job-scoped crawler storage before cleaning.
+- It writes one cleaned JSON file per target admission year or course catalog target.
 - The cleaned JSON passes `POST /api/admin/course-imports/validate`.
+- The cleaned JSON can go through workflow create pending / approve and produce database rows for at least one programme, course, curriculum rule, and visible Course Board.
 - At least one real required-course scenario generates `studentAction: "default_join"`.
 - At least one elective/free-elective scenario generates `studentAction: "searchable_add"`.
 - A course with multiple roles is represented by multiple `curriculumRules`.
 - Syllabus teamwork evidence is represented without copying full syllabus text.
 - Every course/rule has traceable source references.
 - Re-running the same raw input produces the same cleaned JSON.
+
+上线前真实 smoke 不可用 mock 替代：用 BNBU programme handbook 总入口跑 `2023 limit=1`，下载单个 JSON 后走 workflow create pending / approve，并查库确认一个 programme、一个 course、一个 curriculum rule 和一个 Programme Plan board。随后再跑 `2025,2024,2023 limit=1` 小样本，确认 PDF 解析和 serverless tracing 不再出现 `pdfjs-dist` 或 `pdf-parse` 缺包。Vercel/Next 部署必须把 `scripts/bnbu-crawler`、顶层 `pdfjs-dist` assets，以及 `pdf-parse` 自带 dist/nested `pdfjs-dist` assets 保留在 `outputFileTracingIncludes`。
 
 ## 8. Suggested Python Package Structure
 

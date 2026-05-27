@@ -980,3 +980,126 @@
   - `npm run typecheck` 通过。
   - `npm run lint` 通过（0 warnings）。
   - `npm run build` 通过（0 warnings）。
+
+## 2026-05-27
+
+### 架构拆分第一轮：API Context、Crawler、Course Import、客户端 API
+
+- 背景：
+  - 项目功能面已经成型，但 API route、client pages、crawler/import/admin 逻辑集中在少数超大文件里，后续维护容易反复绕远路。
+- 改动：
+  - 新增 `lib/server/api-context.ts`，让 `app/api/[...route]/route.ts` 通过统一 `ApiContext` 分发，为后续按领域拆成 `ApiModuleHandler` 铺接口。
+  - 新增 `lib/server/course-import/payload.ts`，把 course import 的 direct payload / crawler bundle 解析与错误语义沉到独立 Module。
+  - 将原 `lib/bnbu-course-import.ts` 的 BNBU import 校验/分类/默认加入规则实现迁到 `lib/server/course-import/bnbu-course-import.ts`；原文件保留兼容 re-export，现有调用路径不变。
+  - 新增 `lib/server/crawler/io.ts`，集中 crawler 自然语言输入解析、标准化、job 默认命名、输出差异判断和 job-scoped 输出目录。
+  - crawler 的 download 输出改为写入 `storage/crawler_outputs/<jobId>/`，成功/失败任务只从本 job 目录收集输出，避免历史 JSON 被误算成本次结果；`git_import_json` 兼容旧目录行为。
+  - 新增 `lib/client/api.ts`，统一客户端 `api()`、`useApi()`、Profile 文件上传错误显示。
+  - `/crawler` 页面改为导入 `components/pages/crawler-portal-page.tsx`，不再把 crawler portal 放在 `components/client-pages.tsx` 大集合里。
+  - 修复 crawler 自然语言解析边角：`Fall` 不再误判为 `all`，URL 路径里的 `2051` 不再误识别为 admission year。
+- 验证：
+  - 新增 `tests/unit/course-import-payload.test.ts` 和 `tests/unit/crawler-io.test.ts`。
+  - `npm run prisma:validate` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过。
+  - `npm run test` 通过（6 files passed，22 passed，1 skipped）。
+  - `npm run build` 通过。
+  - build trace 实测包含 `pdfjs-dist/package.json`、`pdfjs-dist/legacy/build/pdf.mjs` 和 `scripts/bnbu-crawler/run-handbook-preview.mjs`。
+  - `npm run test:e2e` 通过（5 passed）。
+  - crawler 本地 smoke 通过：`2023 limit=1` 输出 49 courses / 49 rules / 0 offerings。
+
+### 架构拆分第二轮：Crawler/Course Import Module 与前端入口拆分
+
+- 背景：
+  - 继续按“功能等价优先”补强第一轮拆分，把 crawler 和 admin course-import 主入口从巨型 API route 下沉到领域 Module，并给 crawler 部署依赖与输出隔离补自动化保护。
+- 改动：
+  - 新增 `lib/server/crawler/module.ts`、`runtime.ts`、`errors.ts` 和 `lib/server/storage/json-files.ts`，集中 crawler options/jobs/outputs/download、job lifecycle、输出 bundle、runtime readiness、stderr 摘要和安全 JSON 下载。
+  - 新增 `lib/server/course-import/admin-module.ts`，迁出 admin course-import validate/list/create/approve/reject/dataset download handler；`route.ts` 只负责装配 adapter 和 dispatch。
+  - `ApiContext` 增加 `body()`、`requireUser()`、`requireAdmin()`、`activeAppVersionId()` 懒加载能力，减少领域 handler 反复传递 request/admin/app version。
+  - crawler download 模式只读取本 job 的 `storage/crawler_outputs/<jobId>/`，输出记录带可选 `jobId`；`git_import_json` 保持兼容 `course_imports/bnbu`。
+  - `next.config.mjs` 的 build trace 包含 `scripts/bnbu-crawler` 与 `pdfjs-dist` legacy build/package assets，并新增单测守住这条部署约束。
+  - `app/**/page.tsx` 改为导入 `components/pages/*` 页面模块；admin 各资源页改为独立 workbench wrapper；抽出页面 primitives 复用 `ErrorBox`、`Field`、`inputClass`、`formatFileSize`。
+- 验证：
+  - 新增/补强 `tests/unit/crawler-io.test.ts`、`tests/unit/course-import-payload.test.ts`、`tests/unit/crawler-build-trace.test.ts`。
+  - `npm run prisma:validate` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过。
+  - `npm run test` 通过（7 files passed，28 passed，1 skipped）。
+  - `npm run build` 通过。
+  - build trace 实测包含 `pdfjs-dist/package.json`、`pdfjs-dist/legacy/build/pdf.mjs` 和 `scripts/bnbu-crawler/run-handbook-preview.mjs`。
+  - `npm run test:e2e` 通过（5 passed）。
+  - crawler 本地 smoke 通过：`2023 limit=1` 输出 49 courses / 49 rules / 0 offerings，输出文件位于独立 `/tmp/teamaking-second-round-crawler-smoke-*` 目录。
+
+### 架构拆分第三轮：Full completion API/Page 拆分与真实 Crawler Import 验收
+
+- 背景：
+  - 用户明确本轮不是 Launch cleanup，而是继续拆完 legacy API 和前端页面大文件：catch-all route 与兼容页面 barrel 不再承载业务实现，真实 crawler/import/effect check 是 done 条件。
+- 改动：
+  - `app/api/[...route]/route.ts` 缩到 Next.js thin entry，只负责解析 route params 并调用 `handleApplicationApiRoute`。
+  - 新增/整理 `lib/server/api/*-module.ts`：auth/profile/content/courses/social/admin resources 分域承接剩余业务 handler；`application-module.ts` 通过 `ApiModuleRegistry` 分发，保留系统暂停检查、demo admin 入口、专门 module registry 与真正 404 fallback。
+  - `lib/server/admin/versions-module.ts` 完整承接 versions list/checkpoint/download/restore-as-new-version，并修复 checkpoint download、restore-as-new-version 被宽泛分支提前拦截的问题。
+  - 前端 `components/client-pages.tsx` 变为兼容空壳，`components/pages/client-page-implementations.tsx` 只做兼容 re-export；页面实现按 auth/student/profile/content/course-board/social/admin/crawler/shared 拆入小模块，`app/**` 和 `components/pages/**` 不再从兼容 barrel 导入。
+  - architecture guard 扩展到 route、client-pages、client-page-implementations 和兼容 barrel import 禁止项，防止业务实现回流。
+  - `next.config.mjs` 的 crawler tracing 从 `pdfjs-dist` 扩展到 `pdf-parse` dist 与其 nested `pdfjs-dist` assets，单测覆盖该 serverless 依赖边界。
+  - README、BNBU crawler requirements、crawler admin variables 同步真实目录结构、CourseImportWorkflow 唯一入口、真实数据验收路径和 PDF parser tracing 要求。
+- 验证：
+  - `npm run prisma:validate` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过（0 errors，0 warnings）。
+  - `npm run test` 通过（11 files passed，38 passed，2 skipped）。
+  - 临时 `TEST_DATABASE_URL` 集成测试通过（2 files passed，2 passed，2 skipped），验证 pending/approve、默认加入、manual membership 不覆盖、opt-out 保留、versions checkpoint download/restore-as-new-version。
+  - `npm run build` 通过。
+  - `npm run test:e2e` 通过（5 passed）。
+  - 真实 crawler smoke：`2023 limit=1` 从 BNBU programme handbook 总入口解析 ACCT，输出 49 courses / 49 curriculum rules / 0 offerings，未出现 PDF parser 缺包。
+  - 真实 crawler import/effect check：用该 2023 ACCT JSON 在临时数据库走 `CourseImportWorkflow` create pending / approve；批准后查到 BNBU school、FBM faculty、ACCT major、ACCT2003 course、curriculum rule 和 2026-Fall Programme Plan board，结果激活 10 个 board、生成 10 组 default-join 处理。
+  - 真实 multi-cohort smoke：`2025,2024,2023 limit=1` 通过，分别输出 ACCT JSON；2025 输出 49 courses / 49 rules，2024 输出 49 courses / 49 rules，2023 输出 49 courses / 49 rules，未复现 `pdfjs-dist` / `pdf-parse` serverless tracing 缺包问题。
+- 剩余风险：
+  - 真实全量 crawler 仍可能受 BNBU 官网网络/PDF 文件临时变化影响；上线操作应保留分 cohort/faculty/programme 分批跑和下载单个 JSON 人工复核的路径。
+
+### Dirty 状态收尾：兼容 Barrel 收口与 700 行守卫
+
+- 背景：
+  - 第三轮拆分后 dirty 状态里仍有少量兼容层和 4 个接近/超过 700 行的业务/UI 文件，需要把 legacy kitchen-sink 依赖彻底收口。
+- 改动：
+  - `lib/server/api/support.ts` 保留为短兼容 re-export；所有 `lib/server/**` 内部调用改为直接导入 `lib/server/services/*` 具体 service。
+  - `lib/server/api/courses-module.ts` 拆为 `courses/boards-resource.ts`、`courses/comments-resource.ts`、`courses/courses-resource.ts`。
+  - `lib/server/api/social-module.ts` 拆为 `social/friends-resource.ts`、`social/posts-resource.ts`、`social/team-up-resource.ts`、`social/follow-resource.ts`、`social/matches-resource.ts`。
+  - `components/pages/shared-page-parts.tsx` 拆为 `shared/academic-parts.tsx`、`shared/content-parts.tsx`、`shared/portfolio-parts.tsx`、`shared/data-preview.tsx`，调用方改为导入具体 shared 模块。
+  - `components/pages/profile-pages.tsx` 拆为 `profile/editor-page.tsx` 和 `profile/public-profile-page.tsx`，`app/profile/**` 改为直接导入具体页面模块。
+  - `tests/unit/architecture-guard.test.ts` 扩展到 `lib/server/api/**` 和 `components/pages/**` 700 行上限，并禁止内部代码继续导入 `support.ts`、`shared-page-parts.tsx`、`profile-pages.tsx` 等兼容 barrel。
+  - `next-env.d.ts` 恢复到项目期望的 `.next/types/routes.d.ts` 引用，去掉本地 `.next/dev/types` 生成噪音。
+- 验证：
+  - `npm run test -- tests/unit/architecture-guard.test.ts` 通过（7 passed）。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过。
+  - `npm run prisma:validate` 通过。
+  - `npm run test` 通过（11 files passed，41 passed，2 skipped）。
+  - `npm run build` 通过。
+  - `npm run test:e2e` 通过（5 passed）。
+  - 真实 crawler smoke：`2023 limit=1` 输出 49 courses / 49 rules / 0 offerings。
+  - 真实 multi-cohort smoke：`2025,2024,2023 limit=1` 通过；2025、2024、2023 均输出 49 courses / 49 rules / 0 offerings。
+  - 当前 shell 未设置 `TEST_DATABASE_URL`；本轮无法重新执行真实临时 DB create pending / approve，integration 文件按设计通过隔离库检查并跳过 DB 写入用例。
+
+### 五类上线前收口与验收清单
+
+- 背景：
+  - 用户要求把提交前收口、真实 DB 集成验收、线上 crawler 原始问题复测、生产配置服务、手动上线验收五类事项集中收口，并在完成后只本地 commit、不 push。
+- 本地可完成项：
+  - dirty diff 复核确认 `next-env.d.ts`、Prisma schema 和 lockfile 没有提交噪音。
+  - 兼容 barrel、700 行上限、crawler tracing、CourseImportWorkflow 单一入口等结构性守卫均纳入自动化测试。
+  - 本地 automated acceptance 继续以 prisma/typecheck/lint/unit/integration/build/e2e/crawler smoke 为准。
+- 外部上线前阻塞项：
+  - 当前 shell 和 `.env` 均未设置 `TEST_DATABASE_URL`，不能安全重跑真实 DB create pending / approve effect check。
+  - Vercel serverless `/var/task` crawler 需要随本 commit 重新部署后在 deployed admin/crawler UI 复测，确认不再出现 `pdfjs-dist` / `pdf-parse` 缺包。
+  - Vercel/Neon/Tencent SES/admin bootstrap/DNS/生产手动流仍需按 `docs/ENVIRONMENT_VARIABLES.md` 和 `docs/ACCEPTANCE_CHECKLIST.md` 做生产验收。
+- 记录：
+  - 上述 3 项已进入 `docs/PRE_LAUNCH_ISSUES.md` 的 `Open` 区，均不阻塞本地 commit，但标记为下次 production launch 前必须完成。
+- 本轮最终验证：
+  - `npm run prisma:validate` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过。
+  - `npm run test` 通过（11 files passed，41 passed，2 skipped）。
+  - `npm run build` 通过。
+  - `npm run test:e2e` 通过（5 passed）。
+  - `npm run test -- tests/integration/course-import-workflow.integration.test.ts` 通过（1 passed，1 skipped；skip 原因是未设置 `TEST_DATABASE_URL`）。
+  - crawler smoke 通过：`2023 limit=1` 输出 49 courses / 49 rules / 0 offerings。
+  - multi-cohort crawler smoke 通过：`2025,2024,2023 limit=1` 均输出 49 courses / 49 rules / 0 offerings。

@@ -1,4 +1,4 @@
-import { AdminMaintenancePage } from "@/components/client-pages";
+import { AdminMaintenancePage } from "@/components/pages/admin-workbenches";
 
 export default function Page() {
   return <AdminMaintenancePage />;

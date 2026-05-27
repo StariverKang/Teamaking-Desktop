@@ -256,7 +256,7 @@ MVP 保留 TODO 扩展点：
 
 ```text
 app/
-  api/[...route]/route.ts       # 统一 API Route Handler
+  api/[...route]/route.ts       # 极薄 Next.js API 入口，创建 route context 后交给 server module registry
   demo-access/                  # 本地验收绕过邮箱验证码入口
   support/                      # 工单入口，处理 bug、报错、缺失课程等
   friends/                      # Mutual follow 好友列表
@@ -274,13 +274,19 @@ app/
 components/
   app-shell.tsx                 # 导航、页面布局、通用状态组件
   cards.tsx                     # CourseCard、ProfileCard、TeamakingPostCard 等
-  client-pages.tsx              # 页面级客户端交互
+  client-pages.tsx              # 兼容空壳；新页面不要从这里导入
+  pages/                        # 按 auth/student/profile/course-board/social/admin/content/crawler 拆分的页面模块
 lib/
   prisma.ts                     # Prisma Client 单例
   session.ts                    # HttpOnly cookie session
   contact.ts                    # 联系方式可见性逻辑
   constants.ts                  # 固定选项和状态流转
   profile-assets.ts             # Profile 文件后缀、预览类型、本地简历解析
+  server/
+    api/                        # application module、registry support 和按领域拆分的 API modules
+    course-import/              # CourseImportWorkflow、payload、BNBU v2 校验和 curriculum matching
+    crawler/                    # crawler module、runtime readiness、job/output lifecycle
+    admin/versions-module.ts    # version list/checkpoint/download/restore-as-new-version
 prisma/
   schema.prisma                 # PostgreSQL 数据模型
   seed.ts                       # BNBU 演示数据
@@ -419,11 +425,13 @@ prisma/
 
 ### BNBU Course Import
 
-真实课程数据由 BNBU crawler/清洗工具采集和清洗。主系统仍只通过 cleaned JSON 入库：`schemaVersion` 建议为 `teamaking.bnbu_course_import.v2`（兼容 v1），`school.shortName` 必须为 `BNBU`。管理员在 `/admin/course-imports` 粘贴 JSON，填写本次配置名称，先校验并创建一条待审批配置操作，批准后才会写入课程目录和 admission-year 课程安排规则。
+真实课程数据由 BNBU crawler/清洗工具采集和清洗。主系统通过 `CourseImportWorkflow` 作为唯一业务入口处理 cleaned JSON：`schemaVersion` 建议为 `teamaking.bnbu_course_import.v2`（兼容 v1），`school.shortName` 必须为 `BNBU`。管理员可以在 `/admin/course-imports` 粘贴 JSON，或让 `/crawler` 在任务完成后创建 pending/直接批准；两条路径都会先形成可审计的 batch/dataset，批准后才会写入课程目录和 admission-year 课程安排规则。
 
 爬虫入口已经拆成独立页面 `/crawler` 和 API `/api/crawler/*`。本地可直接访问；线上可通过 `CRAWLER_HOSTS` 配置独立 crawler 子域名。Crawler 支持 `programme_handbook` 和 `course_catalog`：每年 admission handbook 是课程配置和 CourseBoard 规则的唯一权威来源，Course Descriptions 课程总表用于补充官方课程描述。BNBU class schedule 只是学期时间安排，不作为课程存在、真实开课或 CourseBoard 配置依据。Crawler 默认只生成可下载 JSON；管理员也可以在 `After crawl` 中选择创建 pending 导入批次，或直接批准并更新线上数据库。每个 Job 完成后都会提供“下载本次爬取内容”按钮。若要生成可提交的测试样本，可切换输出模式写入 `course_imports/bnbu/*.teamaking.json`。
 
 Crawler 页面字段解释、变量表、Job 状态、下载区和常见误用见 `docs/BNBU_CRAWLER_ADMIN_VARIABLES.md`。这份文档面向非开发管理员，可直接作为操作手册使用。
+
+上线前 crawler/import 验收必须使用 BNBU 真实页面和 PDF，而不是 mock payload：至少跑 `2023 limit=1` handbook smoke，下载单个 JSON 后走 workflow create pending/approve，并直接查数据库确认 programme、course、curriculum rule 以及 Programme Plan board 可见；再跑 `2025,2024,2023 limit=1` 小样本确认不会复现 `pdfjs-dist` / `pdf-parse` serverless tracing 缺包问题。`next.config.mjs` 的 `outputFileTracingIncludes` 必须保留 `scripts/bnbu-crawler`、`pdfjs-dist` 和 `pdf-parse` 相关 assets。
 
 导入审批前会生成预览差异，包括新增/更新 Faculty、Major、Course、Curriculum Rule，当前学期将失效的旧规则，默认加入规则数量，可搜索规则数量，以及预计会被默认加入 Course Board 的用户数量。管理员也可以选择已创建的配置操作并点击“查看差异”复核后再批准。
 

@@ -1,4 +1,4 @@
-import { OnboardingPage } from "@/components/client-pages";
+import { OnboardingPage } from "@/components/pages/student-pages";
 
 export default function Page() {
   return <OnboardingPage />;

@@ -1,4 +1,4 @@
-import { MatchesPage } from "@/components/client-pages";
+import { MatchesPage } from "@/components/pages/social-pages";
 
 export default function Page() {
   return <MatchesPage />;

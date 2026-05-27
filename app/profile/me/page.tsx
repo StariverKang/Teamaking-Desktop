@@ -1,4 +1,4 @@
-import { ProfileEditorPage } from "@/components/client-pages";
+import { ProfileEditorPage } from "@/components/pages/profile/editor-page";
 
 export default function Page() {
   return <ProfileEditorPage />;

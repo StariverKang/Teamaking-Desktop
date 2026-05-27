@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Navbar } from "@/components/app-shell";
 import { AnnouncementCenter } from "@/components/announcement-center";
-import { SupportWidget } from "@/components/client-pages";
+import { SupportWidget } from "@/components/pages/student-pages";
 import { LanguageRuntime } from "@/components/language-runtime";
 
 export const metadata: Metadata = {

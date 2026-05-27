@@ -1,4 +1,4 @@
-import { LandingPage } from "@/components/client-pages";
+import { LandingPage } from "@/components/pages/auth-pages";
 
 export default function Page() {
   return <LandingPage />;
