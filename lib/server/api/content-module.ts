@@ -6,31 +6,30 @@ import { getCurrentUser } from "@/lib/session";
 import { getActiveAppVersionId } from "@/lib/app-version";
 import { isDemoUser } from "@/lib/demo-data";
 import { userInclude } from "@/lib/server/services/user-service";
-import { serializeContentDocument, defaultDeveloperContactDocument, activeAnnouncementWhere, serializeAnnouncement } from "@/lib/server/services/content-service";
+import { activeAnnouncementWhere, contentDocumentPayload, defaultContentDocuments, isRecoverableContentStoreError, serializeAnnouncement, type PublicContentKind } from "@/lib/server/services/content-service";
 import { operationLog } from "@/lib/server/services/system-service";
 
 export async function handleContent(method: string, request: NextRequest) {
   if (method !== "GET") throw new ApiError(405, "内容接口不支持当前请求方式。");
-  const appVersionId = await getActiveAppVersionId();
   const kind = request.nextUrl.searchParams.get("kind") ?? "help";
   const allowed = new Set(["help", "developer_log", "developer_contact"]);
   if (!allowed.has(kind)) throw new ApiError(400, "内容类型无效。");
+  const publicKind = kind as PublicContentKind;
 
-  const rows = await prisma.contentDocument.findMany({
-    where: { appVersionId, kind, status: "published" },
-    orderBy: [{ displayOrder: "asc" }, { publishedAt: "desc" }, { createdAt: "desc" }]
-  });
-  const documents = rows.length || kind !== "developer_contact" ? rows : [defaultDeveloperContactDocument(appVersionId)];
-  const byParent = new Map<string | null, any[]>();
-  for (const document of documents) {
-    const key = document.parentId ?? null;
-    byParent.set(key, [...(byParent.get(key) ?? []), document]);
+  let appVersionId = "legacy";
+  try {
+    appVersionId = await getActiveAppVersionId();
+    const rows = await prisma.contentDocument.findMany({
+      where: { appVersionId, kind: publicKind, status: "published" },
+      orderBy: [{ displayOrder: "asc" }, { publishedAt: "desc" }, { createdAt: "desc" }]
+    });
+    const documents = rows.length ? rows : defaultContentDocuments(publicKind, appVersionId);
+    return ok(contentDocumentPayload(documents));
+  } catch (error) {
+    if (!isRecoverableContentStoreError(error)) throw error;
+    console.warn("Public content store unavailable; serving built-in fallback.", error);
+    return ok(contentDocumentPayload(defaultContentDocuments(publicKind, appVersionId)));
   }
-  const attachChildren = (document: any): any => ({ ...document, children: (byParent.get(document.id) ?? []).map(attachChildren) });
-  return ok({
-    documents: (byParent.get(null) ?? []).map(attachChildren).map(serializeContentDocument),
-    flatDocuments: documents.map((document: any) => serializeContentDocument({ ...document, children: [] }))
-  });
 }
 
 export async function handleSupportTickets(method: string, request: NextRequest) {

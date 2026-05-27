@@ -112,6 +112,13 @@ describe("architecture guardrails", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("keeps contact developer as a single public document page", async () => {
+    const contactPage = await readFile(path.join(process.cwd(), "app/contact-developer/page.tsx"), "utf8");
+
+    expect(contactPage).toContain("ContactDeveloperPage");
+    expect(contactPage).not.toContain("ContentDocumentsPage");
+  });
+
   it("prevents server modules from importing the legacy API support barrel", async () => {
     const files = await sourceFiles(path.join(process.cwd(), "lib/server"));
     const offenders: string[] = [];

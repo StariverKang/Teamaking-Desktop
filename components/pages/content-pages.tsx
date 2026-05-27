@@ -67,3 +67,21 @@ export function ContentDocumentsPage({ kind, title, eyebrow, description }: { ki
     </PageShell>
   );
 }
+
+export function ContactDeveloperPage() {
+  const { data, error, loading } = useApi("/api/content?kind=developer_contact");
+  const documents = useMemo(() => data?.documents ?? [], [data?.documents]);
+  const selectedDocument = firstContentDocument(documents);
+
+  return (
+    <PageShell title="联系开发者" eyebrow="Contact" description="查看开发者简介、微信和邮箱；内容可由管理员在后台维护。">
+      {loading ? <LoadingState /> : <ErrorBox message={error} />}
+      {!loading && selectedDocument ? (
+        <Card>
+          <ContentDocumentReader document={selectedDocument} emptyTitle="暂无内容" />
+        </Card>
+      ) : null}
+      {!loading && !selectedDocument ? <EmptyState title="暂无内容" body="管理员发布内容后，会显示在这里。" /> : null}
+    </PageShell>
+  );
+}
