@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -15,6 +16,10 @@ async function sourceFiles(root: string): Promise<string[]> {
 async function countLines(file: string): Promise<number> {
   const source = await readFile(path.join(process.cwd(), file), "utf8");
   return source.trim().split(/\r?\n/).length;
+}
+
+function gitStatus(args: string[]) {
+  return spawnSync("git", args, { cwd: process.cwd(), encoding: "utf8" }).status ?? 1;
 }
 
 describe("architecture guardrails", () => {
@@ -171,5 +176,14 @@ describe("architecture guardrails", () => {
     }
 
     expect(offenders).toEqual([]);
+  });
+
+  it("keeps source storage helpers tracked despite ignoring runtime storage output", async () => {
+    const file = "lib/server/storage/json-files.ts";
+
+    await readFile(path.join(process.cwd(), file), "utf8");
+
+    expect(gitStatus(["check-ignore", "--quiet", file])).not.toBe(0);
+    expect(gitStatus(["ls-files", "--error-unmatch", file])).toBe(0);
   });
 });

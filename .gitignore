@@ -12,7 +12,7 @@ scripts/bnbu-crawler/test*.mjs
 .DS_Store
 tsconfig.tsbuildinfo
 public/uploads
-storage/
+/storage/
 docs/admin-credentials.local.md
 local_bnbu_course_pipeline/
 !course_imports/
