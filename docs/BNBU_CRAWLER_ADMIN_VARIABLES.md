@@ -22,7 +22,7 @@
 | 自然语言说明 | `instruction` | 文本 | 否 | 一段默认说明 | `爬取 2025 和 2024 admission 的 programme handbook，输出 2026 Fall 的课程配置 JSON。` | 辅助自动识别 URL、admission years、programme codes、academic year、term、limit 和 target。 | 明确字段会覆盖自然语言推断。自然语言适合快速填写，但正式任务建议同时检查下方结构化字段。 |
 | 爬取目标 | `target` | 枚举 | 是 | `programme_handbook` | `programme_handbook`、`course_catalog` | 决定运行哪类解析器。 | BNBU class schedule 只是学期时间安排，不作为课程存在或 Course Board 配置依据。 |
 | Handbook URL | `handbookUrl` | URL | `programme_handbook` 需要 | BNBU programme handbook 页面 | `https://ar.bnbu.edu.cn/info/1020/1683.htm` | Crawler 从这里寻找某个 admission year 的 programme handbook 页面和 PDF。 | 推荐填某一年的 handbook 页面并一次爬一年；总入口 `programme_handbook.htm` 仍可用。不要填某一个专业 PDF。 |
-| Course descriptions URL | `courseDescriptionsUrl` | URL | `course_catalog` 需要 | BNBU Course Descriptions 页面 | `https://ar.bnbu.edu.cn/info/1021/1430.htm` | Crawler 从这里找到 Course Descriptions PDF，生成课程总表 JSON。 | 只补 `courses[].description` 等课程目录信息，不生成 admission-year curriculum rules。 |
+| Course catalog URL | `courseDescriptionsUrl` | URL | `course_catalog` 需要 | BNBU Course Descriptions 页面 | `https://ar.bnbu.edu.cn/info/1021/1430.htm` | Crawler 从这里找到 Course Descriptions PDF，并自动补入 University Core 与 General Education 官方 PDF，生成课程总表 JSON。 | Course catalog 是学校级课程总表来源，不生成 admission-year curriculum rules。 |
 | Admission year | `cohorts` | 逗号分隔年份 | 否 | 空 | `2025`、`2025,2024` | 指“哪一年入学的学生”的四年课程安排。输出文件会按 admission year 分开生成。 | 填年份页面时可留空让系统从页面标题识别；填总入口时可填一个或多个年份。这是学生入学年份，不是当前学年，也不是开课学期。 |
 | Programme codes | `programmes` / `programmeCodes` | 逗号分隔代码 | 否 | 空 | `ACCT,MCOM` | 只爬指定专业。留空表示该 admission year 下所有可识别专业。 | 代码通常来自 PDF 文件名前缀，如 `ACCT`。大小写不敏感，系统会转大写。 |
 | Faculty codes | `facultyCodes` | 逗号分隔代码 | 否 | 空 | `FBM,FHSS` | 只爬指定学院/学部范围。留空表示不过滤 faculty。 | 常用：`FBM`、`FHSS`、`FST`、`SCC`、`SAIN`、`GE`、`AR`。 |
@@ -37,7 +37,7 @@
 | 页面选项 | API 值 | 当前状态 | 输出内容 |
 |---|---|---|---|
 | Programme handbook | `programme_handbook` | 已支持 | 课程目录 `courses[]`、专业/学院、按 admission year 的 `curriculumRules[]`。通常 `offerings[]` 为空。 |
-| Course descriptions | `course_catalog` | 已支持 | BNBU AR Course Descriptions 课程总表，主要补充 `courses[].description`，不生成专业、offerings 或 admission-year rules。 |
+| Course catalog | `course_catalog` | 已支持 | BNBU AR Course Descriptions、University Core、General Education 三类课程总表来源，补充 `courses[]` 和 source refs，不生成专业、offerings 或 admission-year rules。 |
 
 `semester_offerings` 和 `syllabus_teamwork` 不在当前产品目标内。管理员如果看到 BNBU class schedule，请不要把它当作真实开课列表；课程配置仍以每年 admission handbook JSON 为准。
 

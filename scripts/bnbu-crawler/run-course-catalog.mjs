@@ -3,10 +3,14 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { getDocument, VerbosityLevel } from "pdfjs-dist/legacy/build/pdf.mjs";
+import {
+  COMMON_CURRICULUM_SOURCES,
+  parseCommonCurriculumCourses,
+  selectCommonCurriculumPdfLink,
+  stableCommonCurriculumId
+} from "./common-curriculum-catalog.mjs";
+import { loadPdfjs, pdfStandardFontDataUrl } from "./pdfjs-runtime.mjs";
 
-const pdfStandardFontDataUrl = fileURLToPath(import.meta.resolve("pdfjs-dist/standard_fonts/"));
 const ROOT = process.cwd();
 const DEFAULT_COURSE_DESCRIPTIONS_URL = "https://ar.bnbu.edu.cn/info/1021/1430.htm";
 
@@ -24,6 +28,7 @@ const academicYear = Number(args.academicYear ?? 2026);
 const term = String(args.term ?? "Spring");
 const limit = args.limit === "all" || args.limit === undefined ? Infinity : Number(args.limit ?? "all");
 const outDir = path.resolve(ROOT, String(args.outDir ?? "storage/crawler_outputs"));
+const includeCommonCurriculum = booleanArg(args.commonCurriculum ?? args.includeCommonCurriculum, true);
 
 const FACULTIES = [
   { code: "FBM", name: "Faculty of Business and Management" },
@@ -41,12 +46,18 @@ const prefixFaculty = new Map([
   ["ATS", "FHSS"], ["CCGC", "FHSS"], ["COMM", "FHSS"], ["DGS", "FHSS"], ["ELLS", "FHSS"], ["GAD", "FHSS"], ["PRA", "FHSS"], ["SOC", "FHSS"], ["TRAN", "FHSS"],
   ["AI", "FST"], ["AM", "FST"], ["APSY", "FST"], ["BIOL", "FST"], ["CHEM", "FST"], ["COMP", "FST"], ["CST", "FST"], ["DS", "FST"], ["ENVS", "FST"], ["FM", "FST"], ["FS", "FST"], ["MATH", "FST"], ["STAT", "FST"],
   ["AIM", "SCC"], ["CCM", "SCC"], ["CTV", "SCC"], ["MAD", "SCC"], ["MUS", "SCC"], ["THEM", "SCC"],
-  ["GF", "GE"], ["GE", "GE"], ["MT", "GE"], ["UCAI", "GE"], ["UCHL", "GE"], ["UCLC", "GE"], ["WPEX", "GE"]
+  ["CHI", "GE"], ["GCAP", "GE"], ["GF", "GE"], ["GFHC", "GE"], ["GFQR", "GE"], ["GFVM", "GE"], ["GE", "GE"], ["GTCU", "GE"], ["GTSC", "GE"], ["GTSU", "GE"],
+  ["MT", "GE"], ["UCAI", "GE"], ["UCHL", "GE"], ["UCLC", "GE"], ["WPEX", "GE"]
 ]);
 
 const knownAcronyms = new Map(["AI", "AR", "BBA", "BNBU", "C", "C++", "DBMS", "EAP", "HCI", "IELTS", "IFRS", "IT", "PR", "SQL", "TV", "VR", "XML"].map((value) => [value, value]));
 knownAcronyms.set("IOT", "IoT");
 const smallTitleWords = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "of", "on", "or", "the", "to", "with"]);
+
+function booleanArg(value, defaultValue) {
+  if (value === undefined) return defaultValue;
+  return !/^(false|0|no|none|off)$/i.test(String(value).trim());
+}
 
 function absoluteUrl(base, href) {
   return new URL(href.replace(/ /g, "%20"), base).toString();
@@ -65,6 +76,14 @@ function stripTags(html) {
 
 function pageTitle(html) {
   return stripTags(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "");
+}
+
+function parseHtmlLinks(html, baseUrl) {
+  return [...html.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+    .map((match) => ({
+      href: absoluteUrl(baseUrl, match[1]),
+      label: stripTags(match[2])
+    }));
 }
 
 async function fetchText(url) {
@@ -91,10 +110,10 @@ async function resolveCourseDescriptionsPdf(url) {
     return { pageUrl: "", pageTitle: "", pdfUrl: url, pdfTitle: path.basename(new URL(url).pathname) };
   }
   const html = await fetchText(url);
-  const links = [...html.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+  const links = parseHtmlLinks(html, url)
     .map((match) => {
-      const href = absoluteUrl(url, match[1]);
-      const label = stripTags(match[2]);
+      const href = match.href;
+      const label = match.label;
       return { href, label, score: linkDateScore(`${href} ${label}`) };
     })
     .filter((item) => /\.pdf(?:$|\?)/i.test(item.href));
@@ -118,6 +137,7 @@ function shouldInsertSpace(currentLine, text) {
 }
 
 async function pdfLines(buffer) {
+  const { getDocument, VerbosityLevel } = await loadPdfjs();
   const doc = await getDocument({
     data: new Uint8Array(buffer),
     standardFontDataUrl: pdfStandardFontDataUrl,
@@ -261,6 +281,86 @@ function parseCourseCatalog(lines) {
   return courses;
 }
 
+function commonGroupPageLinks(source, indexHtml) {
+  const sourceTitle = source.title.toLowerCase();
+  return parseHtmlLinks(indexHtml, source.indexUrl)
+    .filter((item) => /\/info\/101[89]\//.test(item.href))
+    .filter((item) => item.label.toLowerCase().includes(sourceTitle));
+}
+
+function sourceRefForCommonIndex(source, indexTitle, retrievedAt) {
+  return {
+    id: `common-${source.sourceIdSuffix}-index`,
+    title: indexTitle,
+    url: source.indexUrl,
+    sourceType: "course_catalog_index",
+    retrievedAt
+  };
+}
+
+function sourceRefForCommonPdf(source, groupLink, pdfLink, retrievedAt, buffer) {
+  return {
+    id: `common-${source.sourceIdSuffix}-${stableCommonCurriculumId(groupLink.label || pdfLink.label || pdfLink.href)}`,
+    title: pdfLink.label || groupLink.label || source.title,
+    url: pdfLink.href,
+    sourceType: "course_catalog_pdf",
+    retrievedAt,
+    sha256: createHash("sha256").update(buffer).digest("hex")
+  };
+}
+
+async function resolveCommonCurriculumPdfs(source) {
+  const indexHtml = await fetchText(source.indexUrl);
+  const groups = commonGroupPageLinks(source, indexHtml);
+  const seen = new Set();
+  const pdfs = [];
+
+  for (const groupLink of groups) {
+    if (seen.has(groupLink.href)) continue;
+    seen.add(groupLink.href);
+    const groupHtml = await fetchText(groupLink.href);
+    const pdfLinks = parseHtmlLinks(groupHtml, groupLink.href)
+      .filter((item) => /\.pdf(?:$|\?)/i.test(item.href));
+    const selected = selectCommonCurriculumPdfLink(pdfLinks, groupLink.label)
+      ?? pdfLinks.sort((a, b) => linkDateScore(`${b.href} ${b.label}`) - linkDateScore(`${a.href} ${a.label}`))[0];
+    if (!selected || pdfs.some((item) => item.pdfLink.href === selected.href)) continue;
+    pdfs.push({ groupLink, pdfLink: selected });
+  }
+
+  return {
+    indexTitle: pageTitle(indexHtml) || source.title,
+    pdfs
+  };
+}
+
+async function parseCommonCurriculumCatalog(retrievedAt) {
+  if (!includeCommonCurriculum) return { courses: [], sourceRefs: [], parsedSources: [] };
+
+  const courses = [];
+  const sourceRefs = [];
+  const parsedSources = [];
+
+  for (const source of COMMON_CURRICULUM_SOURCES) {
+    const resolved = await resolveCommonCurriculumPdfs(source);
+    sourceRefs.push(sourceRefForCommonIndex(source, resolved.indexTitle, retrievedAt));
+
+    for (const { groupLink, pdfLink } of resolved.pdfs) {
+      const buffer = await fetchBuffer(pdfLink.href);
+      const sourceRef = sourceRefForCommonPdf(source, groupLink, pdfLink, retrievedAt, buffer);
+      sourceRefs.push(sourceRef);
+      const parsed = parseCommonCurriculumCourses(await pdfLines(buffer), {
+        sourceKind: source.kind,
+        sourceId: sourceRef.id
+      });
+      courses.push(...parsed.courses);
+      parsedSources.push({ source: source.kind, title: sourceRef.title, url: pdfLink.href, courses: parsed.courses.length });
+      console.log(`parsed ${source.title} supplement: ${parsed.courses.length} course rows from ${sourceRef.title}`);
+    }
+  }
+
+  return { courses, sourceRefs, parsedSources };
+}
+
 function mergeByCode(courses) {
   const merged = new Map();
   for (const course of courses) {
@@ -287,7 +387,9 @@ async function main() {
   const retrievedAt = new Date().toISOString();
   const resolved = await resolveCourseDescriptionsPdf(courseDescriptionsUrl);
   const buffer = await fetchBuffer(resolved.pdfUrl);
-  const parsed = mergeByCode(parseCourseCatalog(await pdfLines(buffer)));
+  const courseDescriptionCourses = parseCourseCatalog(await pdfLines(buffer));
+  const commonCurriculum = await parseCommonCurriculumCatalog(retrievedAt);
+  const parsed = mergeByCode([...courseDescriptionCourses, ...commonCurriculum.courses]);
   const selected = parsed.slice(0, limit);
   if (!selected.length) throw new Error(`No course descriptions were parsed from ${resolved.pdfUrl}`);
   const sourceRefs = [
@@ -305,7 +407,8 @@ async function main() {
       sourceType: "course_catalog_pdf",
       retrievedAt,
       sha256: createHash("sha256").update(buffer).digest("hex")
-    }
+    },
+    ...commonCurriculum.sourceRefs
   ];
   const payload = {
     schemaVersion: "teamaking.bnbu_course_import.v2",
@@ -315,7 +418,11 @@ async function main() {
       runner: "scripts/bnbu-crawler/run-course-catalog.mjs",
       courseDescriptionsUrl,
       resolvedPdfUrl: resolved.pdfUrl,
+      commonCurriculum: includeCommonCurriculum,
+      commonCurriculumSources: commonCurriculum.parsedSources,
       limit: Number.isFinite(limit) ? limit : "all",
+      parsedCourseDescriptionCourses: courseDescriptionCourses.length,
+      parsedCommonCurriculumCourses: commonCurriculum.courses.length,
       parsedCourses: parsed.length,
       selectedCourses: selected.length
     },
@@ -339,11 +446,11 @@ async function main() {
     offerings: [],
     curriculumRules: []
   };
-  const outFile = path.join(outDir, "bnbu-course-descriptions-catalog.teamaking.json");
+  const outFile = path.join(outDir, "bnbu-course-catalog.teamaking.json");
   await writeFile(outFile, `${JSON.stringify(payload, null, 2)}\n`);
   console.log(`resolved course descriptions PDF: ${resolved.pdfUrl}`);
   console.log(`wrote ${path.relative(ROOT, outFile)}`);
-  console.log(`courses=${selected.length} parsed=${parsed.length} offerings=0 rules=0`);
+  console.log(`courses=${selected.length} parsed=${parsed.length} courseDescriptions=${courseDescriptionCourses.length} commonCurriculum=${commonCurriculum.courses.length} offerings=0 rules=0`);
 }
 
 main().catch((error) => {

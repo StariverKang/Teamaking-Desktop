@@ -71,7 +71,7 @@ describe("crawler input normalization", () => {
   });
 
   it("names course catalog and programme-handbook jobs predictably", () => {
-    expect(defaultCrawlerJobName({ target: "course_catalog", cohorts: [] })).toBe("BNBU course descriptions catalogue");
+    expect(defaultCrawlerJobName({ target: "course_catalog", cohorts: [] })).toBe("BNBU course catalogue");
     expect(defaultCrawlerJobName({ target: "programme_handbook", cohorts: ["2025", "2024"] })).toBe("2025, 2024 admission programme handbook");
   });
 

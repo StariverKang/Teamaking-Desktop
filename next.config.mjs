@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const crawlerTraceIncludes = [
   "./scripts/bnbu-crawler/**/*",
+  "./node_modules/@napi-rs/canvas*/**/*",
+  "./node_modules/pdfjs-dist/node_modules/@napi-rs/canvas*/**/*",
   "./node_modules/pdfjs-dist/package.json",
   "./node_modules/pdfjs-dist/legacy/build/*.mjs",
   "./node_modules/pdfjs-dist/standard_fonts/**/*",

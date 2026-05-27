@@ -115,7 +115,7 @@ export function normalizeCrawlerJobInput(
 }
 
 export function defaultCrawlerJobName(input: Pick<NormalizedCrawlerJobInput, "target" | "cohorts">) {
-  if (input.target === "course_catalog") return "BNBU course descriptions catalogue";
+  if (input.target === "course_catalog") return "BNBU course catalogue";
   const years = Array.isArray(input.cohorts) && input.cohorts.length ? input.cohorts.join(", ") : "inferred";
   return `${years} admission programme handbook`;
 }

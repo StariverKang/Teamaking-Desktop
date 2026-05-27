@@ -101,7 +101,7 @@ export function CrawlerPortalPage() {
             </div>
             <div className="grid gap-3 md:grid-cols-4">
               {isCourseCatalog ? (
-                <Field label="Course descriptions URL" help="填写 AR Course Descriptions 页面或 PDF；它是课程总表，不包含 admission-year 培养方案规则。">
+                <Field label="Course catalog URL" help="填写 AR Course Descriptions 页面或 PDF；University Core 和 General Education 会自动从官方入口补入总表，不生成 admission-year 培养方案规则。">
                   <input className={inputClass} value={form.courseDescriptionsUrl ?? ""} onChange={(event) => setForm({ ...form, courseDescriptionsUrl: event.target.value })} />
                 </Field>
               ) : (

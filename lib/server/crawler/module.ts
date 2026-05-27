@@ -288,7 +288,7 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
     job.outputs = input.outputMode === "git_import_json" ? crawlerOutputsChangedAfter(beforeOutputs, allOutputs) : allOutputs;
     if (code === 0 && input.outputMode === "git_import_json" && !job.outputs.length) {
       job.outputs = allOutputs.filter((file) => input.target === "course_catalog"
-        ? file.name.includes("course-descriptions-catalog")
+        ? file.name.includes("course-catalog") || file.name.includes("course-descriptions-catalog")
         : input.cohorts.length
           ? input.cohorts.some((cohort: string) => file.name.includes(`-${cohort}-`))
           : /^bnbu-\d{4}-admission-handbook\.teamaking\.json$/.test(file.name));
@@ -364,9 +364,9 @@ export function createCrawlerModule(deps: CrawlerModuleDeps) {
           },
           {
             value: "course_catalog",
-            label: "Course descriptions",
+            label: "Course catalog",
             supported: true,
-            description: "抓取 AR Course Descriptions 课程总表，补充官方课程描述；不生成 admission-year Curriculum Rules。"
+            description: "抓取 Course Descriptions、University Core 和 General Education，合并成学校课程总表；不生成 admission-year Curriculum Rules。"
           }
         ],
         runtime: await crawlerRuntimeStatus(target),

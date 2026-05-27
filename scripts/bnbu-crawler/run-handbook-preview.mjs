@@ -3,10 +3,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { getDocument, VerbosityLevel } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { fileURLToPath } from "node:url";
-
-const pdfStandardFontDataUrl = fileURLToPath(import.meta.resolve("pdfjs-dist/standard_fonts/"));
+import { loadPdfjs, pdfStandardFontDataUrl } from "./pdfjs-runtime.mjs";
 
 const ROOT = process.cwd();
 const DEFAULT_HANDBOOK_URL = "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm";
@@ -154,6 +151,7 @@ async function fetchBuffer(url) {
 }
 
 async function pdfText(buffer) {
+  const { getDocument, VerbosityLevel } = await loadPdfjs();
   const data = new Uint8Array(buffer);
   const doc = await getDocument({
     data,

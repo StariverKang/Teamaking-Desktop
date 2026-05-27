@@ -2,7 +2,7 @@
 
 本文档用于指导 BNBU 课程数据采集与处理程序。Crawler 可以作为独立子域名/本地端口运行，但它仍与主 TEAMAKING 系统解耦：crawler 负责采集、保留原始证据、清洗结构化数据，并最终输出 TEAMAKING 可导入的业务 JSON；主系统只通过 `CourseImportWorkflow` 审批 cleaned JSON 入库。管理员可以手动粘贴，也可以让 crawler job 在完成后创建 pending 批次或直接批准。
 
-当前产品边界：BNBU 课程配置以每年 admission programme handbook 为准。BNBU class schedule 只是学期时间安排，不作为课程存在、真实开课或 CourseBoard 配置依据；`semester_offerings` 与 `syllabus_teamwork` 不属于当前必要管线。Handbook import 可以保持 `offerings[]` 为空，系统会通过当前 academic term、学生 admission year、major 和 `relativeTermCodes` 激活 CourseBoard。
+当前产品边界分成两条互补数据线：每年 admission programme handbook 负责学生入学届别、专业培养方案和 CourseBoard 规则；course catalog 负责学校级课程总表，合并 Course Descriptions、University Core、General Education 三类来源。BNBU class schedule 只是学期时间安排，不作为课程存在、真实开课或 CourseBoard 配置依据；`semester_offerings` 与 `syllabus_teamwork` 不属于当前必要管线。Handbook import 可以保持 `offerings[]` 为空，系统会通过当前 academic term、学生 admission year、major 和 `relativeTermCodes` 激活 CourseBoard。
 
 目标工作流：
 
@@ -947,7 +947,8 @@ A crawler/cleaning implementation is acceptable when:
 - It keeps raw/source evidence outside TEAMAKING or in job-scoped crawler storage before cleaning.
 - It writes one cleaned JSON file per target admission year or course catalog target.
 - The cleaned JSON passes `POST /api/admin/course-imports/validate`.
-- The cleaned JSON can go through workflow create pending / approve and produce database rows for at least one programme, course, curriculum rule, and visible Course Board.
+- Admission handbook JSON can go through workflow create pending / approve and produce database rows for at least one programme, course, curriculum rule, and visible Course Board.
+- Course catalog JSON can go through workflow create pending / approve and produce searchable course rows with source refs from Course Descriptions, University Core, and General Education while leaving `curriculumRules[]` empty.
 - At least one real required-course scenario generates `studentAction: "default_join"`.
 - At least one elective/free-elective scenario generates `studentAction: "searchable_add"`.
 - A course with multiple roles is represented by multiple `curriculumRules`.
