@@ -53,6 +53,9 @@ export async function handleTeamakingPosts(method: string, path: string[], reque
     const post = await prisma.teamakingPost.findUnique({ where: { id: postId }, include: { board: { include: { courseOffering: { include: { course: true } } } } } });
     if (!post) throw new ApiError(404, "找不到这个 Teamaking Post。");
     assertSameSchool(user, post.board.courseOffering.course.schoolId);
+    if (post.userId !== user.id && !isAdminRole(user.role)) {
+      throw new ApiError(403, "只有 Teamaking Post 发布者可以查看收到的 TeamUp Interest。");
+    }
 
     if (post.userId === user.id) {
       await prisma.teamUpRequest.updateMany({
@@ -62,7 +65,7 @@ export async function handleTeamakingPosts(method: string, path: string[], reque
     }
 
     const interests = await prisma.teamUpRequest.findMany({
-      where: { postId, status: { not: "deleted" } },
+      where: { postId, senderId: { not: user.id }, status: { not: "deleted" } },
       include: {
         post: { include: { board: { include: { courseOffering: { include: { course: true, semester: true } } } } } },
         sender: { include: { ...userInclude, portfolioItems: { include: { relatedCourse: true } } } },

@@ -9,6 +9,7 @@ type AdminActionOptions = {
 export type AdminResourceContext = {
   actionData: any;
   adminNote: string;
+  approvalDecisions: Record<string, any>;
   busyAction: string;
   contentAnnouncementCreating: boolean;
   contentAnnouncementData: any;
@@ -43,6 +44,7 @@ export type AdminResourceContext = {
   selectedId: string;
   selectedLabel: (row: any) => string;
   setAdminNote: Dispatch<SetStateAction<string>>;
+  setApprovalDecisions: Dispatch<SetStateAction<Record<string, any>>>;
   setContentAnnouncementCreating: Dispatch<SetStateAction<boolean>>;
   setContentAnnouncementId: Dispatch<SetStateAction<string>>;
   setContentCreating: Dispatch<SetStateAction<boolean>>;

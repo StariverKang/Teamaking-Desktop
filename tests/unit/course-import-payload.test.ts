@@ -107,7 +107,16 @@ describe("course import admin module", () => {
       approveBatch: async () => {
         throw new Error("not used");
       },
+      activateAdmissionSemester: async () => {
+        throw new Error("not used");
+      },
       rejectBatch: async () => {
+        throw new Error("not used");
+      },
+      clearAdmissionImportBatch: async () => {
+        throw new Error("not used");
+      },
+      clearAllAdmissionImports: async () => {
         throw new Error("not used");
       },
       downloadDataset: async () => {
@@ -132,5 +141,111 @@ describe("course import admin module", () => {
       validation: { ok: true, schemaVersion: "teamaking.bnbu_course_import.v2" },
       preview: { counts: { courses: 1 } }
     });
+  });
+
+  it("routes admission cleanup actions through the admin module", async () => {
+    const calls: string[] = [];
+    const workflow: CourseImportWorkflow = {
+      validatePayload: async () => {
+        throw new Error("not used");
+      },
+      listBatches: async () => ({}),
+      createBatchFromPayload: async () => {
+        throw new Error("not used");
+      },
+      approveBatch: async () => {
+        throw new Error("not used");
+      },
+      activateAdmissionSemester: async (input: Record<string, unknown>) => {
+        calls.push(`activate:${input.academicYear}-${input.term}`);
+        return { semester: { code: `${input.academicYear}-${input.term}` }, totals: { boardsActivatedOrReused: 1 } };
+      },
+      rejectBatch: async () => {
+        throw new Error("not used");
+      },
+      clearAdmissionImportBatch: async (batchId: string) => {
+        calls.push(`batch:${batchId}`);
+        return { scope: "batch", rulesDeleted: 2 };
+      },
+      clearAllAdmissionImports: async () => {
+        calls.push("all");
+        return { scope: "all", rulesDeleted: 9 };
+      },
+      downloadDataset: async () => {
+        throw new Error("not used");
+      }
+    };
+    const handler = createCourseImportAdminModule({ workflow });
+    const context = (path: string[]) => ({
+      method: "POST",
+      path,
+      request: {} as any,
+      body: async () => ({}),
+      requireUser: async () => ({ id: "admin" }),
+      requireAdmin: async () => ({ id: "admin", role: "super_admin" }),
+      activeAppVersionId: async () => "version_1"
+    });
+
+    await expect(handler(context(["admin", "course-imports", "batch_1", "clear-admission"])).then((response) => response.json()))
+      .resolves.toMatchObject({ result: { scope: "batch", rulesDeleted: 2 } });
+    await expect(handler(context(["admin", "course-imports", "clear-admission"])).then((response) => response.json()))
+      .resolves.toMatchObject({ result: { scope: "all", rulesDeleted: 9 } });
+    await expect(handler({
+      ...context(["admin", "course-imports", "activate-semester"]),
+      body: async () => ({ academicYear: "2026", term: "Fall" })
+    }).then((response) => response.json()))
+      .resolves.toMatchObject({ result: { semester: { code: "2026-Fall" }, totals: { boardsActivatedOrReused: 1 } } });
+    expect(calls).toEqual(["batch:batch_1", "all", "activate:2026-Fall"]);
+  });
+
+  it("passes course approval decisions to the approve workflow", async () => {
+    const calls: any[] = [];
+    const workflow: CourseImportWorkflow = {
+      validatePayload: async () => {
+        throw new Error("not used");
+      },
+      listBatches: async () => ({}),
+      createBatchFromPayload: async () => {
+        throw new Error("not used");
+      },
+      approveBatch: async (batchId: string, admin: any, approvalDecisions?: Record<string, unknown>) => {
+        calls.push({ batchId, adminId: admin.id, approvalDecisions });
+        return { importBatch: { id: batchId, status: "approved" }, result: { retiredCourseCount: 1 } };
+      },
+      activateAdmissionSemester: async () => {
+        throw new Error("not used");
+      },
+      rejectBatch: async () => {
+        throw new Error("not used");
+      },
+      clearAdmissionImportBatch: async () => {
+        throw new Error("not used");
+      },
+      clearAllAdmissionImports: async () => {
+        throw new Error("not used");
+      },
+      downloadDataset: async () => {
+        throw new Error("not used");
+      }
+    };
+    const handler = createCourseImportAdminModule({ workflow });
+    const approvalDecisions = {
+      courseFields: { AI1003: { description: { action: "accept_incoming" } } },
+      retirements: { COMP3143: { action: "retire", validThroughYear: 2025 } }
+    };
+
+    await expect(handler({
+      method: "POST",
+      path: ["admin", "course-imports", "batch_1", "approve"],
+      request: {} as any,
+      body: async () => ({ approvalDecisions }),
+      requireUser: async () => ({ id: "admin" }),
+      requireAdmin: async () => ({ id: "admin", role: "super_admin" }),
+      activeAppVersionId: async () => "version_1"
+    }).then((response) => response.json())).resolves.toMatchObject({
+      importBatch: { id: "batch_1", status: "approved" },
+      result: { retiredCourseCount: 1 }
+    });
+    expect(calls).toEqual([{ batchId: "batch_1", adminId: "admin", approvalDecisions }]);
   });
 });

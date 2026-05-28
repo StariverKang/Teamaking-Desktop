@@ -167,7 +167,7 @@ async function pdfLines(buffer) {
     }
     flushLine();
   }
-  doc.destroy();
+  await doc.destroy();
   return lines;
 }
 
@@ -390,7 +390,11 @@ async function main() {
   const courseDescriptionCourses = parseCourseCatalog(await pdfLines(buffer));
   const commonCurriculum = await parseCommonCurriculumCatalog(retrievedAt);
   const parsed = mergeByCode([...courseDescriptionCourses, ...commonCurriculum.courses]);
-  const selected = parsed.slice(0, limit);
+  const selected = parsed.slice(0, limit).map((course) => ({
+    ...course,
+    effectiveYear: academicYear
+  }));
+  const snapshotCompleteness = Number.isFinite(limit) || !includeCommonCurriculum ? "partial" : "near_full";
   if (!selected.length) throw new Error(`No course descriptions were parsed from ${resolved.pdfUrl}`);
   const sourceRefs = [
     ...(resolved.pageUrl ? [{
@@ -414,11 +418,15 @@ async function main() {
     schemaVersion: "teamaking.bnbu_course_import.v2",
     generatedAt: retrievedAt,
     importMode: "course_catalog",
+    catalogEffectiveYear: academicYear,
+    snapshotCompleteness,
     crawlerMeta: {
       runner: "scripts/bnbu-crawler/run-course-catalog.mjs",
       courseDescriptionsUrl,
       resolvedPdfUrl: resolved.pdfUrl,
       commonCurriculum: includeCommonCurriculum,
+      catalogEffectiveYear: academicYear,
+      snapshotCompleteness,
       commonCurriculumSources: commonCurriculum.parsedSources,
       limit: Number.isFinite(limit) ? limit : "all",
       parsedCourseDescriptionCourses: courseDescriptionCourses.length,
@@ -453,7 +461,15 @@ async function main() {
   console.log(`courses=${selected.length} parsed=${parsed.length} courseDescriptions=${courseDescriptionCourses.length} commonCurriculum=${commonCurriculum.courses.length} offerings=0 rules=0`);
 }
 
-main().catch((error) => {
+async function flushAndExit(code) {
+  await Promise.all([
+    new Promise((resolve) => process.stdout.write("", resolve)),
+    new Promise((resolve) => process.stderr.write("", resolve))
+  ]).catch(() => null);
+  process.exit(code);
+}
+
+main().then(() => flushAndExit(0)).catch((error) => {
   console.error(error);
-  process.exit(1);
+  void flushAndExit(1);
 });

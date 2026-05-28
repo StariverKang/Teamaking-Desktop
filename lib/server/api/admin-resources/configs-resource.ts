@@ -1,7 +1,21 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ok, optionalString, readBody } from "@/lib/http";
+import { ApiError, ok, optionalString, readBody } from "@/lib/http";
 import { writeAudit } from "@/lib/server/services/system-service";
+import { validateOnboardingGuideConfig } from "@/lib/onboarding-guide";
+
+function configValueFromBody(id: string, value: unknown) {
+  if (id === "onboarding_guide") {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    const validation = validateOnboardingGuideConfig(parsed);
+    if (!validation.ok) {
+      throw new ApiError(400, `onboarding_guide 配置无效：${validation.errors.join(" ")}`, undefined, { errors: validation.errors });
+    }
+    return validation.guide;
+  }
+
+  return value && typeof value === "object" ? (value as object) : { text: optionalString(value) ?? "" };
+}
 
 export async function handleAdminConfigsResource(method: string, path: string[], request: NextRequest, admin: any) {
   const resource = path[1];
@@ -15,15 +29,22 @@ export async function handleAdminConfigsResource(method: string, path: string[],
   if (method === "PATCH" && resource === "configs" && id) {
     const body = await readBody(request);
     const before = await prisma.siteConfig.findUnique({ where: { key: id } });
+    let value: object;
+    try {
+      value = configValueFromBody(id, body.value);
+    } catch (error) {
+      if (error instanceof SyntaxError) throw new ApiError(400, "onboarding_guide 必须是合法 JSON。");
+      throw error;
+    }
     const config = await prisma.siteConfig.upsert({
       where: { key: id },
       update: {
-        value: body.value && typeof body.value === "object" ? (body.value as object) : { text: optionalString(body.value) ?? "" },
+        value,
         updatedByUserId: admin.id
       },
       create: {
         key: id,
-        value: body.value && typeof body.value === "object" ? (body.value as object) : { text: optionalString(body.value) ?? "" },
+        value,
         updatedByUserId: admin.id
       }
     });

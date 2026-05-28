@@ -42,4 +42,17 @@ describe("crawler build tracing", () => {
       else globals.Path2D = previous.Path2D;
     }
   });
+
+  it("keeps crawler runners from lingering after their final output is written", async () => {
+    const runners = [
+      "scripts/bnbu-crawler/run-handbook-preview.mjs",
+      "scripts/bnbu-crawler/run-course-catalog.mjs"
+    ];
+
+    for (const runner of runners) {
+      const source = await readFile(path.join(process.cwd(), runner), "utf8");
+      expect(source).toContain("await doc.destroy()");
+      expect(source).toContain("main().then(() => flushAndExit(0))");
+    }
+  });
 });

@@ -5,6 +5,15 @@ import { normalizedRuleStudentAction, relativeTermCodesForRule, validateBnbuCour
 import { isPlainRecord, numberValues, records, textValue, textValues } from "@/lib/server/json-utils";
 import { audienceForRule, cohortYearsForRule, countRows, firstItems, stableJson } from "@/lib/server/course-import/import-helpers";
 import { ruleMatchesAcademicTermContext, selectDefaultJoinUsers } from "@/lib/server/course-import/curriculum-matching";
+import {
+  buildCourseFieldDiffsForCourse,
+  buildRetirementCandidates,
+  courseCatalogFingerprint,
+  courseEffectiveYearFromPayload,
+  importModeForLifecycle,
+  unresolvedBlockingCourseChanges,
+  type CourseApprovalDecisions
+} from "@/lib/server/course-import/course-lifecycle";
 
 export async function estimateDefaultJoinUsers(input: {
   schoolId?: string;
@@ -60,8 +69,10 @@ export async function estimateDefaultJoinUsers(input: {
   return selectDefaultJoinUsers(users, input.relativeTermCodes, semester).length;
 }
 
-export async function buildCourseImportPreview(payload: Record<string, unknown>) {
+export async function buildCourseImportPreview(payload: Record<string, unknown>, approvalDecisions: CourseApprovalDecisions = {}) {
   const validation = validateBnbuCourseImportPayload(payload);
+  const requestedImportMode = importModeForLifecycle(payload);
+  const courseCatalogImport = requestedImportMode === "course_catalog";
   const semesterInput = isPlainRecord(payload.semester) ? payload.semester : {};
   const semesterCode = textValue(semesterInput.code);
   const school = await getActiveSchool("BNBU");
@@ -81,9 +92,10 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>)
   const incomingCourses = records(payload.courses);
   const incomingRules = records(payload.curriculumRules);
   const incomingOfferings = records(payload.offerings);
+  const handbookOnlyImport = incomingOfferings.length === 0 && !courseCatalogImport;
   const incomingCohortYears = [...new Set(incomingRules.flatMap(cohortYearsForRule))].sort((a, b) => b - a);
 
-  const [existingFaculties, existingMajors, existingCourses, existingRules] = await Promise.all([
+  const [existingFaculties, existingMajors, existingCourses, existingRules, existingCatalogCourses] = await Promise.all([
     school && facultyCodes.length
       ? prisma.faculty.findMany({ where: { schoolId: school.id, code: { in: facultyCodes } }, select: { code: true, name: true } })
       : Promise.resolve([]),
@@ -102,6 +114,10 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>)
             categoryTags: true,
             courseType: true,
             status: true,
+            sourceRefIds: true,
+            catalogEffectiveYear: true,
+            catalogValidThroughYear: true,
+            catalogFingerprint: true,
             manualOverrideFields: true,
             manualNote: true
           }
@@ -111,6 +127,22 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>)
       ? prisma.courseCurriculumRule.findMany({
           where: { course: { schoolId: school.id }, status: "active" },
           include: { course: { select: { code: true, title: true } } }
+        })
+      : Promise.resolve([])
+    ,
+    school && courseCatalogImport
+      ? prisma.course.findMany({
+          where: { schoolId: school.id },
+          select: {
+            code: true,
+            title: true,
+            status: true,
+            source: true,
+            sourceRefIds: true,
+            catalogEffectiveYear: true,
+            catalogValidThroughYear: true,
+            catalogFingerprint: true
+          }
         })
       : Promise.resolve([])
   ]);
@@ -138,6 +170,7 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>)
     if (studentAction === "searchable_add") searchableRuleSamples.push(externalId);
     if (studentAction !== "default_join") continue;
     defaultJoinRuleSamples.push(externalId);
+    if (handbookOnlyImport) continue;
     const audience = isPlainRecord(rule.audience) ? rule.audience : {};
     estimatedDefaultJoinUsers += await estimateDefaultJoinUsers({
       schoolId: school?.id,
@@ -215,12 +248,22 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>)
       ownerUnit: isPlainRecord(course.ownerUnit) ? course.ownerUnit : {},
       categoryTags: textValues(course.categoryTags),
       sourceRefIds: textValues(course.sourceRefIds),
+      effectiveYear: courseEffectiveYearFromPayload(payload, course),
+      fingerprint: textValue(course.fingerprint) || courseCatalogFingerprint(course),
       manualOverrideFields,
       protectedConflicts,
       status: existingCourseCodes.has(code) ? "updated" : "new",
       raw: course
     };
   });
+  const courseFieldDiffs = incomingCourses.flatMap((course) =>
+    buildCourseFieldDiffsForCourse({
+      importMode: requestedImportMode,
+      payload,
+      incoming: course,
+      existing: existingCourseByCode.get(textValue(course.code))
+    })
+  );
   const ruleRows = incomingRules.map((rule) => {
     const audience = audienceForRule(rule);
     const externalId = textValue(rule.id);
@@ -242,7 +285,7 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>)
       raw: rule
     };
   });
-  const termContextRuleRows = ruleRows.filter((row) => ruleMatchesAcademicTermContext(row.raw, { year: Number(semesterInput.academicYear), term: textValue(semesterInput.term) }));
+  const termContextRuleRows = handbookOnlyImport ? [] : ruleRows.filter((row) => ruleMatchesAcademicTermContext(row.raw, { year: Number(semesterInput.academicYear), term: textValue(semesterInput.term) }));
   const sourceRows = records(payload.sourceRefs).map((source) => ({
     kind: "sourceRefs",
     id: textValue(source.id),
@@ -261,18 +304,40 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>)
     status: textValue(offering.status) || "active",
     raw: offering
   }));
+  const retirementCandidates = buildRetirementCandidates({
+    payload,
+    incomingCodes: courseCodes,
+    existingCourses: existingCatalogCourses
+  });
+  const inactiveRuleCourseConflicts = ruleRows
+    .map((rule) => {
+      const existing = existingCourseByCode.get(rule.courseCode);
+      if (!existing || existing.status !== "inactive") return null;
+      return {
+        code: rule.courseCode,
+        ruleId: rule.id,
+        title: existing.title,
+        recommendation: "reactivate_or_remap_course",
+        blocking: true,
+        reason: "This active admission rule references a course that is currently inactive."
+      };
+    })
+    .filter(Boolean);
+  const blockingCourseChanges = unresolvedBlockingCourseChanges({ courseFieldDiffs, retirementCandidates }, approvalDecisions);
 
   return {
     validation,
-    importMode: incomingOfferings.length ? "combined_with_offerings" : "cohort_handbook",
+    importMode: courseCatalogImport ? "course_catalog" : handbookOnlyImport ? "cohort_handbook" : "combined_with_offerings",
     semester: {
       code: semesterCode,
       exists: Boolean(semester),
       willBecomeCurrent: semesterInput.isCurrentCandidate === true,
       label: textValue(semesterInput.name),
-      note: incomingOfferings.length
-        ? "包含真实开课记录，会创建或更新 CourseBoard。"
-        : "这是按入学年份发布的 programme handbook / curriculum plan 导入；批准后写入课程目录和 admission-year 配置规则，CourseBoard 会由当前 academic term 与学生入学年份、专业、相对学期匹配后激活。"
+      note: courseCatalogImport
+        ? "这是学校级 course catalog 导入；批准后只更新课程元数据和课程有效状态，不生成 admission-year rules。"
+        : incomingOfferings.length
+          ? "包含真实开课记录，会创建或更新 CourseBoard。"
+          : "这是按入学年份发布的 programme handbook / curriculum plan 导入；批准后只写入课程目录和 admission-year programme plan rules。CourseBoard 和默认加入由 Semester activation 单独触发。"
     },
     counts: {
       newFaculties: facultyCodes.filter((code) => !existingFacultyCodes.has(code)).length,
@@ -286,12 +351,16 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>)
       rulesToDeactivate: inactiveRuleIds.length,
       changedRules: changedRules.length,
       defaultJoinRules: defaultJoinRuleSamples.length,
+      defaultJoinRulesDeferredToSemesterActivation: handbookOnlyImport ? defaultJoinRuleSamples.length : 0,
       searchableRules: searchableRuleSamples.length,
       offeringCourses: new Set(incomingOfferings.map((item) => textValue(item.courseCode)).filter(Boolean)).size,
       offeringSections: incomingOfferings.reduce((total, item) => total + Math.max(1, textValues(item.sections).length), 0),
       courseBoardsToActivate: new Set(termContextRuleRows.map((row) => row.courseCode).filter(Boolean)).size,
       rulesInAcademicTermContext: termContextRuleRows.length,
       protectedCourseConflicts: courseRows.reduce((total, row) => total + row.protectedConflicts.length, 0),
+      courseFieldDiffs: courseFieldDiffs.length,
+      retirementCandidates: retirementCandidates.length,
+      blockingCourseChanges: blockingCourseChanges.length + inactiveRuleCourseConflicts.length,
       estimatedDefaultJoinUsers
     },
     coverage: {
@@ -312,6 +381,10 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>)
       courses: {
         added: courseCodes.filter((code) => !existingCourseCodes.has(code)),
         updated: courseCodes.filter((code) => existingCourseCodes.has(code)),
+        fieldDiffs: courseFieldDiffs,
+        retirementCandidates,
+        blockingIssues: [...blockingCourseChanges, ...inactiveRuleCourseConflicts],
+        inactiveRuleCourseConflicts,
         protectedConflicts: courseRows.filter((row) => row.protectedConflicts.length > 0).map((row) => ({
           code: row.code,
           title: row.title,

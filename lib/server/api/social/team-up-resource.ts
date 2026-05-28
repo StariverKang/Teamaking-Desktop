@@ -33,7 +33,7 @@ export async function handleTeamUpRequests(method: string, path: string[], reque
 
   if (method === "GET" && path[1] === "inbox") {
     const requests = await prisma.teamUpRequest.findMany({
-      where: { receiverId: user.id },
+      where: { receiverId: user.id, senderId: { not: user.id } },
       include,
       orderBy: { createdAt: "desc" }
     });
@@ -90,7 +90,7 @@ export async function handleTeamUpInterests(method: string, path: string[]) {
     if (isDemoUser(user)) return ok({ interests: demoReceivedTeamUpInterests(user.id) });
 
     const interests = await prisma.teamUpRequest.findMany({
-      where: { receiverId: user.id, status: { not: "deleted" } },
+      where: { receiverId: user.id, senderId: { not: user.id }, status: { not: "deleted" } },
       include: {
         post: { include: { board: { include: { courseOffering: { include: { course: true, semester: true } } } }, user: { include: userInclude } } },
         sender: { include: { ...userInclude, portfolioItems: { include: { relatedCourse: true } } } },

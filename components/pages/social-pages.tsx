@@ -125,7 +125,7 @@ export function MatchesPage() {
     <PageShell title="Matches" eyebrow="Discovery" description="优先推荐同一课程记录、二度/三度好友网络；同专业和同校开放展示只作为补充排序，不再显示为标签。">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       <div className="grid gap-6">
-        <section>
+        <section data-onboarding-target="teamup-entry">
           <h2 className="mb-3 text-xl font-semibold text-ink">Relevant Teamaking Posts</h2>
           <div className="grid gap-4 md:grid-cols-2">
             {(data?.posts ?? []).map((post: any) => (

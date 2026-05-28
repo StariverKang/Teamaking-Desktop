@@ -6,6 +6,17 @@ import { prisma } from "@/lib/prisma";
 import { bnbuClassificationLabels, membershipSourceForClassification, normalizedRuleStudentAction, relativeTermCodesForRule, validateBnbuCourseImportPayload } from "@/lib/bnbu-course-import";
 import { isPlainRecord, numberValue, records, textValue, textValues, toJson } from "@/lib/server/json-utils";
 import { cohortYearsForRule, hasOverlappingNumber, mergeUniqueTextValues, uniqueSortedNumbers } from "@/lib/server/course-import/import-helpers";
+import {
+  buildCourseFieldDiffsForCourse,
+  buildRetirementCandidates,
+  courseCatalogFingerprint,
+  courseEffectiveYearFromPayload,
+  courseFieldDecision,
+  resolvedCourseFieldValue,
+  retirementDecision,
+  type CourseApprovalDecisions,
+  type CourseLifecycleField
+} from "@/lib/server/course-import/course-lifecycle";
 
 import { defaultJoinMembershipAction, ruleMatchesAcademicTermContext, selectDefaultJoinUsers } from "@/lib/server/course-import/curriculum-matching";
 
@@ -169,11 +180,20 @@ export async function applyDefaultJoinRule(tx: any, input: {
   return { matchedUsers: matchedUsers.length, membershipsCreated, membershipsSkipped };
 }
 
-export async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: string) {
+function dbValueForCourseField(field: CourseLifecycleField, value: unknown) {
+  if (field === "ownerUnit") return toJson(isPlainRecord(value) ? value : {});
+  if (field === "categoryTags" || field === "sourceRefIds") return textValues(value);
+  if (field === "credits") return numberValue(value) ?? null;
+  if (field === "status") return textValue(value) || "active";
+  return textValue(value);
+}
+
+export async function applyBnbuCourseImport(payload: Record<string, unknown>, batchId: string, approvalDecisions: CourseApprovalDecisions = {}) {
   const summary = validateBnbuCourseImportPayload(payload);
   if (!summary.ok) throw new ApiError(400, `导入文件校验失败：${summary.errors.join("; ")}`);
   const appVersionId = await getActiveAppVersionId();
   const courseCatalogImport = textValue(payload.importMode) === "course_catalog";
+  const handbookOnlyImport = records(payload.offerings).length === 0 && !courseCatalogImport;
 
   return prisma.$transaction(async (tx) => {
     const schoolInput = isPlainRecord(payload.school) ? payload.school : {};
@@ -199,7 +219,7 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
       create: { schoolId: school.id, domain: emailDomain, status: "active" }
     });
 
-    if (semesterInput.isCurrentCandidate === true) {
+    if (!handbookOnlyImport && semesterInput.isCurrentCandidate === true) {
       await tx.semester.updateMany({ where: { schoolId: school.id }, data: { isCurrent: false } });
     }
 
@@ -215,7 +235,7 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
             name: textValue(semesterInput.name),
             year: Number(semesterInput.academicYear),
             term: textValue(semesterInput.term),
-            isCurrent: semesterInput.isCurrentCandidate === true ? true : existingSemester.isCurrent
+            isCurrent: !handbookOnlyImport && semesterInput.isCurrentCandidate === true ? true : existingSemester.isCurrent
           }
         })
       : await tx.semester.create({
@@ -225,7 +245,7 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
             name: textValue(semesterInput.name),
             year: Number(semesterInput.academicYear),
             term: textValue(semesterInput.term),
-            isCurrent: semesterInput.isCurrentCandidate === true
+            isCurrent: !handbookOnlyImport && semesterInput.isCurrentCandidate === true
           }
         });
 
@@ -280,6 +300,9 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
       const existingDescription = textValue(existingCourse?.description);
       const incomingCategoryTags = textValues(courseInput.categoryTags);
       const incomingSourceRefIds = textValues(courseInput.sourceRefIds);
+      const incomingStatus = textValue(courseInput.status) || "active";
+      const incomingEffectiveYear = courseEffectiveYearFromPayload(payload, courseInput);
+      const incomingFingerprint = textValue(courseInput.fingerprint) || courseCatalogFingerprint(courseInput);
       const importData = {
         title: textValue(courseInput.title),
         description: incomingDescription || existingDescription,
@@ -292,24 +315,101 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
           ? mergeUniqueTextValues(existingCourse.sourceRefIds, incomingSourceRefIds)
           : incomingSourceRefIds,
         courseType: "coursework",
-        status: "active",
+        status: incomingStatus,
         source: "bnbu_import"
       };
-      const protectedFields = textValues(existingCourse?.manualOverrideFields);
-      const updateData = Object.fromEntries(Object.entries(importData).filter(([field]) => !protectedFields.includes(field)));
+      const updateData: Record<string, unknown> = {};
+      if (existingCourse) {
+        if (courseCatalogImport) {
+          Object.assign(updateData, importData);
+          const fieldDiffs = buildCourseFieldDiffsForCourse({
+            importMode: "course_catalog",
+            payload,
+            existing: existingCourse,
+            incoming: courseInput
+          });
+          for (const diff of fieldDiffs) {
+            updateData[diff.field] = dbValueForCourseField(diff.field, resolvedCourseFieldValue(diff, approvalDecisions));
+          }
+          const existingYear = numberValue(existingCourse.catalogEffectiveYear);
+          const canAdvanceCatalogYear = incomingEffectiveYear !== null && (!existingYear || incomingEffectiveYear >= existingYear);
+          if (canAdvanceCatalogYear) {
+            updateData.catalogEffectiveYear = incomingEffectiveYear;
+            updateData.catalogValidThroughYear = null;
+            updateData.catalogFingerprint = courseCatalogFingerprint({ ...existingCourse, ...updateData });
+          }
+        } else {
+          const statusDiff = buildCourseFieldDiffsForCourse({
+            importMode: textValue(payload.importMode) || "cohort_programme_handbook",
+            payload,
+            existing: existingCourse,
+            incoming: { ...courseInput, status: incomingStatus }
+          }).find((diff) => diff.field === "status");
+          const statusDecision = statusDiff ? courseFieldDecision(approvalDecisions, code, "status") : null;
+          if (statusDiff && statusDecision?.action) {
+            updateData.status = dbValueForCourseField("status", resolvedCourseFieldValue(statusDiff, approvalDecisions));
+          }
+        }
+      }
       const course = existingCourse
-        ? await tx.course.update({
-            where: { id: existingCourse.id },
-            data: updateData
-          })
+        ? Object.keys(updateData).length
+          ? await tx.course.update({
+              where: { id: existingCourse.id },
+              data: updateData
+            })
+          : existingCourse
         : await tx.course.create({
             data: {
               schoolId: school.id,
               code,
-              ...importData
+              ...importData,
+              ...(courseCatalogImport
+                ? {
+                    catalogEffectiveYear: incomingEffectiveYear,
+                    catalogValidThroughYear: null,
+                    catalogFingerprint: incomingFingerprint
+                  }
+                : {})
             }
           });
       courseByCode.set(code, course);
+    }
+
+    let retiredCourseCount = 0;
+    if (courseCatalogImport) {
+      const catalogCourses = await tx.course.findMany({
+        where: { schoolId: school.id },
+        select: {
+          id: true,
+          code: true,
+          title: true,
+          status: true,
+          source: true,
+          sourceRefIds: true,
+          catalogEffectiveYear: true,
+          catalogValidThroughYear: true,
+          catalogFingerprint: true
+        }
+      });
+      const candidates = buildRetirementCandidates({
+        payload,
+        incomingCodes: records(payload.courses).map((course) => textValue(course.code)).filter(Boolean),
+        existingCourses: catalogCourses
+      });
+      for (const candidate of candidates) {
+        const decision = retirementDecision(approvalDecisions, candidate.code);
+        if (decision?.action !== "retire") continue;
+        const course = catalogCourses.find((item: any) => item.code === candidate.code);
+        if (!course) continue;
+        await tx.course.update({
+          where: { id: course.id },
+          data: {
+            status: "inactive",
+            catalogValidThroughYear: decision.validThroughYear ?? candidate.proposedValidThroughYear
+          }
+        });
+        retiredCourseCount += 1;
+      }
     }
 
     for (const offeringInput of records(payload.offerings)) {
@@ -396,8 +496,8 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
     const autoJoinResults = [];
     const activatedBoards = [];
     let autoJoinSkippedOutsideTerm = 0;
+    let autoJoinDeferredToSemesterActivation = 0;
     let rulesInAcademicTermContext = 0;
-    const handbookOnlyImport = records(payload.offerings).length === 0;
     for (const ruleInput of incomingRules) {
       const course = courseByCode.get(textValue(ruleInput.courseCode));
       if (!course) continue;
@@ -442,7 +542,7 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
         }
       });
 
-      if (handbookOnlyImport && matchesAcademicTerm) {
+      if (!handbookOnlyImport && matchesAcademicTerm) {
         const offering = await findOrCreateAcademicTermOffering(tx, {
           courseId: course.id,
           semesterId: semester.id,
@@ -453,6 +553,10 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
       }
 
       if (studentAction === "default_join") {
+        if (handbookOnlyImport) {
+          autoJoinDeferredToSemesterActivation += 1;
+          continue;
+        }
         if (!matchesAcademicTerm) {
           autoJoinSkippedOutsideTerm += 1;
           continue;
@@ -481,6 +585,8 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
       deactivatedRuleCount,
       rulesInAcademicTermContext,
       autoJoinSkippedOutsideTerm,
+      autoJoinDeferredToSemesterActivation,
+      retiredCourseCount,
       legacyMajorCleanup
     };
   }, { timeout: 60000, maxWait: 10000 });

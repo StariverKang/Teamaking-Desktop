@@ -17,10 +17,6 @@ const args = Object.fromEntries(
 
 const handbookUrl = String(args.handbookUrl ?? DEFAULT_HANDBOOK_URL);
 const cohorts = csv(args.cohorts ?? args.cohortYears);
-const semesterCode = String(args.semesterCode ?? "2026-Spring");
-const semesterName = String(args.semesterName ?? "2026 Spring");
-const academicYear = Number(args.academicYear ?? 2026);
-const term = String(args.term ?? "Spring");
 const limit = args.limit === "all" || args.limit === undefined ? Infinity : Number(args.limit ?? 3);
 const outDir = path.resolve(ROOT, String(args.outDir ?? "storage/crawler_outputs"));
 const programmeCodes = csv(args.programmes ?? args.programmeCodes).map((item) => item.toUpperCase());
@@ -116,6 +112,21 @@ function stableId(...parts) {
     .toLowerCase();
 }
 
+function planSemesterForCohort(cohortYear) {
+  const academicYear = Number(cohortYear);
+  return {
+    code: `${cohortYear}-Admission-Programme-Plan`,
+    name: `${cohortYear} Admission Programme Plan`,
+    academicYear: Number.isFinite(academicYear) ? academicYear : 0,
+    term: "Programme Plan",
+    isCurrentCandidate: false
+  };
+}
+
+function planRuleScopeForCohort(cohortYear) {
+  return `${cohortYear}-admission-programme-plan`;
+}
+
 function programmeCodeFromHref(href) {
   const file = decodeURIComponent(href.split("/").pop() ?? "");
   return (file.match(/^([A-Z]{2,6})\b/)?.[1] ?? stableId(file).slice(0, 8)).toUpperCase();
@@ -181,7 +192,7 @@ async function pdfText(buffer) {
     }
     flushLine();
   }
-  doc.destroy();
+  await doc.destroy();
   return lines.join("\n");
 }
 
@@ -238,6 +249,8 @@ function ownerUnitFor(programme, courseCode) {
 function parseCourses(text, programme, sourceId, cohortYear) {
   const courses = [];
   const rules = [];
+  const planSemester = planSemesterForCohort(cohortYear);
+  const planRuleScope = planRuleScopeForCohort(cohortYear);
   let category = { classification: "unknown", label: "Unknown" };
   const courseLine = /^([A-Z]{2,6}(?:\d{4}|\dXX\d)[A-Z]?)\s+(.+?)\s+(\d(?:\.\d)?)$/;
   for (const rawLine of text.split(/\n+/)) {
@@ -261,9 +274,9 @@ function parseCourses(text, programme, sourceId, cohortYear) {
       sourceRefIds: [sourceId]
     });
     rules.push({
-      id: stableId(cohortYear, semesterCode, code, programmeScoped ? programme.code : "ALL", relativeTermCodes[0] ?? "all", category.classification),
+      id: stableId(cohortYear, planRuleScope, code, programmeScoped ? programme.code : "ALL", relativeTermCodes[0] ?? "all", category.classification),
       courseCode: code,
-      semesterCode,
+      semesterCode: planSemester.code,
       classification: category.classification,
       classificationLabel: category.label,
       audience: programmeScoped
@@ -333,6 +346,7 @@ async function buildPayload(cohortPage) {
   const retrievedAt = new Date().toISOString();
   const html = cohortPage.html ?? await fetchText(cohortPage.url);
   const programmes = parseProgrammeLinks(html, cohortPage.url);
+  const planSemester = planSemesterForCohort(cohortPage.cohort);
   const selected = programmes.filter(inScope).slice(0, limit);
   if (!selected.length) throw new Error(`No programmes matched ${cohortPage.cohort}. Available: ${programmes.map((item) => item.code).join(", ")}`);
   const sourceRefs = [{
@@ -381,13 +395,7 @@ async function buildPayload(cohortPage) {
       name: "Beijing Normal-Hong Kong Baptist University",
       emailDomain: "mail.bnbu.edu.cn"
     },
-    semester: {
-      code: semesterCode,
-      name: semesterName,
-      academicYear,
-      term,
-      isCurrentCandidate: false
-    },
+    semester: planSemester,
     sourceRefs,
     faculties,
     majors: selected.map((item) => ({
@@ -415,7 +423,15 @@ async function main() {
   }
 }
 
-main().catch((error) => {
+async function flushAndExit(code) {
+  await Promise.all([
+    new Promise((resolve) => process.stdout.write("", resolve)),
+    new Promise((resolve) => process.stderr.write("", resolve))
+  ]).catch(() => null);
+  process.exit(code);
+}
+
+main().then(() => flushAndExit(0)).catch((error) => {
   console.error(error);
-  process.exit(1);
+  void flushAndExit(1);
 });

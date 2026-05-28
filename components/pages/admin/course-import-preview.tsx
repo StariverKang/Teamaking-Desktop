@@ -7,12 +7,13 @@ import type { AdminResourceContext } from "./resource-types";
 
 
 export function CourseImportPreview({ preview, ctx }: { preview: any; ctx: AdminResourceContext }) {
-  const { actionData, adminNote, busyAction, contentAnnouncementCreating, contentAnnouncementData, contentAnnouncementError, contentAnnouncementId, contentAnnouncementLoading, contentCreating, contentExpandedIds, contentTab, contentTreeQuery, courseDraft, courseEditorRef, coursePage, courseQuery, courseSourceFilter, courseStatusFilter, courseTagFilter, data, errorEventQuery, importEdit, importPage, importPreviewTab, importSearch, loadCourseImportPreview, openCourseEditor, primaryRows, resource, role, rows, runAction, selectedCourse, selectedId, selectedLabel, setAdminNote, setContentAnnouncementCreating, setContentAnnouncementId, setContentCreating, setContentExpandedIds, setContentTab, setContentTreeQuery, setCourseDraft, setCoursePage, setCourseQuery, setCourseSourceFilter, setCourseStatusFilter, setCourseTagFilter, setErrorEventQuery, setImportEdit, setImportPage, setImportPreviewTab, setImportSearch, setResult, setSelectedId, setStatus, setTextFields, setTicketCategoryFilter, setTicketQuery, setTicketStatusFilter, setRole, startImportEdit, status, textFields, ticketCategoryFilter, ticketQuery, ticketStatusFilter, courseDraftPayload, coursePayloadFromRawJson, courseRawJsonText, payloadForEditing, applyImportEdit } = ctx;
+  const { actionData, adminNote, approvalDecisions, busyAction, contentAnnouncementCreating, contentAnnouncementData, contentAnnouncementError, contentAnnouncementId, contentAnnouncementLoading, contentCreating, contentExpandedIds, contentTab, contentTreeQuery, courseDraft, courseEditorRef, coursePage, courseQuery, courseSourceFilter, courseStatusFilter, courseTagFilter, data, errorEventQuery, importEdit, importPage, importPreviewTab, importSearch, loadCourseImportPreview, openCourseEditor, primaryRows, resource, role, rows, runAction, selectedCourse, selectedId, selectedLabel, setAdminNote, setApprovalDecisions, setContentAnnouncementCreating, setContentAnnouncementId, setContentCreating, setContentExpandedIds, setContentTab, setContentTreeQuery, setCourseDraft, setCoursePage, setCourseQuery, setCourseSourceFilter, setCourseStatusFilter, setCourseTagFilter, setErrorEventQuery, setImportEdit, setImportPage, setImportPreviewTab, setImportSearch, setResult, setSelectedId, setStatus, setTextFields, setTicketCategoryFilter, setTicketQuery, setTicketStatusFilter, setRole, startImportEdit, status, textFields, ticketCategoryFilter, ticketQuery, ticketStatusFilter, courseDraftPayload, coursePayloadFromRawJson, courseRawJsonText, payloadForEditing, applyImportEdit } = ctx;
 
     if (!preview) return null;
     const counts = preview.counts ?? {};
     const validation = preview.validation ?? {};
     const coverage = preview.coverage ?? {};
+    const isCohortHandbook = preview.importMode === "cohort_handbook";
     const databaseCoverage = preview.databaseCoverage ?? actionData?.databaseCoverage;
     const tables = preview.tables ?? {};
     const activeTable =
@@ -42,13 +43,16 @@ export function CourseImportPreview({ preview, ctx }: { preview: any; ctx: Admin
       ["Retained rules", counts.retainedRules],
       ["Rules to deactivate", counts.rulesToDeactivate],
       ["Default-join rules", counts.defaultJoinRules],
+      ...(isCohortHandbook ? [["Deferred default joins", counts.defaultJoinRulesDeferredToSemesterActivation]] : []),
       ["Searchable rules", counts.searchableRules],
       ["Offering courses", counts.offeringCourses],
       ["Offering sections", counts.offeringSections],
-      ["Rules in term context", counts.rulesInAcademicTermContext],
-      ["Boards to activate", counts.courseBoardsToActivate],
+      ...(!isCohortHandbook ? [["Rules in term context", counts.rulesInAcademicTermContext], ["Boards to activate", counts.courseBoardsToActivate]] : []),
       ["Protected course conflicts", counts.protectedCourseConflicts],
-      ["Estimated default joins", counts.estimatedDefaultJoinUsers]
+      ["Course field diffs", counts.courseFieldDiffs],
+      ["Retirement candidates", counts.retirementCandidates],
+      ["Blocking course changes", counts.blockingCourseChanges],
+      ...(!isCohortHandbook ? [["Estimated default joins", counts.estimatedDefaultJoinUsers]] : [])
     ];
     const tabs = [
       ["coverage", "Coverage"],
@@ -82,7 +86,7 @@ export function CourseImportPreview({ preview, ctx }: { preview: any; ctx: Admin
     function renderDataTable(rows: any[]) {
       const headers =
         importPreviewTab === "courses"
-          ? ["code", "title", "credits", "status", "categoryTags", "protectedConflicts"]
+          ? ["code", "title", "credits", "status", "effectiveYear", "categoryTags", "protectedConflicts"]
           : importPreviewTab === "rules"
             ? ["id", "courseCode", "cohortYears", "majorCodes", "relativeTermCodes", "classification", "studentAction", "confidence"]
             : importPreviewTab === "sources"
@@ -141,9 +145,83 @@ export function CourseImportPreview({ preview, ctx }: { preview: any; ctx: Admin
         </div>
       );
     }
+    const fieldDiffs = Array.isArray(preview.diff?.courses?.fieldDiffs) ? preview.diff.courses.fieldDiffs : [];
+    const retirementCandidates = Array.isArray(preview.diff?.courses?.retirementCandidates) ? preview.diff.courses.retirementCandidates : [];
+    const inactiveRuleCourseConflicts = Array.isArray(preview.diff?.courses?.inactiveRuleCourseConflicts) ? preview.diff.courses.inactiveRuleCourseConflicts : [];
+
+    function recommendedAction(diff: any) {
+      if (diff.recommendation === "merge_values") return "merge_values";
+      if (diff.recommendation === "keep_existing_stale_incoming" || diff.recommendation === "keep_existing_handbook_source") return "keep_existing";
+      if (diff.recommendation === "accept_incoming") return "accept_incoming";
+      return "";
+    }
+
+    function parseEditedValue(diff: any, value: string) {
+      if (diff.field === "categoryTags" || diff.field === "sourceRefIds") return value.split(",").map((item) => item.trim()).filter(Boolean);
+      if (diff.field === "credits") {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+      if (diff.field === "ownerUnit") {
+        try {
+          return JSON.parse(value);
+        } catch {
+          return {};
+        }
+      }
+      return value;
+    }
+
+    function setFieldDecision(diff: any, action: string) {
+      let value: unknown = undefined;
+      if (action === "edit_value") {
+        const defaultValue = typeof diff.incomingValue === "string" ? diff.incomingValue : JSON.stringify(diff.incomingValue ?? "", null, 2);
+        const entered = window.prompt(`为 ${diff.code}.${diff.field} 填写最终值`, defaultValue);
+        if (entered === null) return;
+        value = parseEditedValue(diff, entered);
+      }
+      setApprovalDecisions((current) => ({
+        ...current,
+        courseFields: {
+          ...(current.courseFields ?? {}),
+          [diff.code]: {
+            ...(current.courseFields?.[diff.code] ?? {}),
+            [diff.field]: action ? { action, ...(action === "edit_value" ? { value } : {}) } : undefined
+          }
+        }
+      }));
+    }
+
+    function setRetirementDecision(candidate: any, action: string) {
+      setApprovalDecisions((current) => ({
+        ...current,
+        retirements: {
+          ...(current.retirements ?? {}),
+          [candidate.code]: action
+            ? { action, ...(action === "retire" ? { validThroughYear: candidate.proposedValidThroughYear } : {}) }
+            : undefined
+        }
+      }));
+    }
+
+    function applySafeCourseRecommendations() {
+      const next = { ...(approvalDecisions ?? {}), courseFields: { ...(approvalDecisions?.courseFields ?? {}) } };
+      for (const diff of fieldDiffs) {
+        if (diff.blocking) continue;
+        const action = recommendedAction(diff);
+        if (!action) continue;
+        next.courseFields[diff.code] = {
+          ...(next.courseFields[diff.code] ?? {}),
+          [diff.field]: { action }
+        };
+      }
+      setApprovalDecisions(next);
+      setResult({ type: "info", message: "已为非阻塞课程字段套用推荐动作；阻塞项仍需逐条确认。" });
+    }
+
     function renderDiffTable() {
       const asArray = (value: any) => Array.isArray(value) ? value : [];
-      const rows = [
+      const legacyRows = [
         ...asArray(preview.diff?.courses?.added).map((value: string) => ({ category: "Added course", item: value, details: "Will create a course catalog row." })),
         ...asArray(preview.diff?.courses?.updated).map((value: string) => ({ category: "Updated course", item: value, details: "Catalog metadata differs from this JSON." })),
         ...asArray(preview.diff?.courses?.protectedConflicts).map((item: any) => ({
@@ -159,10 +237,20 @@ export function CourseImportPreview({ preview, ctx }: { preview: any; ctx: Admin
         })),
         ...asArray(preview.diff?.rules?.wouldDeactivate).map((value: string) => ({ category: "Rule to deactivate", item: value, details: "Active database rule is absent from this JSON." }))
       ];
+      const rows = [
+        ...fieldDiffs.map((diff: any) => ({ type: "field", category: diff.blocking ? "Course field needs review" : "Course field", item: `${diff.code}.${diff.field}`, diff })),
+        ...retirementCandidates.map((candidate: any) => ({ type: "retirement", category: "Retirement candidate", item: candidate.code, candidate })),
+        ...inactiveRuleCourseConflicts.map((conflict: any) => ({ type: "inactive_rule", category: "Inactive course in rule", item: conflict.code, conflict })),
+        ...legacyRows.map((row) => ({ type: "legacy", ...row }))
+      ];
       const filteredRows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(importSearch.toLowerCase()));
       const diffTotalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
       const diffCurrentPage = Math.min(importPage, diffTotalPages);
       const diffPageRows = filteredRows.slice((diffCurrentPage - 1) * pageSize, diffCurrentPage * pageSize);
+      const unresolved = [
+        ...fieldDiffs.filter((item: any) => item.blocking && !approvalDecisions?.courseFields?.[item.code]?.[item.field]?.action),
+        ...retirementCandidates.filter((item: any) => item.blocking && !approvalDecisions?.retirements?.[item.code]?.action)
+      ];
 
       return (
         <div className="grid gap-3">
@@ -177,17 +265,27 @@ export function CourseImportPreview({ preview, ctx }: { preview: any; ctx: Admin
               }}
             />
             <span className="text-sm text-ink/56">{filteredRows.length} changes</span>
+            {fieldDiffs.length ? (
+              <button type="button" className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold" onClick={applySafeCourseRecommendations}>
+                Apply safe recommendations
+              </button>
+            ) : null}
+            {unresolved.length ? <span className="rounded-sm bg-rust/10 px-2 py-1 text-xs font-semibold text-rust">{unresolved.length} unresolved blocking</span> : null}
             <button type="button" className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold" onClick={() => setImportPage(Math.max(1, diffCurrentPage - 1))}>Prev</button>
             <span className="text-sm font-semibold text-ink">Page {diffCurrentPage} / {diffTotalPages}</span>
             <button type="button" className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold" onClick={() => setImportPage(Math.min(diffTotalPages, diffCurrentPage + 1))}>Next</button>
           </div>
           <div className="max-h-[520px] overflow-auto border border-ink/15">
-            <table className="w-full min-w-[760px] border-collapse text-left text-xs">
+            <table className="w-full min-w-[1180px] border-collapse text-left text-xs">
               <thead className="sticky top-0 bg-ink text-paper">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Category</th>
                   <th className="px-3 py-2 font-semibold">Code / rule</th>
-                  <th className="px-3 py-2 font-semibold">What changed</th>
+                  <th className="px-3 py-2 font-semibold">Field / year</th>
+                  <th className="px-3 py-2 font-semibold">Existing</th>
+                  <th className="px-3 py-2 font-semibold">Incoming</th>
+                  <th className="px-3 py-2 font-semibold">Recommendation</th>
+                  <th className="px-3 py-2 font-semibold">Admin decision</th>
                 </tr>
               </thead>
               <tbody>
@@ -195,11 +293,69 @@ export function CourseImportPreview({ preview, ctx }: { preview: any; ctx: Admin
                   <tr key={`${row.category}-${row.item}-${index}`} className="border-b border-ink/10 odd:bg-chalk">
                     <td className="px-3 py-2 align-top font-semibold text-ink">{row.category}</td>
                     <td className="px-3 py-2 align-top font-mono text-ink/76">{row.item}</td>
-                    <td className="px-3 py-2 align-top text-ink/64">{row.details || "No field detail available"}</td>
+                    {row.type === "field" ? (
+                      <>
+                        <td className="px-3 py-2 align-top text-ink/64">
+                          <p className="font-semibold text-ink">{row.diff.field}</p>
+                          <p>{row.diff.existingEffectiveYear ?? "?"} → {row.diff.incomingEffectiveYear ?? "?"}</p>
+                          {row.diff.hasManualOverride ? <p className="text-rust">manual override</p> : null}
+                        </td>
+                        <td className="max-w-[220px] px-3 py-2 align-top text-ink/64"><span className="line-clamp-4 break-words">{previewValue(row.diff.existingValue)}</span></td>
+                        <td className="max-w-[220px] px-3 py-2 align-top text-ink/64"><span className="line-clamp-4 break-words">{previewValue(row.diff.incomingValue)}</span></td>
+                        <td className="max-w-[220px] px-3 py-2 align-top text-ink/64">
+                          <p className="font-semibold text-ink">{row.diff.recommendation}</p>
+                          <p>{row.diff.reason}</p>
+                        </td>
+                        <td className="px-3 py-2 align-top">
+                          <select
+                            className={inputClass}
+                            value={approvalDecisions?.courseFields?.[row.diff.code]?.[row.diff.field]?.action ?? ""}
+                            onChange={(event) => setFieldDecision(row.diff, event.target.value)}
+                          >
+                            <option value="">{row.diff.blocking ? "Choose..." : "Use recommendation"}</option>
+                            <option value="accept_incoming">Accept incoming</option>
+                            <option value="keep_existing">Keep existing</option>
+                            <option value="merge_values">Merge lists</option>
+                            <option value="edit_value">Edit final value</option>
+                          </select>
+                        </td>
+                      </>
+                    ) : row.type === "retirement" ? (
+                      <>
+                        <td className="px-3 py-2 align-top text-ink/64">valid through {row.candidate.existingEffectiveYear ?? "?"} → {row.candidate.proposedValidThroughYear ?? "?"}</td>
+                        <td className="px-3 py-2 align-top text-ink/64">{row.candidate.status}</td>
+                        <td className="px-3 py-2 align-top text-ink/64">Absent from incoming snapshot</td>
+                        <td className="max-w-[260px] px-3 py-2 align-top text-ink/64">{row.candidate.reason}</td>
+                        <td className="px-3 py-2 align-top">
+                          <select
+                            className={inputClass}
+                            value={approvalDecisions?.retirements?.[row.candidate.code]?.action ?? ""}
+                            onChange={(event) => setRetirementDecision(row.candidate, event.target.value)}
+                          >
+                            <option value="">Choose...</option>
+                            <option value="keep">Keep active</option>
+                            <option value="retire">Soft retire</option>
+                          </select>
+                        </td>
+                      </>
+                    ) : row.type === "inactive_rule" ? (
+                      <>
+                        <td className="px-3 py-2 align-top text-ink/64">{row.conflict.ruleId}</td>
+                        <td className="px-3 py-2 align-top text-ink/64">inactive</td>
+                        <td className="px-3 py-2 align-top text-ink/64">active admission rule references this course</td>
+                        <td className="max-w-[260px] px-3 py-2 align-top text-rust">{row.conflict.reason}</td>
+                        <td className="px-3 py-2 align-top text-ink/48">Resolve via course status field or edit rule</td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="px-3 py-2 align-top text-ink/64">Legacy summary</td>
+                        <td className="px-3 py-2 align-top text-ink/64" colSpan={4}>{row.details || "No field detail available"}</td>
+                      </>
+                    )}
                   </tr>
                 )) : (
                   <tr>
-                    <td className="px-3 py-4 text-sm text-ink/48" colSpan={3}>No diff rows match this search.</td>
+                    <td className="px-3 py-4 text-sm text-ink/48" colSpan={7}>No diff rows match this search.</td>
                   </tr>
                 )}
               </tbody>

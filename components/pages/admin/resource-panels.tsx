@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 "use client";import { StatusPill } from "@/components/app-shell";
 import { inputClass } from "@/components/pages/page-primitives";
+import { defaultOnboardingGuide } from "@/lib/onboarding-guide";
 
 import type { AdminResourceContext } from "./resource-types";
 
@@ -231,22 +232,42 @@ export function ConfigsPanel({ ctx }: { ctx: AdminResourceContext }) {
   const { actionData, adminNote, busyAction, contentAnnouncementCreating, contentAnnouncementData, contentAnnouncementError, contentAnnouncementId, contentAnnouncementLoading, contentCreating, contentExpandedIds, contentTab, contentTreeQuery, courseDraft, courseEditorRef, coursePage, courseQuery, courseSourceFilter, courseStatusFilter, courseTagFilter, data, errorEventQuery, importEdit, importPage, importPreviewTab, importSearch, loadCourseImportPreview, openCourseEditor, primaryRows, resource, role, rows, runAction, selectedCourse, selectedId, selectedLabel, setAdminNote, setContentAnnouncementCreating, setContentAnnouncementId, setContentCreating, setContentExpandedIds, setContentTab, setContentTreeQuery, setCourseDraft, setCoursePage, setCourseQuery, setCourseSourceFilter, setCourseStatusFilter, setCourseTagFilter, setErrorEventQuery, setImportEdit, setImportPage, setImportPreviewTab, setImportSearch, setResult, setSelectedId, setStatus, setTextFields, setTicketCategoryFilter, setTicketQuery, setTicketStatusFilter, setRole, startImportEdit, status, textFields, ticketCategoryFilter, ticketQuery, ticketStatusFilter, courseDraftPayload, coursePayloadFromRawJson, courseRawJsonText, payloadForEditing, applyImportEdit } = ctx;
 
       const key = textFields.key ?? "developer_contact";
-      const value = key === "system_status" ? { status: textFields.systemStatus ?? "active", message: textFields.value ?? "" } : { text: textFields.value ?? "" };
+      const configs = data?.configs ?? [];
+      const selectedConfig = configs.find((item: any) => item.key === key);
+      const valueForKey = (nextKey: string) => {
+        const config = configs.find((item: any) => item.key === nextKey);
+        if (nextKey === "onboarding_guide") return JSON.stringify(config?.value ?? defaultOnboardingGuide, null, 2);
+        return config?.value?.text ?? config?.value?.message ?? "";
+      };
+      const valueText = textFields.value ?? valueForKey(key);
       return (
         <form
           className="grid gap-3 md:grid-cols-[220px_180px_1fr_auto]"
           onSubmit={(event) => {
             event.preventDefault();
+            let value: unknown = key === "system_status" ? { status: textFields.systemStatus ?? selectedConfig?.value?.status ?? "active", message: valueText } : { text: valueText };
+            if (key === "onboarding_guide") {
+              try {
+                value = JSON.parse(valueText);
+              } catch {
+                setResult({ type: "error", message: "onboarding_guide 必须是合法 JSON。" });
+                return;
+              }
+            }
             runAction(`/api/admin/configs/${key}`, "PATCH", { value });
           }}
         >
-          <select className={inputClass} value={key} onChange={(event) => setTextFields({ ...textFields, key: event.target.value })}>
+          <select className={inputClass} value={key} onChange={(event) => setTextFields({ ...textFields, key: event.target.value, value: valueForKey(event.target.value) })}>
             {["developer_contact", "landing_page", "onboarding_guide", "course_board_rules", "system_status"].map((item) => <option key={item}>{item}</option>)}
           </select>
-          <select className={inputClass} value={textFields.systemStatus ?? "active"} onChange={(event) => setTextFields({ ...textFields, systemStatus: event.target.value })} disabled={key !== "system_status"}>
+          <select className={inputClass} value={textFields.systemStatus ?? selectedConfig?.value?.status ?? "active"} onChange={(event) => setTextFields({ ...textFields, systemStatus: event.target.value })} disabled={key !== "system_status"}>
             {["active", "paused"].map((item) => <option key={item}>{item}</option>)}
           </select>
-          <input className={inputClass} placeholder={key === "system_status" ? "暂停提示文案" : "配置内容"} value={textFields.value ?? ""} onChange={(event) => setTextFields({ ...textFields, value: event.target.value })} />
+          {key === "onboarding_guide" ? (
+            <textarea className={`${inputClass} min-h-[260px] font-mono text-xs md:col-span-2`} value={valueText} onChange={(event) => setTextFields({ ...textFields, value: event.target.value })} />
+          ) : (
+            <input className={inputClass} placeholder={key === "system_status" ? "暂停提示文案" : "配置内容"} value={valueText} onChange={(event) => setTextFields({ ...textFields, value: event.target.value })} />
+          )}
           <button className="rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper">保存配置</button>
         </form>
       );

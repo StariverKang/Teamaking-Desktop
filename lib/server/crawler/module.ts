@@ -51,6 +51,7 @@ export type CrawlerModuleDeps = {
 
 const crawlerJobs = new Map<string, any>();
 const crawlerStaleMs = 30 * 60 * 1000;
+const activeCrawlerStatuses = ["running", "finalizing", "importing"];
 
 function serializeCrawlerJob(job: any) {
   const input = isPlainRecord(job.input) ? job.input : {};
@@ -128,11 +129,11 @@ async function markStaleCrawlerJobs(deps: CrawlerModuleDeps, appVersionId: strin
   await deps.prisma.crawlerJob.updateMany({
     where: {
       appVersionId,
-      status: "running",
+      status: { in: activeCrawlerStatuses },
       updatedAt: { lt: staleDate }
     },
     data: {
-      status: "failed",
+      status: "timed_out",
       errorMessage: "任务长时间没有更新，可能是开发服务器重启、进程被终止，或网络/PDF 下载中断。请重新启动任务。",
       finishedAt: new Date()
     }
@@ -149,12 +150,20 @@ async function listCrawlerJobs(deps: CrawlerModuleDeps, appVersionId: string) {
   return jobs.map(serializeCrawlerJob);
 }
 
-async function importCrawlerOutputsForJob(deps: CrawlerModuleDeps, job: any, outputs: any[], admin: any) {
+async function importCrawlerOutputsForJob(
+  deps: CrawlerModuleDeps,
+  job: any,
+  outputs: any[],
+  admin: any,
+  onProgress?: (message: string) => Promise<void> | void
+) {
   const action = job.input?.databaseAction ?? "download_only";
   if (!["create_pending", "approve_import"].includes(action)) return [];
   const imports = [];
+  await onProgress?.(`Post-crawl action ${action}: preparing ${outputs.length} output file(s).\n`);
   for (const output of outputs) {
     try {
+      await onProgress?.(`Creating course import batch for ${output.name}.\n`);
       const payload = await payloadFromStoredCrawlerOutput(output);
       const name = `${job.name} · ${output.name}`;
       const created = await deps.courseImportWorkflow.createBatchFromPayload({
@@ -165,8 +174,10 @@ async function importCrawlerOutputsForJob(deps: CrawlerModuleDeps, job: any, out
       });
       let approved = null;
       if (action === "approve_import") {
+        await onProgress?.(`Approving course import batch ${created.batch.id} for ${output.name}.\n`);
         approved = await deps.courseImportWorkflow.approveBatch(created.batch.id, admin);
       }
+      await onProgress?.(`Post-crawl action complete for ${output.name}: ${approved ? "approved" : "pending"}.\n`);
       imports.push({
         outputName: output.name,
         batchId: created.batch.id,
@@ -176,6 +187,7 @@ async function importCrawlerOutputsForJob(deps: CrawlerModuleDeps, job: any, out
         approvalResult: approved?.result ?? null
       });
     } catch (error) {
+      await onProgress?.(`Post-crawl action failed for ${output.name}: ${error instanceof Error ? error.message : "导入失败"}\n`);
       imports.push({
         outputName: output.name,
         status: "failed",
@@ -233,10 +245,6 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
       `--handbookUrl=${input.handbookUrl}`,
       `--cohorts=${input.cohorts.join(",")}`,
       `--limit=${input.limit}`,
-      `--semesterCode=${input.semesterCode}`,
-      `--semesterName=${input.semesterName}`,
-      `--academicYear=${input.academicYear}`,
-      `--term=${input.term}`,
       `--outDir=${jobOutDir}`
     );
     if (input.programmes) args.push(`--programmes=${input.programmes}`);
@@ -274,41 +282,68 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
     void persistCrawlerJob(deps.prisma, job);
   });
   child.on("error", (error) => {
-    job.status = "failed";
+    job.status = "process_error";
     job.finishedAt = new Date().toISOString();
     job.errorMessage = error.message;
     job.logs.push(`\n${error.stack || error.message}\n`);
     void persistCrawlerJob(deps.prisma, job);
   });
   child.on("close", async (code) => {
+    const processFinishedAt = new Date().toISOString();
+    const appendJobLog = async (message: string) => {
+      job.logs.push(message);
+      await persistCrawlerJob(deps.prisma, job);
+    };
+
     job.exitCode = code;
-    job.status = code === 0 ? "completed" : "failed";
-    job.finishedAt = new Date().toISOString();
-    const allOutputs = await listCrawlerOutputs([jobOutDir]);
-    job.outputs = input.outputMode === "git_import_json" ? crawlerOutputsChangedAfter(beforeOutputs, allOutputs) : allOutputs;
-    if (code === 0 && input.outputMode === "git_import_json" && !job.outputs.length) {
-      job.outputs = allOutputs.filter((file) => input.target === "course_catalog"
-        ? file.name.includes("course-catalog") || file.name.includes("course-descriptions-catalog")
-        : input.cohorts.length
-          ? input.cohorts.some((cohort: string) => file.name.includes(`-${cohort}-`))
-          : /^bnbu-\d{4}-admission-handbook\.teamaking\.json$/.test(file.name));
-    }
-    job.outputs = job.outputs.map((output: any) => ({ ...output, jobId: input.outputMode === "git_import_json" ? output.jobId : job.id }));
-    if (code !== 0 && !job.errorMessage) {
-      job.errorMessage = crawlerErrorSummary((job.logs ?? []).join(""), `Crawler exited with code ${code}`);
-    }
     if (code === 0) {
-      job.imports = await importCrawlerOutputsForJob(deps, job, job.outputs, admin);
-      job.outputs = job.outputs.map((output: any) => ({
-        ...output,
-        importResult: job.imports.find((item: any) => item.outputName === output.name) ?? null
-      }));
-      const failedImport = job.imports.find((item: any) => item.status === "failed");
-      if (failedImport) {
-        job.status = "failed";
-        job.errorMessage = failedImport.error;
-      }
+      job.status = "finalizing";
+      await appendJobLog(`\nCrawler process exited with code 0 at ${processFinishedAt}; collecting outputs.\n`);
+    } else {
+      job.status = "process_error";
+      job.finishedAt = processFinishedAt;
     }
+
+    try {
+      const allOutputs = await listCrawlerOutputs([jobOutDir]);
+      job.outputs = input.outputMode === "git_import_json" ? crawlerOutputsChangedAfter(beforeOutputs, allOutputs) : allOutputs;
+      if (code === 0 && input.outputMode === "git_import_json" && !job.outputs.length) {
+        job.outputs = allOutputs.filter((file) => input.target === "course_catalog"
+          ? file.name.includes("course-catalog") || file.name.includes("course-descriptions-catalog")
+          : input.cohorts.length
+            ? input.cohorts.some((cohort: string) => file.name.includes(`-${cohort}-`))
+            : /^bnbu-\d{4}-admission-handbook\.teamaking\.json$/.test(file.name));
+      }
+      job.outputs = job.outputs.map((output: any) => ({ ...output, jobId: input.outputMode === "git_import_json" ? output.jobId : job.id }));
+      if (code !== 0 && !job.errorMessage) {
+        job.errorMessage = crawlerErrorSummary((job.logs ?? []).join(""), `Crawler exited with code ${code}`);
+      }
+      if (code === 0) {
+        await appendJobLog(`Collected ${job.outputs.length} crawler output file(s).\n`);
+        if (["create_pending", "approve_import"].includes(job.input?.databaseAction)) {
+          job.status = "importing";
+          await appendJobLog(`Starting post-crawl import action: ${job.input.databaseAction}.\n`);
+        }
+        job.imports = await importCrawlerOutputsForJob(deps, job, job.outputs, admin, appendJobLog);
+        job.outputs = job.outputs.map((output: any) => ({
+          ...output,
+          importResult: job.imports.find((item: any) => item.outputName === output.name) ?? null
+        }));
+        const failedImport = job.imports.find((item: any) => item.status === "failed");
+        if (failedImport) {
+          job.status = "import_failed";
+          job.errorMessage = failedImport.error;
+        } else {
+          job.status = "completed";
+        }
+      }
+    } catch (error) {
+      job.status = "finalization_failed";
+      job.errorMessage = error instanceof Error ? error.message : "Crawler finalization failed.";
+      job.logs.push(`Crawler finalization failed: ${job.errorMessage}\n`);
+    }
+
+    job.finishedAt = new Date().toISOString();
     job.logs.push(`\nFinished with exit code ${code} at ${job.finishedAt}\n`);
     if (job.imports?.length) {
       job.logs.push(`Crawler import actions: ${JSON.stringify(job.imports.map((item: any) => ({ outputName: item.outputName, status: item.status, batchId: item.batchId, error: item.error })), null, 2)}\n`);
@@ -322,7 +357,7 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
       targetId: job.id,
       status: job.status === "completed" ? "success" : "failed",
       summary: { name: job.name, input, exitCode: code, errorMessage: job.errorMessage }
-    });
+    }).catch(() => null);
   });
   await deps.operationLog({
     actorUserId: admin.id,

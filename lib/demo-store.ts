@@ -162,7 +162,7 @@ export function createDemoTeamUpInterest(postId: string, sender: any, body: any)
 export function demoReceivedTeamUpInterests(userId: string) {
   const state = globalState();
   return state.teamUpInterests
-    .filter((interest) => interest.receiverId === userId && interest.status !== "deleted")
+    .filter((interest) => interest.receiverId === userId && interest.senderId !== userId && interest.status !== "deleted")
     .map((interest) => sanitizeDemoInterest(interest, userId));
 }
 

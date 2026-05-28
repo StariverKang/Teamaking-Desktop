@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Navbar } from "@/components/app-shell";
 import { AnnouncementCenter } from "@/components/announcement-center";
+import { OnboardingTour } from "@/components/onboarding-tour";
 import { SupportWidget } from "@/components/pages/student-pages";
 import { LanguageRuntime } from "@/components/language-runtime";
 
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <LanguageRuntime>
           <Navbar />
           <AnnouncementCenter />
+          <OnboardingTour />
           {children}
           <SupportWidget />
         </LanguageRuntime>

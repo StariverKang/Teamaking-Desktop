@@ -9,9 +9,10 @@ import { isPlainRecord, numberValues, textValue, toJson } from "@/lib/server/jso
 import { buildCourseImportBatchSummary, importCohortYearsFromPayload, payloadHash } from "@/lib/server/course-import/import-helpers";
 
 import { applyBnbuCourseImport } from "@/lib/server/course-import/workflows/apply-workflow";
+import { buildCourseImportPreview } from "@/lib/server/course-import/workflows/preview-workflow";
 import { payloadFromDataset } from "@/lib/server/course-import/workflows/dataset-workflow";
 
-export type CourseImportApproveStageName = "load_dataset" | "apply_import" | "build_summary" | "mark_approved" | "checkpoint";
+export type CourseImportApproveStageName = "load_dataset" | "review_decisions" | "apply_import" | "build_summary" | "mark_approved" | "checkpoint";
 
 export type CourseImportApproveStage = {
   phase: CourseImportApproveStageName;
@@ -92,9 +93,10 @@ export async function runCourseImportApproveStage<T>(input: {
   }
 }
 
-export async function approveCourseImportBatch(batchId: string, admin: any) {
+export async function approveCourseImportBatch(batchId: string, admin: any, approvalDecisions: Record<string, unknown> = {}) {
   const stages: CourseImportApproveStage[] = [];
   let loadedBatch: any = null;
+  let approvalPreview: any = null;
 
   try {
     const { batch, approvalPayload } = await runCourseImportApproveStage({
@@ -115,6 +117,23 @@ export async function approveCourseImportBatch(batchId: string, admin: any) {
     loadedBatch = batch;
 
     const before = await prisma.courseImportBatch.findUnique({ where: { id: batchId } });
+    approvalPreview = await runCourseImportApproveStage({
+      phase: "review_decisions",
+      stages,
+      batchId,
+      admin,
+      appVersionId: batch.appVersionId,
+      details: { datasetId: batch.datasetId },
+      fn: async () => {
+        const preview = await buildCourseImportPreview(approvalPayload, approvalDecisions as any);
+        const blockingIssues = preview.diff?.courses?.blockingIssues ?? [];
+        if (blockingIssues.length) {
+          const samples = blockingIssues.slice(0, 8).map((item: any) => item.code ? `${item.code}${item.field ? `.${item.field}` : ""}` : item.ruleId ?? "unknown");
+          throw new ApiError(400, `还有 ${blockingIssues.length} 个课程生命周期差异需要先处理：${samples.join(", ")}`);
+        }
+        return preview;
+      }
+    });
     const result = await runCourseImportApproveStage({
       phase: "apply_import",
       stages,
@@ -122,7 +141,7 @@ export async function approveCourseImportBatch(batchId: string, admin: any) {
       admin,
       appVersionId: batch.appVersionId,
       details: { datasetId: batch.datasetId, cohortYears: numberValues(batch.cohortYears) },
-      fn: () => applyBnbuCourseImport(approvalPayload, batch.id)
+      fn: () => applyBnbuCourseImport(approvalPayload, batch.id, approvalDecisions as any)
     });
     const { approvalSummary, approvalCohortYears } = await runCourseImportApproveStage({
       phase: "build_summary",
@@ -156,11 +175,12 @@ export async function approveCourseImportBatch(batchId: string, admin: any) {
         data: {
           schoolId: result.school.id,
           status: "approved",
-          validationSummary: result.validationSummary,
+          validationSummary: toJson({ ...result.validationSummary, preview: approvalPreview }),
           summary: toJson(approvalSummary),
           cohortYears: toJson(approvalCohortYears),
           payloadHash: batch.payloadHash ?? payloadHash(approvalPayload),
           sourceLabel: batch.sourceLabel ?? textValue(approvalSummary.sourceLabel),
+          approvalDecisions: toJson(approvalDecisions),
           adminNote: typeof batch.adminNote === "string" && batch.adminNote.startsWith("Approve failed at ") ? null : batch.adminNote,
           approvedByUserId: admin.id,
           approvedAt: new Date()

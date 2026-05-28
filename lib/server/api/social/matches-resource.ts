@@ -6,6 +6,17 @@ import { demoPeople, demoPosts, isDemoUser } from "@/lib/demo-data";
 import { profileInclude, userInclude, publicUser } from "@/lib/server/services/user-service";
 import { enrichPost } from "@/lib/server/services/social-service";
 
+export function discoveryPostsWhere(user: any, boardIds: string[]) {
+  return {
+    status: "open",
+    userId: { not: user.id },
+    OR: [
+      { boardId: { in: boardIds } },
+      { visibility: "same_school", user: { schoolId: user.schoolId ?? "" } }
+    ]
+  };
+}
+
 export async function handleMatches(request: NextRequest) {
   const url = new URL(request.url);
   const usersPage = Math.max(1, Number.parseInt(url.searchParams.get("usersPage") ?? "1", 10) || 1);
@@ -32,11 +43,13 @@ export async function handleMatches(request: NextRequest) {
     }));
     const pagedDemoUsers = paginateUsers(demoUsers);
     return ok({
-      posts: demoPosts().map((post, index) => ({
-        ...post,
-        score: index === 0 ? 90 : 62,
-        reasons: index === 0 ? ["Joined the same course board"] : ["Cross-major collaboration"]
-      })),
+      posts: demoPosts()
+        .filter((post) => post.userId !== user.id)
+        .map((post, index) => ({
+          ...post,
+          score: index === 0 ? 90 : 62,
+          reasons: index === 0 ? ["Joined the same course board"] : ["Cross-major collaboration"]
+        })),
       users: pagedDemoUsers.items,
       usersPagination: {
         page: pagedDemoUsers.page,
@@ -58,13 +71,7 @@ export async function handleMatches(request: NextRequest) {
   ];
 
   const posts = await prisma.teamakingPost.findMany({
-    where: {
-      status: "open",
-      OR: [
-        { boardId: { in: boardIds } },
-        { visibility: "same_school", user: { schoolId: user.schoolId ?? "" } }
-      ]
-    },
+    where: discoveryPostsWhere(user, boardIds),
     include: {
       board: { include: { courseOffering: { include: { course: true } } } },
       user: { include: { profile: { include: profileInclude }, contactInfo: true, skills: { include: { skill: true } } } }

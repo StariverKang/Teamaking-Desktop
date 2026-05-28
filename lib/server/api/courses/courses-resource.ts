@@ -38,7 +38,7 @@ export async function handleCourses(method: string, path: string[], request: Nex
         where: {
           status: "active",
           studentAction: { in: ["default_join", "recommend_only"] },
-          course: { schoolId: user.schoolId ?? "" }
+          course: { schoolId: user.schoolId ?? "", status: "active" }
         },
         include: { semester: true, course: { include: courseInclude } },
         orderBy: [{ studentAction: "asc" }, { classification: "asc" }]
@@ -79,6 +79,7 @@ export async function handleCourses(method: string, path: string[], request: Nex
       ? await prisma.courseMajorMapping.findMany({
           where: {
             majorId,
+            course: { status: "active" },
             ...(grade ? { recommendedGrade: grade } : {})
           },
           include: { course: { include: courseInclude } },

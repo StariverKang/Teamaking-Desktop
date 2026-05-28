@@ -58,6 +58,7 @@ export function AdminResourcePage({
   const [status, setStatus] = useState("active");
   const [role, setRole] = useState("profile_completed_user");
   const [adminNote, setAdminNote] = useState("");
+  const [approvalDecisions, setApprovalDecisions] = useState<Record<string, any>>({});
   const [textFields, setTextFields] = useState<Record<string, string>>({});
   const [result, setResult] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
   const [busyAction, setBusyAction] = useState("");
@@ -211,6 +212,7 @@ export function AdminResourcePage({
     try {
       const response = await api(`/api/admin/course-imports/${importBatchId}`);
       setActionData(response);
+      setApprovalDecisions(response.selectedBatch?.approvalDecisions ?? {});
       setImportPreviewTab("diff");
       const summary = response.selectedBatch?.summary;
       const counts = summary?.counts ?? response.preview?.counts ?? {};
@@ -357,6 +359,7 @@ export function AdminResourcePage({
   const ctx = {
     actionData,
     adminNote,
+    approvalDecisions,
     busyAction,
     contentAnnouncementCreating,
     contentAnnouncementData,
@@ -391,6 +394,7 @@ export function AdminResourcePage({
     selectedId,
     selectedLabel,
     setAdminNote,
+    setApprovalDecisions,
     setContentAnnouncementCreating,
     setContentAnnouncementId,
     setContentCreating,

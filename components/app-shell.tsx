@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { HTMLAttributes } from "react";
 import { useEffect, useState } from "react";
-import { BookOpen, LayoutDashboard, MailCheck, Menu, Settings, Sparkles, UserRound, UsersRound } from "lucide-react";
+import { BookOpen, LayoutDashboard, LogOut, MailCheck, Menu, Settings, Sparkles, UserRound, UsersRound } from "lucide-react";
+import { api } from "@/lib/client/api";
 import { adminNav, studentNav } from "@/lib/ui-data";
 import { LanguageSwitcher } from "@/components/language-runtime";
 import clsx from "clsx";
@@ -27,16 +29,96 @@ export function Navbar() {
         </nav>
         <div className="flex items-center gap-3">
           <LanguageSwitcher />
-          <Link
-            href="/login"
-            className="focus-ring inline-flex items-center gap-2 border border-ink bg-rust px-3 py-2 text-sm font-semibold text-paper shadow-soft md:px-4"
-          >
-            <MailCheck size={16} aria-hidden />
-            <span className="hidden sm:inline">登录 / 注册</span>
-          </Link>
+          <AuthNav />
         </div>
       </div>
     </header>
+  );
+}
+
+function AuthNav() {
+  const pathname = usePathname();
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api("/api/auth/me")
+      .then((data) => {
+        if (alive) setUser(data.user ?? null);
+      })
+      .catch(() => {
+        if (alive) setUser(null);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [pathname]);
+
+  async function logout() {
+    setLoggingOut(true);
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+      setUser(null);
+      window.location.href = "/";
+    } catch {
+      setLoggingOut(false);
+    }
+  }
+
+  if (loading) {
+    return <div className="h-9 w-28 border border-ink/12 bg-ink/5" aria-hidden />;
+  }
+
+  if (!user) {
+    return (
+      <Link
+        href="/login"
+        className="focus-ring inline-flex items-center gap-2 border border-ink bg-rust px-3 py-2 text-sm font-semibold text-paper shadow-soft md:px-4"
+      >
+        <MailCheck size={16} aria-hidden />
+        <span className="hidden sm:inline">登录 / 注册</span>
+      </Link>
+    );
+  }
+
+  const profile = user.profile ?? {};
+  const displayName = profile.displayName ?? user.email?.split("@")[0] ?? "Profile";
+  const initials = String(displayName).trim().slice(0, 2).toUpperCase() || "U";
+
+  return (
+    <div className="flex items-center gap-2">
+      <Link
+        href="/profile/me"
+        className="focus-ring inline-flex max-w-[210px] items-center gap-2 border border-ink/25 bg-paper px-2 py-1.5 text-sm font-semibold text-ink hover:bg-mist/70"
+      >
+        <span
+          className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden border border-ink/25 bg-mist bg-cover bg-center text-xs font-bold text-ink"
+          style={profile.avatarUrl ? { backgroundImage: `url(${profile.avatarUrl})` } : undefined}
+          data-no-translate
+          aria-hidden
+        >
+          {profile.avatarUrl ? null : initials}
+        </span>
+        <span className="hidden min-w-0 sm:block">
+          <span className="block truncate leading-tight" data-no-translate>{displayName}</span>
+          <span className="block text-[11px] font-semibold leading-tight text-ink/58">Profile</span>
+        </span>
+      </Link>
+      <button
+        type="button"
+        onClick={logout}
+        disabled={loggingOut}
+        className="focus-ring inline-flex items-center gap-1.5 border border-rust/45 bg-rust/10 px-2.5 py-2 text-sm font-semibold text-rust disabled:opacity-50"
+      >
+        {loggingOut ? <UserRound size={16} aria-hidden /> : <LogOut size={16} aria-hidden />}
+        <span className="hidden md:inline">{loggingOut ? "Logging out..." : "Logout"}</span>
+      </button>
+    </div>
   );
 }
 
@@ -107,6 +189,7 @@ export function PageShell({
 
   return (
     <main
+      data-onboarding-fallback
       className={clsx(
         "mx-auto grid max-w-[1440px] gap-4 px-3 pb-24 pt-5 md:px-5 md:py-7",
         aside === "none" ? "lg:grid-cols-1" : "lg:grid-cols-[228px_minmax(0,1fr)]",
@@ -175,8 +258,8 @@ function MobileNav({ items, admin }: { items: { href: string; label: string }[];
   );
 }
 
-export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={clsx("min-w-0 border border-ink/70 bg-chalk/92 p-4 shadow-soft md:p-5", className)}>{children}</div>;
+export function Card({ children, className, ...props }: HTMLAttributes<HTMLDivElement> & { children: React.ReactNode }) {
+  return <div className={clsx("min-w-0 border border-ink/70 bg-chalk/92 p-4 shadow-soft md:p-5", className)} {...props}>{children}</div>;
 }
 
 export function EmptyState({ title, body }: { title: string; body: string }) {

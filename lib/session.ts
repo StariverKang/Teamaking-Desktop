@@ -31,6 +31,16 @@ export function setDemoSessionCookie(response: NextResponse, account: string) {
   });
 }
 
+export function clearSessionCookie(response: NextResponse) {
+  response.cookies.set(SESSION_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    ...(sessionCookieDomain() ? { domain: sessionCookieDomain(), secure: true } : {}),
+    maxAge: 0
+  });
+}
+
 export async function getCurrentUser() {
   const cookieStore = await cookies();
   const userId = cookieStore.get(SESSION_COOKIE)?.value;

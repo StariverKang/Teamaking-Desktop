@@ -7,14 +7,19 @@ export type CourseImportWorkflow = {
     admin: any;
     duplicateMode?: "block" | "reject_pending";
   }) => Promise<any>;
-  approveBatch: (batchId: string, admin: any) => Promise<any>;
+  approveBatch: (batchId: string, admin: any, approvalDecisions?: Record<string, unknown>) => Promise<any>;
+  activateAdmissionSemester: (input: Record<string, unknown>, admin: any) => Promise<any>;
   rejectBatch: (batchId: string, adminNote: string | undefined, admin: any) => Promise<any>;
+  clearAdmissionImportBatch: (batchId: string, admin: any) => Promise<any>;
+  clearAllAdmissionImports: (admin: any) => Promise<any>;
   downloadDataset: (datasetId: string) => Promise<{ content: string; filename: string }>;
 };
 
 import { approveCourseImportBatch } from "@/lib/server/course-import/workflows/approval-workflow";
 import { createCourseImportBatchFromPayload, downloadCourseImportDataset, listCourseImportBatches, rejectCourseImportBatch } from "@/lib/server/course-import/workflows/batch-workflow";
+import { clearAdmissionImportBatch, clearAllAdmissionImports } from "@/lib/server/course-import/workflows/cleanup-workflow";
 import { buildCourseImportPreview } from "@/lib/server/course-import/workflows/preview-workflow";
+import { activateAdmissionSemester } from "@/lib/server/course-import/workflows/semester-activation-workflow";
 
 export function createCourseImportWorkflow(): CourseImportWorkflow {
   return {
@@ -25,14 +30,19 @@ export function createCourseImportWorkflow(): CourseImportWorkflow {
     listBatches: listCourseImportBatches,
     createBatchFromPayload: createCourseImportBatchFromPayload,
     approveBatch: approveCourseImportBatch,
+    activateAdmissionSemester,
     rejectBatch: rejectCourseImportBatch,
+    clearAdmissionImportBatch,
+    clearAllAdmissionImports,
     downloadDataset: downloadCourseImportDataset
   };
 }
 
 export { applyBnbuCourseImport } from "@/lib/server/course-import/workflows/apply-workflow";
 export { approveCourseImportBatch } from "@/lib/server/course-import/workflows/approval-workflow";
+export { activateAdmissionSemester } from "@/lib/server/course-import/workflows/semester-activation-workflow";
 export { createCourseImportBatchFromPayload, downloadCourseImportDataset, listCourseImportBatches, rejectCourseImportBatch } from "@/lib/server/course-import/workflows/batch-workflow";
+export { clearAdmissionImportBatch, clearAllAdmissionImports } from "@/lib/server/course-import/workflows/cleanup-workflow";
 export { createCourseImportDataset, payloadFromDataset } from "@/lib/server/course-import/workflows/dataset-workflow";
 export { buildBnbuDatabaseCoverage, buildCourseImportPreview } from "@/lib/server/course-import/workflows/preview-workflow";
 export { summarizeCourseImportBatch } from "@/lib/server/course-import/import-helpers";

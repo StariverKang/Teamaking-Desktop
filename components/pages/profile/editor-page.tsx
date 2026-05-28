@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Check, FileText, Plus, UserRound } from "lucide-react";
 import { Card, EmptyState, LoadingState, PageShell, SkillBadge } from "@/components/app-shell";
+import { OnboardingTourRestartButton } from "@/components/onboarding-tour";
 import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
 import { contactVisibilityOptions, defaultContactVisibility } from "@/lib/contact";
 import { api, uploadProfileFile, useApi } from "@/lib/client/api";
@@ -306,8 +307,11 @@ export function ProfileEditorPage() {
           </Card>
 
           <form onSubmit={submit} className="grid gap-5">
-            <Card>
-              <h2 className="text-xl font-semibold text-ink">基础展示信息</h2>
+            <Card data-onboarding-target="profile-proof-of-work">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <h2 className="text-xl font-semibold text-ink">基础展示信息</h2>
+                <OnboardingTourRestartButton className="rounded-sm border border-ink/30 px-3 py-2 text-xs font-semibold text-ink" />
+              </div>
               <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <Field label="显示名称">
                   <input className={inputClass} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} />

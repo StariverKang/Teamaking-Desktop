@@ -6,6 +6,7 @@ import { validateBnbuCourseImportPayload } from "@/lib/bnbu-course-import";
 import { isPlainRecord, numberValue, records, textValue, toJson } from "@/lib/server/json-utils";
 import { writeImportArtifact } from "@/lib/server/storage/json-files";
 import { buildCourseImportBatchSummary, importCohortYearsFromPayload, payloadHash } from "@/lib/server/course-import/import-helpers";
+import { courseCatalogFingerprint, courseEffectiveYearFromPayload } from "@/lib/server/course-import/course-lifecycle";
 
 export function datasetRowId(row: Record<string, unknown>, fallback: string) {
   return textValue(row.id) || textValue(row.code) || fallback;
@@ -77,9 +78,13 @@ export async function createCourseImportDataset(input: {
         create: courses.map((row) => ({
           code: textValue(row.code),
           title: textValue(row.title),
+          description: textValue(row.description),
           credits: numberValue(row.credits),
           categoryTags: toJson(Array.isArray(row.categoryTags) ? row.categoryTags : []),
           ownerUnit: toJson(isPlainRecord(row.ownerUnit) ? row.ownerUnit : {}),
+          sourceRefIds: toJson(Array.isArray(row.sourceRefIds) ? row.sourceRefIds : []),
+          effectiveYear: courseEffectiveYearFromPayload(input.payload, row),
+          fingerprint: textValue(row.fingerprint) || courseCatalogFingerprint(row),
           raw: toJson(row)
         })).filter((row) => row.code)
       },

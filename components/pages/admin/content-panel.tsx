@@ -1,7 +1,14 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-"use client";import { Card, EmptyState, LoadingState, StatusPill } from "@/components/app-shell";
+"use client";
 
-import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";import { MarkdownRenderer, contentKindLabels, buildContentTree, contentNodeType, ContentDocumentTree, ContentDocumentReader, contentImageUrls } from "@/components/pages/shared/content-parts";
+import { useState } from "react";
+
+import { Card, EmptyState, LoadingState, StatusPill } from "@/components/app-shell";
+
+import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
+import { MarkdownRenderer, contentKindLabels, buildContentTree, contentNodeType, ContentDocumentTree, ContentDocumentReader, contentImageUrls } from "@/components/pages/shared/content-parts";
+import { api } from "@/lib/client/api";
+import { parseContentMarkdownFile, type ContentMarkdownDraft } from "@/lib/content-markdown";
 
 import type { AdminResourceContext } from "./resource-types";
 
@@ -103,6 +110,76 @@ export function ContentAdminPanel({ ctx }: { ctx: AdminResourceContext }) {
       const selectAnnouncement = (announcement: any) => {
         setContentAnnouncementCreating(false);
         setContentAnnouncementId(announcement.id);
+      };
+      const [markdownImports, setMarkdownImports] = useState<ContentMarkdownDraft[]>([]);
+      const [markdownImporting, setMarkdownImporting] = useState(false);
+      const markdownImportRows = buildMarkdownImportRows(markdownImports, tabDocuments);
+      const blockingMarkdownRows = markdownImportRows.filter((row) => row.blocking);
+      const readableMarkdownRows = markdownImportRows.filter((row) => row.action !== "skip");
+      const handleMarkdownFiles = async (fileList: FileList | null) => {
+        const files = Array.from(fileList ?? []).filter((file) => /\.md$/i.test(file.name));
+        if (!files.length) {
+          setMarkdownImports([]);
+          setResult({ type: "error", message: "请选择 .md 文件。" });
+          return;
+        }
+        const drafts = await Promise.all(files.map(async (file, index) => parseContentMarkdownFile({
+          fileName: file.name,
+          relativePath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
+          raw: await file.text(),
+          index,
+          kind: activeDocumentKind
+        })));
+        setMarkdownImports(drafts);
+        setResult({ type: "info", message: `已读取 ${drafts.length} 个 Markdown 文件，请检查导入预览。` });
+      };
+      const applyMarkdownImports = async () => {
+        if (!readableMarkdownRows.length) {
+          setResult({ type: "error", message: "没有可导入的 Markdown 文件。" });
+          return;
+        }
+        if (blockingMarkdownRows.length) {
+          setResult({ type: "error", message: `还有 ${blockingMarkdownRows.length} 个 Markdown 条目无法导入，请先处理父级或重复 slug。` });
+          return;
+        }
+        setMarkdownImporting(true);
+        try {
+          const idBySlug = new Map(tabDocuments.map((document: any) => [document.slug, document.id]));
+          const sortedRows = [...readableMarkdownRows].sort((left, right) => {
+            const leftFolder = left.draft.nodeType === "folder" ? 0 : 1;
+            const rightFolder = right.draft.nodeType === "folder" ? 0 : 1;
+            return leftFolder - rightFolder || left.draft.displayOrder - right.draft.displayOrder || left.draft.slug.localeCompare(right.draft.slug);
+          });
+          let changed = 0;
+          for (const row of sortedRows) {
+            const parentId = row.draft.parentSlug ? idBySlug.get(row.draft.parentSlug) ?? "" : "";
+            const body = {
+              kind: activeDocumentKind,
+              nodeType: row.draft.nodeType,
+              title: row.draft.title,
+              slug: row.draft.slug,
+              parentId,
+              summary: row.draft.summary,
+              bodyMarkdown: row.draft.bodyMarkdown,
+              imageUrls: row.draft.imageUrls,
+              status: row.draft.status,
+              displayOrder: row.draft.displayOrder
+            };
+            const response = row.existing
+              ? await api(`/api/admin/content/${row.existing.id}`, { method: "PATCH", body: JSON.stringify(body) })
+              : await api("/api/admin/content", { method: "POST", body: JSON.stringify(body) });
+            if (!response.document?.id) throw new Error(`导入 ${row.draft.fileName} 后没有返回文档 ID。`);
+            idBySlug.set(row.draft.slug, response.document.id);
+            changed += 1;
+          }
+          setMarkdownImports([]);
+          setResult({ type: "success", message: `Markdown 导入完成：创建/更新 ${changed} 个内容节点。页面数据会自动刷新；如列表未变化，请刷新页面。` });
+          window.setTimeout(() => window.location.reload(), 650);
+        } catch (error) {
+          setResult({ type: "error", message: error instanceof Error ? error.message : "Markdown 导入失败。" });
+        } finally {
+          setMarkdownImporting(false);
+        }
       };
       const renderContentTabs = () => (
         <Card>
@@ -290,6 +367,84 @@ export function ContentAdminPanel({ ctx }: { ctx: AdminResourceContext }) {
                   </>
                 )}
               </div>
+              {contentTab !== "developer_contact" ? (
+                <div className="grid gap-3 border border-ink/15 bg-chalk p-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-ink">导入 Markdown</h3>
+                    <p className="mt-1 text-sm leading-6 text-ink/58">选择本地 .md 文件或文件夹；系统会读取 frontmatter、标题、摘要和父级关系，先显示预览，不会上传原始文件。</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <label className="cursor-pointer rounded-sm border border-ink/30 bg-paper px-3 py-2 text-sm font-semibold hover:bg-mist">
+                      选择 Markdown 文件
+                      <input
+                        className="hidden"
+                        type="file"
+                        accept=".md,text/markdown"
+                        multiple
+                        onChange={(event) => handleMarkdownFiles(event.target.files)}
+                      />
+                    </label>
+                    <label className="cursor-pointer rounded-sm border border-ink/30 bg-paper px-3 py-2 text-sm font-semibold hover:bg-mist">
+                      选择 Markdown 文件夹
+                      <input
+                        className="hidden"
+                        type="file"
+                        accept=".md,text/markdown"
+                        multiple
+                        onChange={(event) => handleMarkdownFiles(event.target.files)}
+                        {...({ webkitdirectory: "", directory: "" } as any)}
+                      />
+                    </label>
+                    {markdownImports.length ? (
+                      <button
+                        type="button"
+                        onClick={() => setMarkdownImports([])}
+                        className="rounded-sm border border-rust/40 px-3 py-2 text-sm font-semibold text-rust"
+                      >
+                        清空预览
+                      </button>
+                    ) : null}
+                  </div>
+                  {markdownImports.length ? (
+                    <div className="grid gap-3">
+                      <div className="max-h-80 overflow-auto border border-ink/12 bg-paper">
+                        <table className="w-full min-w-[780px] border-collapse text-left text-xs">
+                          <thead className="bg-ink text-paper">
+                            <tr>
+                              {["文件", "动作", "节点", "Slug", "父级", "状态", "标题", "提示"].map((header) => <th key={header} className="px-2 py-2">{header}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {markdownImportRows.map((row) => (
+                              <tr key={`${row.draft.relativePath}-${row.draft.slug}`} className={`border-b border-ink/10 ${row.blocking ? "bg-rust/5" : row.action === "skip" ? "bg-ink/5 text-ink/48" : ""}`}>
+                                <td className="max-w-[180px] truncate px-2 py-2">{row.draft.relativePath}</td>
+                                <td className="px-2 py-2 font-semibold">{row.action === "create" ? "创建" : row.action === "update" ? "更新" : "跳过"}</td>
+                                <td className="px-2 py-2">{row.draft.nodeType === "folder" ? "文件夹" : "文档"}</td>
+                                <td className="px-2 py-2">{row.draft.slug}</td>
+                                <td className="px-2 py-2">{row.draft.parentSlug || "根"}</td>
+                                <td className="px-2 py-2">{row.draft.status}</td>
+                                <td className="max-w-[180px] truncate px-2 py-2">{row.draft.title}</td>
+                                <td className="max-w-[220px] px-2 py-2 text-rust">{row.reason || row.draft.warnings.join("; ")}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          disabled={markdownImporting || blockingMarkdownRows.length > 0 || readableMarkdownRows.length === 0}
+                          onClick={applyMarkdownImports}
+                          className="rounded-sm bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:opacity-50"
+                        >
+                          {markdownImporting ? "导入中..." : `导入 ${readableMarkdownRows.length} 个内容节点`}
+                        </button>
+                        {blockingMarkdownRows.length ? <span className="text-sm font-semibold text-rust">{blockingMarkdownRows.length} 个条目需要处理后才能导入。</span> : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="max-h-[620px] overflow-auto border border-ink/15 bg-paper p-2">
                 {contentTab === "developer_contact" ? (
                   visibleDocuments.length ? visibleDocuments.map((document: any) => (
@@ -438,4 +593,31 @@ export function ContentAdminPanel({ ctx }: { ctx: AdminResourceContext }) {
         </div>
       );
 
+}
+
+function buildMarkdownImportRows(drafts: ContentMarkdownDraft[], documents: any[]) {
+  const existingBySlug = new Map(documents.map((document: any) => [document.slug, document]));
+  const importedFolders = new Set(drafts.filter((draft) => draft.nodeType === "folder" && !draft.archived).map((draft) => draft.slug));
+  const slugCounts = drafts.reduce((map, draft) => map.set(draft.slug, (map.get(draft.slug) ?? 0) + 1), new Map<string, number>());
+  return drafts.map((draft) => {
+    const existing = existingBySlug.get(draft.slug);
+    const duplicate = (slugCounts.get(draft.slug) ?? 0) > 1;
+    const parentKnown = !draft.parentSlug || existingBySlug.has(draft.parentSlug) || importedFolders.has(draft.parentSlug);
+    const archived = draft.archived;
+    const blocking = !archived && (duplicate || !parentKnown);
+    const reason = archived
+      ? "归档区默认跳过"
+      : duplicate
+        ? "本次选择中 slug 重复"
+        : !parentKnown
+          ? `找不到父级 ${draft.parentSlug}`
+          : "";
+    return {
+      draft,
+      existing,
+      action: archived ? "skip" : existing ? "update" : "create",
+      blocking,
+      reason
+    };
+  });
 }

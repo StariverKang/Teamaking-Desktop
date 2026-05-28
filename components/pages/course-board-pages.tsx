@@ -85,7 +85,7 @@ export function CoursesPage() {
       {isAuthed ? (
       <div className="grid gap-5">
         <OfficialAcademicLinks links={officialLinks} />
-        <Card>
+        <Card data-onboarding-target="courses-search">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink/15 pb-3">
             <div className="flex flex-wrap gap-2">
               {[
@@ -537,11 +537,11 @@ export function TeamakingPostPage({ postId }: { postId: string }) {
   const [refresh, setRefresh] = useState(0);
   const { data: me } = useApi("/api/auth/me");
   const { data, error, loading } = useApi(`/api/teamaking-posts/${postId}`, [refresh]);
-  const { data: interests } = useApi(`/api/teamaking-posts/${postId}/interests`, [refresh]);
   const [form, setForm] = useState({ message: "", senderContribution: "" });
   const [message, setMessage] = useState("");
   const post = data?.post;
   const isOwnPost = Boolean(me?.user?.id && post?.userId === me.user.id);
+  const { data: interests } = useApi(isOwnPost ? `/api/teamaking-posts/${postId}/interests` : null, [refresh, isOwnPost, postId]);
 
   async function teamUp(event: FormEvent) {
     event.preventDefault();
@@ -582,36 +582,35 @@ export function TeamakingPostPage({ postId }: { postId: string }) {
             )}
             {message ? <p className="mt-3 text-sm font-medium text-moss">{message}</p> : null}
           </Card>
-          <div className="lg:col-span-2">
-            <Card>
-              <h2 className="text-xl font-semibold text-ink">TeamUp Interests for this Post</h2>
-              <div className="mt-4 grid gap-4">
-                {(interests?.interests ?? []).length > 0 ? (
-                  (interests?.interests ?? []).map((interest: any) => (
-                    <TeamUpRequestCard
-                      key={interest.id}
-                      request={interest}
-                      actions={
-                        <>
-                          <button type="button" onClick={() => actOnInterest(interest.id, "mutual")} className="focus-ring rounded-sm bg-moss px-3 py-2 text-sm font-semibold text-white">
-                            我也感兴趣
-                          </button>
-                          <button type="button" onClick={() => actOnInterest(interest.id, "refuse")} className="focus-ring rounded-sm border border-ink/40 px-3 py-2 text-sm font-semibold">
-                            Refuse
-                          </button>
-                          <button type="button" onClick={() => actOnInterest(interest.id, "withdraw")} className="focus-ring rounded-sm border border-ink/40 px-3 py-2 text-sm font-semibold">
-                            Withdraw
-                          </button>
-                        </>
-                      }
-                    />
-                  ))
-                ) : (
-                  <EmptyState title="还没有 TeamUp Interest" body="有人对这条 Open to Team signal 感兴趣后，会显示在这里。" />
-                )}
-              </div>
-            </Card>
-          </div>
+          {isOwnPost ? (
+            <div className="lg:col-span-2">
+              <Card>
+                <h2 className="text-xl font-semibold text-ink">TeamUp Interests for this Post</h2>
+                <div className="mt-4 grid gap-4">
+                  {(interests?.interests ?? []).length > 0 ? (
+                    (interests?.interests ?? []).map((interest: any) => (
+                      <TeamUpRequestCard
+                        key={interest.id}
+                        request={interest}
+                        actions={
+                          <>
+                            <button type="button" onClick={() => actOnInterest(interest.id, "mutual")} className="focus-ring rounded-sm bg-moss px-3 py-2 text-sm font-semibold text-white">
+                              我也感兴趣
+                            </button>
+                            <button type="button" onClick={() => actOnInterest(interest.id, "refuse")} className="focus-ring rounded-sm border border-ink/40 px-3 py-2 text-sm font-semibold">
+                              Refuse
+                            </button>
+                          </>
+                        }
+                      />
+                    ))
+                  ) : (
+                    <EmptyState title="还没有 TeamUp Interest" body="有人对这条 Open to Team signal 感兴趣后，会显示在这里。" />
+                  )}
+                </div>
+              </Card>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </PageShell>

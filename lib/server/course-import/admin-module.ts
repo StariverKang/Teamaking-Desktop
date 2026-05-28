@@ -41,6 +41,17 @@ export function createCourseImportAdminModule(deps: CourseImportAdminModuleDeps)
       return ok(await deps.workflow.listBatches({ selectedId: id }));
     }
 
+    if (context.method === "POST" && resource === "course-imports" && id === "clear-admission") {
+      const result = await deps.workflow.clearAllAdmissionImports(admin);
+      return ok({ result });
+    }
+
+    if (context.method === "POST" && resource === "course-imports" && id === "activate-semester") {
+      const body = await context.body();
+      const result = await deps.workflow.activateAdmissionSemester(body, admin);
+      return ok({ result });
+    }
+
     if (context.method === "POST" && resource === "course-imports" && !id) {
       const body = await context.body();
       const payload = courseImportPayloadFromBody(body);
@@ -55,7 +66,9 @@ export function createCourseImportAdminModule(deps: CourseImportAdminModuleDeps)
     }
 
     if (context.method === "POST" && resource === "course-imports" && id && action === "approve") {
-      const approved = await deps.workflow.approveBatch(id, admin);
+      const body = await context.body();
+      const approvalDecisions = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>).approvalDecisions as Record<string, unknown> | undefined : undefined;
+      const approved = await deps.workflow.approveBatch(id, admin, approvalDecisions);
       return ok({ importBatch: summarizeCourseImportBatch(approved.importBatch), result: approved.result });
     }
 
@@ -63,6 +76,11 @@ export function createCourseImportAdminModule(deps: CourseImportAdminModuleDeps)
       const body = await context.body();
       const rejected = await deps.workflow.rejectBatch(id, optionalString(body.adminNote), admin);
       return ok({ importBatch: summarizeCourseImportBatch(rejected.importBatch) });
+    }
+
+    if (context.method === "POST" && resource === "course-imports" && id && action === "clear-admission") {
+      const result = await deps.workflow.clearAdmissionImportBatch(id, admin);
+      return ok({ result });
     }
 
     throw new ApiError(404, "找不到课程配置接口。");

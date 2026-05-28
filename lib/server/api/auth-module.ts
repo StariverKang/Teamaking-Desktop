@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ApiError, assertString, ok, optionalString, readBody } from "@/lib/http";
 import { ERROR_CODES } from "@/lib/error-codes";
-import { getCurrentUser, isAdminRole, requireUser, setDemoSessionCookie, setSessionCookie } from "@/lib/session";
+import { clearSessionCookie, getCurrentUser, isAdminRole, requireUser, setDemoSessionCookie, setSessionCookie } from "@/lib/session";
 import { shouldExposeVerificationCode } from "@/lib/email";
 import { verifyPassword } from "@/lib/password";
 import { defaultContactVisibility } from "@/lib/contact";
@@ -13,6 +13,7 @@ import { resetDemoState } from "@/lib/demo-store";
 import { userInclude, academicLockForUser, publicUser } from "@/lib/server/services/user-service";
 import { operationLog, safeStringEqual } from "@/lib/server/services/system-service";
 import { upsertVerifiedUser, supportedSchoolDomainForEmail, recordAuthEvent, createVerification, consumeVerification, passwordHashFor, bootstrapAdminConfig, upsertBootstrapAdmin, assertAccountCanLogin, restrictedAccountRedirect, assertLoginFailureBudget } from "@/lib/server/services/auth-service";
+import { defaultOnboardingGuide, onboardingGuideFromConfig } from "@/lib/onboarding-guide";
 
 export async function handleAuth(method: string, path: string[], request: NextRequest) {
   if (method === "POST" && (path[1] === "admin-login" || path[1] === "developer-login")) {
@@ -187,6 +188,12 @@ export async function handleAuth(method: string, path: string[], request: NextRe
     return ok({ user: user ? publicUser(user) : null });
   }
 
+  if (method === "POST" && path[1] === "logout") {
+    const response = ok({ message: "已退出登录。" });
+    clearSessionCookie(response);
+    return response;
+  }
+
   throw new ApiError(404, "找不到认证接口。");
 }
 
@@ -315,9 +322,10 @@ export async function handleOnboarding(method: string, path: string[], request: 
 
   if (isDemoUser(user)) {
     if (method === "GET") {
-      return ok({ user: publicUser(user), academicLock: academicLockForUser(user), ...demoOnboardingOptions() });
+      return ok({ user: publicUser(user), academicLock: academicLockForUser(user), guide: defaultOnboardingGuide, ...demoOnboardingOptions() });
     }
     if (method === "POST" && path[1] === "tour-dismiss") return ok({ message: "本地视觉演示模式已模拟关闭新手引导。" });
+    if (method === "POST" && path[1] === "tour-reset") return ok({ message: "本地视觉演示模式已模拟重启新手引导。" });
     if (method === "POST") {
       return ok({ profile: user.profile, message: "本地视觉演示模式已模拟保存 onboarding。" });
     }
@@ -345,15 +353,38 @@ export async function handleOnboarding(method: string, path: string[], request: 
     return ok({ profile, message: "新手引导已关闭。" });
   }
 
+  if (method === "POST" && path[1] === "tour-reset") {
+    const profile = await prisma.userProfile.upsert({
+      where: { userId: user.id },
+      update: { onboardingTourDismissedAt: null },
+      create: {
+        userId: user.id,
+        displayName: user.email.split("@")[0],
+        onboardingTourDismissedAt: null
+      }
+    });
+    await operationLog({
+      actorUserId: user.id,
+      actorRole: user.role,
+      action: "onboarding.tour.reset",
+      targetType: "UserProfile",
+      targetId: profile.id,
+      method,
+      path: request.nextUrl.pathname
+    });
+    return ok({ profile, message: "新手引导已重置，可以重新查看。" });
+  }
+
   if (method === "GET") {
-    const [faculties, rawMajors, semesters] = await Promise.all([
+    const [faculties, rawMajors, semesters, guideConfig] = await Promise.all([
       prisma.faculty.findMany({ where: { schoolId: user.schoolId ?? undefined }, orderBy: { name: "asc" } }),
       prisma.major.findMany({ where: { schoolId: user.schoolId ?? undefined }, include: { faculty: true }, orderBy: { name: "asc" } }),
-      prisma.semester.findMany({ where: { schoolId: user.schoolId ?? undefined }, orderBy: [{ year: "desc" }, { term: "asc" }] })
+      prisma.semester.findMany({ where: { schoolId: user.schoolId ?? undefined }, orderBy: [{ year: "desc" }, { term: "asc" }] }),
+      prisma.siteConfig.findUnique({ where: { key: "onboarding_guide" } })
     ]);
     const majors = filterUserFacingMajors(rawMajors);
 
-    return ok({ user: publicUser(user), academicLock: academicLockForUser(user), faculties, majors, semesters });
+    return ok({ user: publicUser(user), academicLock: academicLockForUser(user), faculties, majors, semesters, guide: onboardingGuideFromConfig(guideConfig?.value) });
   }
 
   if (method === "POST") {

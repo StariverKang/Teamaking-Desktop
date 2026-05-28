@@ -4,7 +4,17 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { Card, LoadingState, PageShell, StatusPill } from "@/components/app-shell";
 import { ErrorBox, Field, formatFileSize, inputClass } from "@/components/pages/page-primitives";
+import { crawlerResultStatus, CrawlerResultTone } from "@/lib/client/crawler-result-status";
 import { api, useApi } from "@/lib/client/api";
+
+const activeCrawlerStatuses = new Set(["running", "finalizing", "importing"]);
+const resultToneClass: Record<CrawlerResultTone, string> = {
+  active: "text-ink",
+  success: "text-forest",
+  warning: "text-coral",
+  error: "text-rust",
+  neutral: "text-ink/64"
+};
 
 export function CrawlerPortalPage() {
   const [refresh, setRefresh] = useState(0);
@@ -21,14 +31,14 @@ export function CrawlerPortalPage() {
     limit: "all",
     outputMode: "download",
     databaseAction: "download_only",
-    instruction: "填写某一个 admission year 的 programme handbook 页面，输出 2026 Spring 的课程配置 JSON。"
+    instruction: "填写某一个 admission year 的 programme handbook 页面，输出该届学生的 programme plan 配置 JSON。"
   });
   const [result, setResult] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     const jobs = jobsData?.jobs ?? [];
-    if (!jobs.some((job: any) => job.status === "running")) return;
+    if (!jobs.some((job: any) => activeCrawlerStatuses.has(job.status))) return;
     const timer = window.setTimeout(() => setRefresh((value) => value + 1), 2000);
     return () => window.clearTimeout(timer);
   }, [jobsData, refresh]);
@@ -73,7 +83,7 @@ export function CrawlerPortalPage() {
       <div className="grid gap-5 xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)] xl:items-start">
         <Card className="xl:max-h-[calc(100vh-12rem)] xl:overflow-y-auto">
           <h2 className="text-xl font-semibold text-ink">Crawl request</h2>
-          <p className="mt-2 text-sm leading-6 text-ink/62">推荐直接填写某一年的 admission handbook 页面并一次爬一年。Course Descriptions 是课程总表，只补课程描述；BNBU class schedule 只是时间表，不作为课程存在或 CourseBoard 配置依据。</p>
+          <p className="mt-2 text-sm leading-6 text-ink/62">推荐直接填写某一年的 admission handbook 页面并一次爬一年。Programme handbook 只生成该届学生的课程安排；Course Descriptions 是课程总表，只补课程描述；BNBU class schedule 只是时间表，不作为课程存在或 CourseBoard 配置依据。</p>
           {result ? (
             <div className={`mt-4 border px-3 py-2 text-sm font-medium ${
               result.type === "error" ? "border-rust/40 bg-rust/5 text-rust" : "border-forest/30 bg-forest/10 text-forest"
@@ -122,12 +132,16 @@ export function CrawlerPortalPage() {
                   <Field label="Faculty codes"><input className={inputClass} placeholder="FBM,FHSS 可留空" value={form.facultyCodes ?? ""} onChange={(event) => setForm({ ...form, facultyCodes: event.target.value })} /></Field>
                 </>
               )}
-              <Field label={isCourseCatalog ? "Metadata year" : "Activation preview year"} help={isCourseCatalog ? "只写入输出 JSON 的 semester metadata。" : "用于预览 Course Board 激活，不改变 admission-year 课程安排。"}><input className={inputClass} value={form.academicYear ?? ""} onChange={(event) => setForm({ ...form, academicYear: event.target.value })} /></Field>
-              <Field label={isCourseCatalog ? "Metadata term" : "Activation preview term"} help={isCourseCatalog ? "只写入输出 JSON 的 semester metadata。" : "Fall/Spring 只用于计算当前学期会命中哪些 relative terms；课程安排仍按 admission year 存储。"}>
-                <select className={inputClass} value={form.term ?? "Spring"} onChange={(event) => setForm({ ...form, term: event.target.value })}>
-                  {["Spring", "Fall"].map((item) => <option key={item}>{item}</option>)}
-                </select>
-              </Field>
+              {isCourseCatalog ? (
+                <>
+                  <Field label="Metadata year" help="只写入输出 JSON 的 semester metadata。"><input className={inputClass} value={form.academicYear ?? ""} onChange={(event) => setForm({ ...form, academicYear: event.target.value })} /></Field>
+                  <Field label="Metadata term" help="只写入输出 JSON 的 semester metadata。">
+                    <select className={inputClass} value={form.term ?? "Spring"} onChange={(event) => setForm({ ...form, term: event.target.value })}>
+                      {["Spring", "Fall"].map((item) => <option key={item}>{item}</option>)}
+                    </select>
+                  </Field>
+                </>
+              ) : null}
               <Field label="Limit"><input className={inputClass} value={form.limit ?? "all"} onChange={(event) => setForm({ ...form, limit: event.target.value })} /></Field>
               <Field label="Output mode">
                 <select className={inputClass} value={form.outputMode ?? "download"} onChange={(event) => setForm({ ...form, outputMode: event.target.value })}>
@@ -135,7 +149,7 @@ export function CrawlerPortalPage() {
                   <option value="git_import_json">course_imports/bnbu</option>
                 </select>
               </Field>
-              <Field label="After crawl" help={isCourseCatalog ? "默认只生成下载文件；如直接批准，会合并课程描述，不会创建 admission-year rules。" : "默认只生成下载文件；如选择直接批准，会写入线上课程目录和 admission-year 课程安排。"}>
+              <Field label="After crawl" help={isCourseCatalog ? "默认只生成下载文件；如直接批准，会合并课程描述，不会创建 admission-year rules。" : "默认只生成下载文件；如选择直接批准，会写入线上课程目录和 admission-year programme plan rules，不在爬取时按 Spring/Fall 激活 Course Board。"}>
                 <select className={inputClass} value={form.databaseAction ?? "download_only"} onChange={(event) => setForm({ ...form, databaseAction: event.target.value })}>
                   <option value="download_only">只生成并下载 JSON</option>
                   <option value="create_pending">创建待审批导入批次</option>
@@ -162,9 +176,11 @@ export function CrawlerPortalPage() {
             </div>
             <div className="mt-4 max-h-80 overflow-auto border border-ink/15">
               <table className="w-full min-w-[820px] border-collapse text-left text-sm">
-                <thead className="sticky top-0 bg-ink text-paper"><tr>{["Job", "Status", "Scope", "Activation preview", "Started", "Result", "Actions", "Log"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+                <thead className="sticky top-0 bg-ink text-paper"><tr>{["Job", "Status", "Scope", "Metadata / plan", "Started", "Result", "Actions", "Log"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
                 <tbody>
-                  {jobs.length ? jobs.map((job: any) => (
+                  {jobs.length ? jobs.map((job: any) => {
+                    const result = crawlerResultStatus(job);
+                    return (
                     <tr key={job.id} className="border-b border-ink/10">
                       <td className="px-3 py-2">
                         <p className="font-semibold">{job.name ?? job.id}</p>
@@ -172,10 +188,13 @@ export function CrawlerPortalPage() {
                       </td>
                       <td className="px-3 py-2"><StatusPill status={job.status} /></td>
                       <td className="px-3 py-2">{job.target === "course_catalog" ? "Course catalog" : job.input?.cohorts?.length ? job.input.cohorts.join(", ") : "inferred from page"}</td>
-                      <td className="px-3 py-2">{job.input?.semesterCode ?? "not set"}</td>
+                      <td className="px-3 py-2">{job.target === "course_catalog" ? job.input?.semesterCode ?? "not set" : "admission-year plan"}</td>
                       <td className="px-3 py-2">{job.startedAt ? new Date(job.startedAt).toLocaleString() : ""}</td>
                       <td className="max-w-[300px] px-3 py-2 text-xs text-ink/64">
-                        {job.errorMessage ? <span className="text-rust">{job.errorMessage}</span> : job.status === "completed" ? "Completed" : "Waiting for output"}
+                        <div className="grid gap-1">
+                          <span className={`font-semibold ${resultToneClass[result.tone]}`}>{result.label}</span>
+                          {result.detail ? <span className="leading-5 text-ink/48">{result.detail}</span> : null}
+                        </div>
                         {job.imports?.length ? (
                           <div className="mt-2 grid gap-1">
                             {job.imports.map((item: any) => (
@@ -198,7 +217,8 @@ export function CrawlerPortalPage() {
                       </td>
                       <td className="max-w-[360px] px-3 py-2"><pre className="max-h-32 overflow-auto whitespace-pre-wrap text-xs">{(job.logs ?? []).join("").slice(-4000)}</pre></td>
                     </tr>
-                  )) : (
+                    );
+                  }) : (
                     <tr><td colSpan={8} className="px-3 py-4 text-ink/50">No crawler jobs yet.</td></tr>
                   )}
                 </tbody>

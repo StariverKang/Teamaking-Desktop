@@ -128,7 +128,7 @@ export async function listCourseImportBatches(input: { selectedId?: string } = {
     : selectedBatch && isPlainRecord(selectedBatch.payload)
       ? selectedBatch.payload
       : null;
-  const preview = selectedPayload ? await buildCourseImportPreview(selectedPayload) : null;
+  const preview = selectedPayload ? await buildCourseImportPreview(selectedPayload, isPlainRecord(selectedBatch?.approvalDecisions) ? selectedBatch.approvalDecisions as any : {}) : null;
   const databaseCoverage = await buildBnbuDatabaseCoverage();
   const selectedSummary = selectedBatch ? summarizeCourseImportBatch(selectedBatch, true) : null;
   return {

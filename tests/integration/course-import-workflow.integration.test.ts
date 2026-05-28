@@ -63,7 +63,7 @@ function minimalBnbuPayload(runId: string) {
 }
 
 describe.skipIf(!canUseTestDatabase)("course import workflow DB contracts", () => {
-  it("creates pending imports, approves handbook rules, protects memberships, and restores checkpoints", async () => {
+  it("creates pending imports, approves handbook rules, activates semesters, protects memberships, and restores checkpoints", async () => {
     process.env.DATABASE_URL = testDatabaseUrl;
     const runId = `it-${Date.now()}`;
     const { prisma } = await import("@/lib/prisma");
@@ -131,6 +131,15 @@ describe.skipIf(!canUseTestDatabase)("course import workflow DB contracts", () =
     expect(approved.importBatch).toMatchObject({ status: "approved", approvedByUserId: admin.id });
     expect(approved.result).toMatchObject({
       rulesInAcademicTermContext: 1,
+      activatedBoards: [],
+      autoJoinResults: [],
+      autoJoinDeferredToSemesterActivation: 1
+    });
+
+    const activated = await workflow.activateAdmissionSemester({ academicYear: 2026, term: "Fall" }, admin);
+    expect(activated).toMatchObject({
+      semester: { code: "2026-Fall", isCurrent: true },
+      dedupedRules: 1,
       activatedBoards: [expect.objectContaining({ courseCode: "AI1003" })],
       autoJoinResults: [expect.objectContaining({ matchedUsers: 3, membershipsCreated: 1 })]
     });
@@ -160,6 +169,29 @@ describe.skipIf(!canUseTestDatabase)("course import workflow DB contracts", () =
       .resolves.toMatchObject({ source: "auto_major_required", status: "opted_out" });
     await expect(prisma.courseBoardMembership.findUnique({ where: { userId_boardId: { userId: oldUser.id, boardId: seededBoard.id } } }))
       .resolves.toBeNull();
+
+    const cleanup = await workflow.clearAdmissionImportBatch(created.batch.id, admin);
+    expect(cleanup).toMatchObject({
+      scope: "batch",
+      batchCount: 1,
+      rulesDeleted: 1,
+      activeAutoMembershipsDeleted: 1,
+      programmePlanOfferingsDeleted: 0,
+      programmePlanOfferingsRetained: 1,
+      batchesMarkedCleared: 1
+    });
+    await expect(prisma.courseCurriculumRule.findFirst({ where: { externalId: `rule-${runId}-ai1003-y1s1` } }))
+      .resolves.toBeNull();
+    await expect(prisma.courseBoardMembership.findUnique({ where: { userId_boardId: { userId: autoUser.id, boardId: seededBoard.id } } }))
+      .resolves.toBeNull();
+    await expect(prisma.courseBoardMembership.findUnique({ where: { userId_boardId: { userId: manualUser.id, boardId: seededBoard.id } } }))
+      .resolves.toMatchObject({ source: "manual", status: "active" });
+    await expect(prisma.courseBoardMembership.findUnique({ where: { userId_boardId: { userId: optedOutUser.id, boardId: seededBoard.id } } }))
+      .resolves.toMatchObject({ source: "auto_major_required", status: "opted_out" });
+    await expect(prisma.courseImportBatch.findUnique({ where: { id: created.batch.id } }))
+      .resolves.toMatchObject({ status: "cleared" });
+    await expect(prisma.course.findUnique({ where: { schoolId_code: { schoolId: school.id, code: "AI1003" } } }))
+      .resolves.toMatchObject({ title: "Python Programming", source: "bnbu_import" });
 
     const versions = createAdminVersionsModule();
     const context = (method: string, path: string[], body: Record<string, unknown> = {}) => ({

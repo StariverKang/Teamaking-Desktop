@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { defaultOnboardingGuide } from "../lib/onboarding-guide";
 import { contactSnapshot, defaultContactVisibility } from "../lib/contact";
 
 const prisma = new PrismaClient();
@@ -619,9 +620,7 @@ async function main() {
       },
       {
         key: "onboarding_guide",
-        value: {
-          steps: ["完成 Profile", "加入 Course Board", "发布 Open to Team", "通过 WeChat 继续沟通"]
-        },
+        value: defaultOnboardingGuide,
         updatedByUserId: businessUser.id
       },
       {

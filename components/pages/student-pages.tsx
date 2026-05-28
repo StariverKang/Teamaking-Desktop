@@ -23,6 +23,7 @@ import {
   StatusPill
 } from "@/components/app-shell";
 import { CourseCard, TeamakingPostCard } from "@/components/cards";
+import { OnboardingTourRestartButton, requestOnboardingTourStart } from "@/components/onboarding-tour";
 import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
 
 import { contactVisibilityOptions, defaultContactVisibility } from "@/lib/contact";
@@ -34,8 +35,6 @@ export function OnboardingPage() {
   const router = useRouter();
   const { data, error, loading } = useApi("/api/onboarding");
   const [form, setForm] = useState({ displayName: "", grade: "Year 2", entryYear: defaultEntryYear, entryTerm: "Fall", facultyId: "", majorId: "" });
-  const [tourStep, setTourStep] = useState(0);
-  const [tourClosed, setTourClosed] = useState(false);
   const academicLock = data?.academicLock;
   const majors = useMemo(() => (data?.majors ?? []).filter((major: any) => !form.facultyId || major.facultyId === form.facultyId), [data, form.facultyId]);
 
@@ -62,42 +61,12 @@ export function OnboardingPage() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     await api("/api/onboarding", { method: "POST", body: JSON.stringify(form) });
+    requestOnboardingTourStart(1);
     router.push("/dashboard");
   }
 
-  async function closeTour() {
-    setTourClosed(true);
-    await api("/api/onboarding/tour-dismiss", { method: "POST" }).catch(() => null);
-  }
-
-  const tourSteps = [
-    { title: "欢迎来到 TEAMAKING", body: "这里用 Proof-of-Work Profile、Course Board 和轻量 Team Up 帮你更快找到靠谱同学。" },
-    { title: "先补基础信息", body: "下面填写显示名称、学院和专业。年级会尽量从学校邮箱自动推断。" },
-    { title: "Profile 可以继续编辑", body: "进入后可以在 Profile 页面补充作品证明、联系方式、头像和简历解析。" },
-    { title: "遇到问题提交工单", body: "右下角支持按钮和 Support 页面都可以联系管理员。" },
-    { title: "最后去 Course Board", body: "完成后进入 Dashboard，再从课程页加入 Course Board 并发布 Open to Team。" }
-  ];
-
   return (
     <PageShell title="完成基础引导" eyebrow="Onboarding" description="这里不会验证官方选课，只用来帮助系统推荐课程板，并让同学理解你的协作背景。">
-      {!tourClosed && !(data?.user?.profile?.onboardingTourDismissedAt) ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-ink/70 px-4">
-          <div className="w-full max-w-lg border-2 border-ink bg-paper p-5 shadow-hard">
-            <p className="text-xs font-semibold uppercase tracking-wide text-coral">Step {tourStep + 1} / {tourSteps.length}</p>
-            <h2 className="mt-2 text-2xl font-semibold text-ink">{tourSteps[tourStep].title}</h2>
-            <p className="mt-3 text-sm leading-6 text-ink/68">{tourSteps[tourStep].body}</p>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button type="button" onClick={closeTour} className="border border-ink/30 px-3 py-2 text-sm font-semibold">关闭引导</button>
-              <button type="button" onClick={() => setTourStep((value) => Math.max(0, value - 1))} disabled={tourStep === 0} className="border border-ink/30 px-3 py-2 text-sm font-semibold disabled:opacity-40">上一步</button>
-              {tourStep < tourSteps.length - 1 ? (
-                <button type="button" onClick={() => setTourStep((value) => value + 1)} className="bg-ink px-3 py-2 text-sm font-semibold text-paper">下一步</button>
-              ) : (
-                <button type="button" onClick={closeTour} className="bg-coral px-3 py-2 text-sm font-semibold text-paper">开始填写</button>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {data ? (
         <div className="grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
@@ -113,7 +82,7 @@ export function OnboardingPage() {
               暂时跳过
             </button>
           </Card>
-          <Card>
+          <Card data-onboarding-target="academic-form">
             <form onSubmit={submit} className="grid gap-4">
               <Field label="显示名称">
                 <input className={inputClass} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} />
@@ -184,10 +153,11 @@ export function DashboardPage() {
       {me?.user ? (
         <div className="grid gap-5">
           <div className="grid gap-5 md:grid-cols-3">
-            <Card>
+            <Card data-onboarding-target="dashboard-profile-health">
               <p className="text-sm text-ink/58">Profile completion</p>
               <p className="mt-2 text-3xl font-semibold text-ink">{me.user.onboardingCompleted ? "80%" : "35%"}</p>
               <p className="mt-2 text-sm text-ink/62">完善 portfolio 和联系方式后，协作信号会更可信。</p>
+              <OnboardingTourRestartButton className="mt-3 rounded-sm border border-ink/30 px-3 py-2 text-xs font-semibold text-ink" />
             </Card>
             <Card>
               <p className="text-sm text-ink/58">TeamUp Interest reminders</p>
@@ -286,7 +256,7 @@ export function ContactInfoPage() {
     <PageShell title="Contact Info" eyebrow="Visibility Settings" description="联系方式可以按可见范围展示。学校邮箱只读，用来证明身份真实性。">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {data ? (
-        <Card>
+        <Card data-onboarding-target="contact-visibility">
           <form onSubmit={submit} className="grid gap-4">
             <Field label="学校邮箱（只读）">
               <input className={`${inputClass} bg-ink/5`} value={form.schoolEmail ?? ""} readOnly />
@@ -378,7 +348,7 @@ export function SupportPage() {
             <p>开发者联系方式会由管理员在 Site Config 中维护。</p>
           </div>
         </Card>
-        <Card>
+        <Card data-onboarding-target="support-ticket">
           <form onSubmit={submit} className="grid gap-4">
             <Field label="联系邮箱">
               <input className={inputClass} value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="可选，但建议填写" />

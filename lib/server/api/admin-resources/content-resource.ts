@@ -1,8 +1,10 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/prisma";import { ApiError, assertString, created, ok, optionalString, readBody } from "@/lib/http";
+import { prisma } from "@/lib/prisma";
+import { ApiError, assertString, created, ok, optionalString, readBody } from "@/lib/http";
 import { getActiveAppVersionId } from "@/lib/app-version";
 import { userInclude } from "@/lib/server/services/user-service";
 import { contentImageUrls, serializeContentDocument, serializeAnnouncement } from "@/lib/server/services/content-service";
+import { contentWriteApiError } from "@/lib/server/services/content-write-errors";
 import { writeAudit } from "@/lib/server/services/system-service";
 
 export async function handleAdminContentResource(method: string, path: string[], request: NextRequest, admin: any) {
@@ -122,25 +124,34 @@ export async function handleAdminContentResource(method: string, path: string[],
       const imageUrls = contentImageUrls(body.imageUrls);
       if (kind === "developer_log" && imageUrls.length > 3) throw new ApiError(400, "开发者日志最多支持 3 张图片。");
       const status = optionalString(body.status) ?? "draft";
-      const document = await prisma.contentDocument.create({
-        data: {
-          appVersionId,
-          kind,
-          nodeType: optionalString(body.nodeType) === "folder" ? "folder" : "document",
-          parentId: optionalString(body.parentId),
-          slug: optionalString(body.slug) ?? `${kind}-${Date.now()}`,
-          title: assertString(body.title, "title"),
-          summary: optionalString(body.summary),
-          bodyMarkdown: optionalString(body.bodyMarkdown) ?? "",
-          imageUrls,
-          status,
-          displayOrder: Number(body.displayOrder ?? 0) || 0,
-          publishedAt: status === "published" ? new Date() : null,
-          updatedByUserId: admin.id
-        }
+      const parentId = await resolveContentParentId({
+        appVersionId,
+        kind,
+        parentId: optionalString(body.parentId)
       });
-      await writeAudit(admin.id, "admin.content.create", "ContentDocument", document.id, null, document);
-      return created({ document: serializeContentDocument({ ...document, children: [] }), message: status === "published" ? "文档已发布。" : "文档草稿已创建。" });
+      try {
+        const document = await prisma.contentDocument.create({
+          data: {
+            appVersionId,
+            kind,
+            nodeType: optionalString(body.nodeType) === "folder" ? "folder" : "document",
+            parentId,
+            slug: optionalString(body.slug) ?? `${kind}-${Date.now()}`,
+            title: assertString(body.title, "title"),
+            summary: optionalString(body.summary),
+            bodyMarkdown: optionalString(body.bodyMarkdown) ?? "",
+            imageUrls,
+            status,
+            displayOrder: Number(body.displayOrder ?? 0) || 0,
+            publishedAt: status === "published" ? new Date() : null,
+            updatedByUserId: admin.id
+          }
+        });
+        await writeAudit(admin.id, "admin.content.create", "ContentDocument", document.id, null, document);
+        return created({ document: serializeContentDocument({ ...document, children: [] }), message: status === "published" ? "文档已发布。" : "文档草稿已创建。" });
+      } catch (error) {
+        throw contentWriteApiError(error) ?? error;
+      }
     }
 
     if (method === "PATCH" && id) {
@@ -150,25 +161,33 @@ export async function handleAdminContentResource(method: string, path: string[],
       const status = optionalString(body.status) ?? before.status;
       const nextImageUrls = Object.prototype.hasOwnProperty.call(body, "imageUrls") ? contentImageUrls(body.imageUrls) : contentImageUrls(before.imageUrls);
       if ((optionalString(body.kind) ?? before.kind) === "developer_log" && nextImageUrls.length > 3) throw new ApiError(400, "开发者日志最多支持 3 张图片。");
-      const document = await prisma.contentDocument.update({
-        where: { id },
-        data: {
-          kind: optionalString(body.kind) ?? before.kind,
-          nodeType: optionalString(body.nodeType) === "folder" ? "folder" : optionalString(body.nodeType) === "document" ? "document" : before.nodeType,
-          parentId: Object.prototype.hasOwnProperty.call(body, "parentId") ? optionalString(body.parentId) : before.parentId,
-          slug: optionalString(body.slug) ?? before.slug,
-          title: optionalString(body.title) ?? before.title,
-          summary: Object.prototype.hasOwnProperty.call(body, "summary") ? optionalString(body.summary) : before.summary,
-          bodyMarkdown: Object.prototype.hasOwnProperty.call(body, "bodyMarkdown") ? optionalString(body.bodyMarkdown) ?? "" : before.bodyMarkdown,
-          imageUrls: nextImageUrls,
-          status,
-          displayOrder: Object.prototype.hasOwnProperty.call(body, "displayOrder") ? Number(body.displayOrder ?? 0) || 0 : before.displayOrder,
-          publishedAt: status === "published" ? before.publishedAt ?? new Date() : before.publishedAt,
-          updatedByUserId: admin.id
-        }
-      });
-      await writeAudit(admin.id, "admin.content.patch", "ContentDocument", id, before, document);
-      return ok({ document: serializeContentDocument({ ...document, children: [] }), message: "文档已更新。" });
+      const nextKind = optionalString(body.kind) ?? before.kind;
+      const parentId = Object.prototype.hasOwnProperty.call(body, "parentId")
+        ? await resolveContentParentId({ appVersionId, kind: nextKind, parentId: optionalString(body.parentId), selfId: before.id })
+        : before.parentId;
+      try {
+        const document = await prisma.contentDocument.update({
+          where: { id },
+          data: {
+            kind: nextKind,
+            nodeType: optionalString(body.nodeType) === "folder" ? "folder" : optionalString(body.nodeType) === "document" ? "document" : before.nodeType,
+            parentId,
+            slug: optionalString(body.slug) ?? before.slug,
+            title: optionalString(body.title) ?? before.title,
+            summary: Object.prototype.hasOwnProperty.call(body, "summary") ? optionalString(body.summary) : before.summary,
+            bodyMarkdown: Object.prototype.hasOwnProperty.call(body, "bodyMarkdown") ? optionalString(body.bodyMarkdown) ?? "" : before.bodyMarkdown,
+            imageUrls: nextImageUrls,
+            status,
+            displayOrder: Object.prototype.hasOwnProperty.call(body, "displayOrder") ? Number(body.displayOrder ?? 0) || 0 : before.displayOrder,
+            publishedAt: status === "published" ? before.publishedAt ?? new Date() : before.publishedAt,
+            updatedByUserId: admin.id
+          }
+        });
+        await writeAudit(admin.id, "admin.content.patch", "ContentDocument", id, before, document);
+        return ok({ document: serializeContentDocument({ ...document, children: [] }), message: "文档已更新。" });
+      } catch (error) {
+        throw contentWriteApiError(error) ?? error;
+      }
     }
 
     if (method === "DELETE" && id) {
@@ -181,4 +200,17 @@ export async function handleAdminContentResource(method: string, path: string[],
   }
 
   return null;
+}
+
+async function resolveContentParentId(input: { appVersionId: string; kind: string; parentId?: string; selfId?: string }) {
+  if (!input.parentId) return null;
+  if (input.parentId === input.selfId) throw new ApiError(400, "内容不能把自己设为父级。");
+  const parent = await prisma.contentDocument.findUnique({ where: { id: input.parentId } });
+  if (!parent || parent.appVersionId !== input.appVersionId || parent.kind !== input.kind) {
+    throw new ApiError(400, "父级文件夹不存在或不属于当前内容类型。");
+  }
+  if (parent.nodeType !== "folder") {
+    throw new ApiError(400, "父级必须是分类文件夹，不能挂在普通文档下面。");
+  }
+  return parent.id;
 }

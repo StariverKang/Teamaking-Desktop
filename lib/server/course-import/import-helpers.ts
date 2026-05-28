@@ -77,7 +77,11 @@ export function buildCourseImportBatchSummary(payload: Record<string, unknown>, 
       changedRules: counts.changedRules ?? 0,
       retainedRules: counts.retainedRules ?? 0,
       rulesToDeactivate: counts.rulesToDeactivate ?? 0,
-      boardsToActivate: counts.courseBoardsToActivate ?? 0
+      boardsToActivate: counts.courseBoardsToActivate ?? 0,
+      defaultJoinRulesDeferredToSemesterActivation: counts.defaultJoinRulesDeferredToSemesterActivation ?? 0,
+      courseFieldDiffs: counts.courseFieldDiffs ?? 0,
+      retirementCandidates: counts.retirementCandidates ?? 0,
+      blockingCourseChanges: counts.blockingCourseChanges ?? 0
     },
     warnings: validation.warnings ?? [],
     errors: validation.errors ?? []
@@ -149,7 +153,11 @@ export function summarizeCourseImportBatch(batch: any, includePayload = false) {
         changedRules: Number(counts.changedRules ?? fallbackPreviewCounts.changedRules ?? 0),
         retainedRules: Number(counts.retainedRules ?? fallbackPreviewCounts.retainedRules ?? 0),
         rulesToDeactivate: Number(counts.rulesToDeactivate ?? fallbackPreviewCounts.rulesToDeactivate ?? 0),
-        boardsToActivate: Number(counts.boardsToActivate ?? fallbackPreviewCounts.courseBoardsToActivate ?? 0)
+        boardsToActivate: Number(counts.boardsToActivate ?? fallbackPreviewCounts.courseBoardsToActivate ?? 0),
+        defaultJoinRulesDeferredToSemesterActivation: Number(counts.defaultJoinRulesDeferredToSemesterActivation ?? fallbackPreviewCounts.defaultJoinRulesDeferredToSemesterActivation ?? 0),
+        courseFieldDiffs: Number(counts.courseFieldDiffs ?? fallbackPreviewCounts.courseFieldDiffs ?? 0),
+        retirementCandidates: Number(counts.retirementCandidates ?? fallbackPreviewCounts.retirementCandidates ?? 0),
+        blockingCourseChanges: Number(counts.blockingCourseChanges ?? fallbackPreviewCounts.blockingCourseChanges ?? 0)
       }
     },
     approvedByUserId: batch.approvedByUserId,
@@ -157,6 +165,7 @@ export function summarizeCourseImportBatch(batch: any, includePayload = false) {
     rejectedByUserId: batch.rejectedByUserId,
     rejectedAt: batch.rejectedAt,
     adminNote: batch.adminNote,
+    approvalDecisions: isPlainRecord(batch.approvalDecisions) ? batch.approvalDecisions : {},
     createdAt: batch.createdAt,
     updatedAt: batch.updatedAt
   };
