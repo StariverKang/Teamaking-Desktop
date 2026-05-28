@@ -5,6 +5,7 @@ import { Award, FileText, Image as ImageIcon, Link as LinkIcon, Music, Trash2, X
 import { EmptyState, SkillBadge, StatusPill } from "@/components/app-shell";
 import { formatFileSize } from "@/components/pages/page-primitives";
 import { MarkdownRenderer, textList } from "@/components/pages/shared/content-parts";
+import { resolveResumeAnalysis, withManualResumeAnalysis, withoutManualResumeAnalysis, type ResumeAnalysis } from "@/lib/resume-analysis";
 
 export function FilePreviewModal({ item, onClose }: { item: any; onClose: () => void }) {
   if (!item) return null;
@@ -160,12 +161,23 @@ export function uniqueTextList(values: unknown[]) {
   return result;
 }
 
-export function renderResumeParsedData(parsed: any, fallbackFileName: string) {
+type ResumeParsedDataOptions = {
+  editable?: boolean;
+  busy?: boolean;
+  onChange?: (nextParsed: Record<string, unknown>) => void;
+};
+
+function updateManualResumeAnalysis(parsed: any, patch: Partial<ResumeAnalysis>, onChange?: (nextParsed: Record<string, unknown>) => void) {
+  onChange?.(withManualResumeAnalysis(parsed, patch));
+}
+
+export function renderResumeParsedData(parsed: any, fallbackFileName: string, options: ResumeParsedDataOptions = {}) {
   const sections = parsed?.sections && typeof parsed.sections === "object" ? parsed.sections : {};
   const sectionEntries = Object.entries(sections) as [string, { label?: string; items?: string[] }][];
   const rawText = String(parsed?.rawText ?? "");
   const skills = textList(parsed?.skills);
-  const highlights = textList(parsed?.highlights);
+  const resolved = resolveResumeAnalysis(parsed);
+  const analysis = resolved.analysis;
   const contacts = [
     parsed?.email ? `邮箱：${parsed.email}` : "",
     parsed?.phone ? `电话：${parsed.phone}` : "",
@@ -177,13 +189,35 @@ export function renderResumeParsedData(parsed: any, fallbackFileName: string) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="font-semibold text-ink">{parsed?.fileName || fallbackFileName || "尚未上传简历"}</p>
-          <p className="mt-1 text-xs text-ink/50">{parsed?.parser ? `Parser: ${parsed.parser}` : "上传后会在这里显示解析结果。"}</p>
+          <p className="mt-1 text-xs text-ink/50">
+            {parsed?.parser ? `Parser: ${parsed.parser}` : "上传后会在这里显示解析结果。"}
+            {analysis.provider ? ` · ${resolved.source === "manual" ? "Manual" : analysis.provider} / ${analysis.model}` : ""}
+            {analysis.status === "fallback" ? " · fallback" : ""}
+          </p>
         </div>
         {parsed?.parsedAt ? <span className="border border-ink/20 px-2 py-1 text-xs text-ink/58">{new Date(parsed.parsedAt).toLocaleString()}</span> : null}
       </div>
-      <div className="border border-ink/15 bg-chalk p-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-ink/48">Auto summary</p>
-        <p className="mt-2 whitespace-pre-wrap text-ink/72">{String(parsed?.summary ?? "上传后会在这里显示解析结果。")}</p>
+      <div className="border-2 border-coral/60 bg-coral/10 p-4 shadow-soft">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-coral">Auto summary</p>
+            <h3 className="mt-2 text-lg font-semibold text-ink">{analysis.summaryTitle}</h3>
+          </div>
+          <span className="border border-coral/35 bg-paper px-2 py-1 text-xs font-semibold text-coral">
+            {resolved.source === "manual" ? "手动调整" : analysis.status === "generated" ? "AI generated" : "Fallback"}
+          </span>
+        </div>
+        <p className="mt-3 whitespace-pre-wrap text-base leading-7 text-ink/78">{analysis.summaryBody}</p>
+        {analysis.keywordGroups.length ? (
+          <div className="mt-3 grid gap-2">
+            {analysis.keywordGroups.map((group) => (
+              <div key={group.label} className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-ink/48">{group.label}</span>
+                {group.keywords.map((keyword) => <SkillBadge key={`${group.label}-${keyword}`}>{keyword}</SkillBadge>)}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
       {contacts.length || skills.length ? (
         <div className="grid gap-3 md:grid-cols-2">
@@ -205,13 +239,111 @@ export function renderResumeParsedData(parsed: any, fallbackFileName: string) {
           ) : null}
         </div>
       ) : null}
-      {highlights.length ? (
-        <div className="border border-ink/15 bg-chalk p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-ink/48">Highlights</p>
-          <ul className="mt-2 grid gap-1.5">
-            {highlights.map((item) => <li key={item} className="break-words">- {item}</li>)}
-          </ul>
+      {analysis.highlights.length ? (
+        <div className="border-2 border-ink/45 bg-chalk p-4 shadow-soft">
+          <p className="text-xs font-semibold uppercase tracking-wide text-coral">Highlights</p>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {analysis.highlights.map((item) => (
+              <article key={`${item.title}-${item.evidence}`} className="border border-ink/15 bg-paper p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="border border-ink/20 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-ink/48">{item.category}</span>
+                  <h4 className="font-semibold text-ink">{item.title}</h4>
+                </div>
+                <p className="mt-2 leading-6 text-ink/70">{item.evidence}</p>
+                {item.keywords.length ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {item.keywords.map((keyword) => <span key={keyword} className="border border-coral/25 bg-coral/5 px-2 py-0.5 text-xs font-semibold text-coral">{keyword}</span>)}
+                  </div>
+                ) : null}
+              </article>
+            ))}
+          </div>
         </div>
+      ) : null}
+      {options.editable ? (
+        <details className="border border-coral/30 bg-paper p-3">
+          <summary className="cursor-pointer font-semibold text-ink">手动微调 AI Summary / Highlights</summary>
+          <div className="mt-3 grid gap-3">
+            <label className="grid gap-1 text-sm font-semibold text-ink">
+              Summary 标题
+              <input
+                className="border border-ink/25 bg-chalk px-3 py-2 font-normal"
+                value={analysis.summaryTitle}
+                disabled={options.busy}
+                onChange={(event) => updateManualResumeAnalysis(parsed, { summaryTitle: event.target.value }, options.onChange)}
+              />
+            </label>
+            <label className="grid gap-1 text-sm font-semibold text-ink">
+              Summary 正文
+              <textarea
+                className="min-h-24 border border-ink/25 bg-chalk px-3 py-2 font-normal leading-6"
+                value={analysis.summaryBody}
+                disabled={options.busy}
+                onChange={(event) => updateManualResumeAnalysis(parsed, { summaryBody: event.target.value }, options.onChange)}
+              />
+            </label>
+            <div className="grid gap-2">
+              <p className="text-sm font-semibold text-ink">Highlights</p>
+              {analysis.highlights.map((item, index) => (
+                <div key={`${item.title}-${index}`} className="grid gap-2 border border-ink/15 bg-chalk p-3 md:grid-cols-[0.8fr_1.6fr_auto]">
+                  <input
+                    className="border border-ink/20 bg-paper px-2 py-1"
+                    value={item.title}
+                    disabled={options.busy}
+                    onChange={(event) => {
+                      const nextHighlights = analysis.highlights.map((highlight, itemIndex) => itemIndex === index ? { ...highlight, title: event.target.value } : highlight);
+                      updateManualResumeAnalysis(parsed, { highlights: nextHighlights }, options.onChange);
+                    }}
+                  />
+                  <textarea
+                    className="min-h-16 border border-ink/20 bg-paper px-2 py-1 leading-6"
+                    value={item.evidence}
+                    disabled={options.busy}
+                    onChange={(event) => {
+                      const nextHighlights = analysis.highlights.map((highlight, itemIndex) => itemIndex === index ? { ...highlight, evidence: event.target.value } : highlight);
+                      updateManualResumeAnalysis(parsed, { highlights: nextHighlights }, options.onChange);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={options.busy}
+                    onClick={() => {
+                      const nextHighlights = analysis.highlights.filter((_, itemIndex) => itemIndex !== index);
+                      updateManualResumeAnalysis(parsed, { highlights: nextHighlights }, options.onChange);
+                    }}
+                    className="h-fit border border-rust px-2 py-1 text-xs font-semibold text-rust disabled:opacity-50"
+                  >
+                    删除
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={options.busy}
+                onClick={() => {
+                  const nextHighlights = [
+                    ...analysis.highlights,
+                    { title: "新增高光", evidence: "补充一句具体证据。", category: "项目执行", keywords: [] }
+                  ].slice(0, 8);
+                  updateManualResumeAnalysis(parsed, { highlights: nextHighlights }, options.onChange);
+                }}
+                className="border border-ink/30 px-3 py-2 text-sm font-semibold disabled:opacity-50"
+              >
+                添加高光
+              </button>
+              <button
+                type="button"
+                disabled={options.busy}
+                onClick={() => options.onChange?.(withoutManualResumeAnalysis(parsed))}
+                className="border border-coral/50 px-3 py-2 text-sm font-semibold text-coral disabled:opacity-50"
+              >
+                恢复 AI 版本
+              </button>
+            </div>
+          </div>
+        </details>
       ) : null}
       {sectionEntries.length ? (
         <div className="grid gap-3 md:grid-cols-2">

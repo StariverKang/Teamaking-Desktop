@@ -200,6 +200,8 @@ npm run build
 
 测试期默认使用本机 `public/uploads`；生产建议设置 `UPLOAD_STORAGE_MODE=r2` 并配置 Cloudflare R2。只有显式设置 `UPLOAD_STORAGE_MODE=inline` 时才使用内联 data URL。
 
+简历 AI 摘要使用 OpenAI Responses API。生产环境可以设置 `OPENAI_API_KEY`，也可以由 `super_admin` 在 `/admin/ai-resume` 写入 SiteConfig；后台配置优先于环境变量。可选 `OPENAI_RESUME_MODEL` 默认是 `gpt-4.1-mini`。上传简历、重新整理简历和首次打开旧解析数据会生成结构化 `resume-ai-v1` 分析；未配置、后台暂停或调用失败时，系统会保留本地 fallback 摘要，不阻止上传或保存。后台不会回显完整 API key，审计日志和调用日志也不会记录简历原文。
+
 ## Demo 账号
 
 这些账号由 seed 创建，也可以通过 `/demo-access` 直接进入：
@@ -515,7 +517,7 @@ Profile 和 onboarding 的专业选择先按 Faculty/College 收窄 Major 列表
 
 本地上传写入 `public/uploads/<userId>/...`，该目录已加入 `.gitignore`。接口返回并保存 `fileUrl`、`storageKey`、`storageMode`、`storageProvider`、`objectKey`、`fileName`、`fileMimeType`、`fileSize`、`fileExtension`、`previewKind`、`scanStatus`、`parsedText`、`resumeParsedData`。生产可设置 `UPLOAD_STORAGE_MODE=r2` 并配置 Cloudflare R2 环境变量切换对象存储。
 
-简历解析当前支持 txt/md/代码类文本、PDF、Word `.docx`、旧 `.doc`、PPT/PPTX、CSV/TSV、Excel `.xls/.xlsx` 的本地文本提取，并会用本地规则整理出摘要、联系方式、教育/经历/项目/技能分区、关键词和完整原文。Profile 编辑页提供“重新整理当前简历”，已有上传文件可在不重新上传的情况下重新生成结构化解析。旧 Office、加密文件或复杂扫描件如果无法稳定解析，系统会保存文件并在站内预览浮窗显示解析失败原因和原文件入口，不阻止上传。
+简历解析当前支持 txt/md/代码类文本、PDF、Word `.docx`、旧 `.doc`、PPT/PPTX、CSV/TSV、Excel `.xls/.xlsx` 的本地文本提取。提取文本后会优先调用 OpenAI 生成 `resume-ai-v1` 结构化分析：候选人定位、归纳摘要、分组关键词和最多 8 条精选 Highlights；未配置 API 或调用失败时回退到本地压缩摘要。Profile 编辑页提供“重新 AI 整理当前简历”、首次打开旧解析数据自动整理、手动微调 Summary / Highlights，以及恢复 AI 版本。管理员可以在 `/admin/ai-resume` 配置启用状态、模型、API key、输入长度限制，并查看最近 100 次简历整理调用的模型、状态、摘要标题、Highlights 结果和耗时。旧 Office、加密文件或复杂扫描件如果无法稳定解析，系统会保存文件并在站内预览浮窗显示解析失败原因和原文件入口，不阻止上传。
 
 ### Teamaking Post
 

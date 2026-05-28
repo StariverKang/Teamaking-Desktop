@@ -443,7 +443,40 @@ export function demoAdminData(resource?: string) {
     ],
     logs: [
       { id: "demo-log-1", action: "demo.admin.view", targetType: "SupportTicket", targetId: "demo-ticket-1", adminUser: users[2], createdAt: new Date().toISOString() }
-    ]
+    ],
+    "ai-resume": {
+      config: {
+        enabled: true,
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        apiKeySource: "missing",
+        inputLimit: 14000,
+        apiKeySet: false,
+        apiKeyPreview: ""
+      },
+      logs: [
+        {
+          id: "demo-resume-ai-log-1",
+          createdAt: new Date().toISOString(),
+          actor: users[0],
+          trigger: "resume_upload",
+          provider: "local-fallback",
+          model: "rule-compression",
+          analysisStatus: "fallback",
+          summaryTitle: "内容运营与增长协作型候选人",
+          highlightCount: 3,
+          inputChars: 1280,
+          durationMs: 32,
+          analysisResult: {
+            summaryTitle: "内容运营与增长协作型候选人",
+            summaryBody: "围绕课程项目、内容推广和数据复盘形成可见协作证据。",
+            highlights: [
+              { title: "内容推广执行", evidence: "将活动亮点整理为可发布物料，并跟踪传播反馈。", category: "增长 / 内容运营", keywords: ["content marketing"] }
+            ]
+          }
+        }
+      ]
+    }
   };
 
   const value = data[resource ?? ""] ?? data.users;

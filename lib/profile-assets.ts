@@ -1,3 +1,5 @@
+import { buildFallbackResumeAnalysis } from "@/lib/resume-analysis";
+
 export const profileFileExtensions = [
   "md",
   "markdown",
@@ -418,7 +420,7 @@ export function parseResumeText(text: string, fileName: string) {
     ...findLines(lines, /项目|实习|运营|分析|策划|推广|访谈|project|intern|campaign|analysis/i, 12)
   ], 16);
 
-  return {
+  const parsed = {
     fileName,
     parsedAt: new Date().toISOString(),
     parser: text ? "local-text-regex" : "metadata-only",
@@ -431,5 +433,9 @@ export function parseResumeText(text: string, fileName: string) {
     lineCount: lines.length,
     rawText: cleaned.slice(0, 12000),
     summary: text ? buildResumeSummary(lines, sections, skills) : "文件已保存；当前文件没有提取到足够的可读文本，可在站内预览原文件或另存为 PDF/docx/pptx/xlsx 后重新上传。"
+  };
+  return {
+    ...parsed,
+    analysis: buildFallbackResumeAnalysis(parsed, { source: "local-parser" })
   };
 }

@@ -17,6 +17,7 @@ import { handleAdminSocialModerationResource } from "@/lib/server/api/admin-reso
 import { handleAdminMetricsResource } from "@/lib/server/api/admin-resources/metrics-resource";
 import { handleAdminConfigsResource } from "@/lib/server/api/admin-resources/configs-resource";
 import { handleAdminLogsResource } from "@/lib/server/api/admin-resources/logs-resource";
+import { handleAdminAiResumeResource } from "@/lib/server/api/admin-resources/ai-resume-resource";
 
 export async function handleDemoAdmin(context: ReturnType<typeof createApiContext>) {
   if (context.path[0] !== "admin") return null;
@@ -59,6 +60,7 @@ const adminResourceHandlers = [
   handleAdminSocialModerationResource,
   handleAdminMetricsResource,
   handleAdminConfigsResource,
+  handleAdminAiResumeResource,
   handleAdminLogsResource
 ];
 

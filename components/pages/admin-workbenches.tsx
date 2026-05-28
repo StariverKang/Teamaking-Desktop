@@ -40,6 +40,17 @@ export function ConfigsWorkbench() {
   );
 }
 
+export function AiResumeWorkbench() {
+  return (
+    <AdminResourcePage
+      title="AI Resume Analysis"
+      endpoint="/api/admin/ai-resume"
+      defaultActionPath="/api/admin/ai-resume/config"
+      description="配置 OpenAI 简历整理模型/API key，并查看用户简历 Summary 与 Highlights 的调用日志和结果。"
+    />
+  );
+}
+
 export function ContentWorkbench() {
   return (
     <AdminResourcePage

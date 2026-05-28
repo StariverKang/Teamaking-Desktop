@@ -14,6 +14,7 @@ import { assertSameSchool } from "@/lib/server/services/course-service";
 import { publicUserForViewer } from "@/lib/server/services/social-service";
 import { jsonObject, portfolioPayload, resumeBufferFromUrl } from "@/lib/server/services/profile-service";
 import { buildOfficialAcademicLinks, officialAcademicLinksForUser } from "@/lib/server/services/official-links-service";
+import { parseResumeTextWithAi } from "@/lib/server/services/resume-ai-service";
 
 export async function handleProfile(method: string, path: string[], request: NextRequest) {
   const user = await requireUser();
@@ -176,7 +177,15 @@ export async function handleProfile(method: string, path: string[], request: Nex
       if (!resumeUrl) throw new ApiError(400, "当前 Profile 还没有简历 URL。");
       const buffer = await resumeBufferFromUrl(resumeUrl);
       const parsedText = await extractReadableText(resumeFileName, buffer);
-      const resumeParsedData = parseResumeText(parsedText, resumeFileName);
+      const resumeParsedData = await parseResumeTextWithAi(parsedText, resumeFileName, {
+        actorUserId: user.id,
+        actorRole: user.role,
+        targetType: "UserProfile",
+        targetId: fullUser.profile?.id ?? user.id,
+        method,
+        path: request.nextUrl.pathname,
+        trigger: "profile_reparse"
+      });
       const profile = await prisma.userProfile.update({
         where: { userId: user.id },
         data: { resumeParsedData: toJson(resumeParsedData) }
@@ -192,6 +201,12 @@ export async function handleProfile(method: string, path: string[], request: Nex
         summary: {
           resumeFileName,
           parser: resumeParsedData.parser,
+          analysis: {
+            provider: resumeParsedData.analysis?.provider,
+            model: resumeParsedData.analysis?.model,
+            status: resumeParsedData.analysis?.status,
+            highlightCount: resumeParsedData.analysis?.highlights?.length ?? 0
+          },
           skills: resumeParsedData.skills,
           sections: Object.keys(resumeParsedData.sections ?? {})
         }
@@ -441,7 +456,15 @@ export async function handleUploads(method: string, request: NextRequest) {
   const buffer = Buffer.from(await file.arrayBuffer());
   const safeName = safeUploadName(file.name);
   const parsedText = await extractReadableText(file.name, buffer);
-  const resumeParsedData = purpose === "resume" ? parseResumeText(parsedText, file.name) : undefined;
+  const resumeParsedData = purpose === "resume" ? await parseResumeTextWithAi(parsedText, file.name, {
+    actorUserId: user.id,
+    actorRole: user.role,
+    targetType: "UserProfile",
+    targetId: user.profile?.id ?? user.id,
+    method,
+    path: request.nextUrl.pathname,
+    trigger: "resume_upload"
+  }) : undefined;
   const stored = await storeProfileUpload({
     buffer,
     userId: user.id,

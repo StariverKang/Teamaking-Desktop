@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Check, FileText, Plus, UserRound } from "lucide-react";
 import { Card, EmptyState, LoadingState, PageShell, SkillBadge } from "@/components/app-shell";
 import { OnboardingTourRestartButton } from "@/components/onboarding-tour";
@@ -9,6 +9,7 @@ import { contactVisibilityOptions, defaultContactVisibility } from "@/lib/contac
 import { api, uploadProfileFile, useApi } from "@/lib/client/api";
 import { majorsForFaculty, normalizeAcademicSelection, OfficialAcademicLinks } from "@/components/pages/shared/academic-parts";
 import { acceptedProfileFiles, defaultEntryYear, entryTermOptions, fileFamily, isHonorItem, PaginatedGrid, PortfolioEvidenceCard, portfolioEvidenceSections, PortfolioEvidenceSection, portfolioTypeLabels, portfolioTypes, renderResumeParsedData, tagsFromText, tagsToText } from "@/components/pages/shared/portfolio-parts";
+import { resumeNeedsAiAnalysis } from "@/lib/resume-analysis";
 
 export function ProfileEditorPage() {
   const { data, error, loading } = useApi("/api/profile/me");
@@ -68,6 +69,7 @@ export function ProfileEditorPage() {
     metadata: {}
   });
   const [editingPortfolioId, setEditingPortfolioId] = useState("");
+  const autoResumeRefreshKey = useRef("");
   const academicLock = data?.user?.profile?.academicLock ?? onboarding?.academicLock;
   const profileFaculties = useMemo(() => onboarding?.faculties ?? [], [onboarding?.faculties]);
   const profileMajors = useMemo(() => onboarding?.majors ?? [], [onboarding?.majors]);
@@ -157,26 +159,40 @@ export function ProfileEditorPage() {
     }
   }
 
-  async function reparseResume() {
+  async function reparseResume(mode: "manual" | "auto" = "manual") {
     if (!form.resumeUrl) {
       setSaved("请先上传或填写简历 URL。");
       return;
     }
-    setUploading("resume-reparse");
-    setSaved("");
+    setUploading(mode === "auto" ? "resume-auto-reparse" : "resume-reparse");
+    setSaved(mode === "auto" ? "正在用 AI 自动整理旧简历解析..." : "");
     try {
       const result = await api("/api/profile/me/reparse-resume", { method: "POST" });
       setForm((current) => ({
         ...current,
         resumeParsedData: result.resumeParsedData ?? current.resumeParsedData
       }));
-      setSaved(result.message ?? "简历已重新整理。");
+      setSaved(result.message ?? (mode === "auto" ? "旧简历已自动整理。" : "简历已重新整理。"));
     } catch (err) {
+      if (mode === "auto") {
+        window.sessionStorage.setItem(`teamaking-resume-ai-refresh:${form.resumeUrl}`, String(Date.now()));
+      }
       setSaved(err instanceof Error ? err.message : "简历重新整理失败。");
     } finally {
       setUploading("");
     }
   }
+
+  useEffect(() => {
+    if (!form.resumeUrl || uploading || !resumeNeedsAiAnalysis(form.resumeParsedData)) return;
+    const key = `${form.resumeUrl}:${form.resumeFileName}`;
+    if (autoResumeRefreshKey.current === key) return;
+    const cooldown = Number(window.sessionStorage.getItem(`teamaking-resume-ai-refresh:${form.resumeUrl}`) ?? 0);
+    if (cooldown && Date.now() - cooldown < 24 * 60 * 60 * 1000) return;
+    autoResumeRefreshKey.current = key;
+    void reparseResume("auto");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.resumeUrl, form.resumeFileName, form.resumeParsedData, uploading]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -456,14 +472,18 @@ export function ProfileEditorPage() {
                   type="button"
                   className="focus-ring inline-flex items-center gap-2 rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-45"
                   disabled={!form.resumeUrl || uploading === "resume-reparse"}
-                  onClick={reparseResume}
+                  onClick={() => reparseResume("manual")}
                 >
                   <FileText size={16} aria-hidden />
-                  {uploading === "resume-reparse" ? "正在整理..." : "重新整理当前简历"}
+                  {uploading === "resume-reparse" || uploading === "resume-auto-reparse" ? "正在整理..." : "重新 AI 整理当前简历"}
                 </button>
-                <p className="text-sm leading-6 text-ink/56">已有简历也可以直接重新解析，生成摘要、分区和关键词。</p>
+                <p className="text-sm leading-6 text-ink/56">已有简历也可以直接重新解析，生成 AI 摘要、精选高光和关键词。</p>
               </div>
-              {renderResumeParsedData(form.resumeParsedData, form.resumeFileName)}
+              {renderResumeParsedData(form.resumeParsedData, form.resumeFileName, {
+                editable: true,
+                busy: uploading === "resume-reparse" || uploading === "resume-auto-reparse",
+                onChange: (resumeParsedData) => setForm((current) => ({ ...current, resumeParsedData }))
+              })}
             </Card>
 
             <label className="flex items-center gap-2 text-sm font-semibold text-ink">

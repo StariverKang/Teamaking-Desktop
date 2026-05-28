@@ -14,6 +14,7 @@ import { CoursesAdminPanel } from "./courses-panel";
 import { LogsAdminPanel, ErrorEventsAdminPanel, DeprecatedCourseSubmissionsPanel } from "./logs-panel";
 import { SupportTicketsPanel } from "./support-tickets-panel";
 import { VersionsAdminPanel } from "./versions-panel";import { AdminUsersPanel, BoardsAdminPanel, ConfigsPanel, MajorsAdminPanel, SchoolsAdminPanel, SocialModerationPanel, UsersAdminPanel } from "./resource-panels";
+import { AiResumeAdminPanel } from "./ai-resume-panel";
 
 export function AdminResourcePage({
   title,
@@ -449,6 +450,7 @@ export function AdminResourcePage({
     if (resource === "teamaking-posts" || resource === "team-up-requests") return <SocialModerationPanel ctx={ctx} />;
     if (resource === "support-tickets") return <SupportTicketsPanel ctx={ctx} />;
     if (resource === "configs") return <ConfigsPanel ctx={ctx} />;
+    if (resource === "ai-resume") return <AiResumeAdminPanel ctx={ctx} />;
     return <p className="text-sm text-ink/62">这个管理页目前只展示数据。</p>;
   }
 
@@ -456,7 +458,7 @@ export function AdminResourcePage({
     <PageShell title={title} eyebrow="Admin" description={description} aside="admin">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       <div className="grid gap-5">
-        {!["course-imports", "courses", "versions", "logs", "support-tickets", "content"].includes(resource) ? rows.map(([key, rows]) => {
+        {!["course-imports", "courses", "versions", "logs", "support-tickets", "content", "ai-resume"].includes(resource) ? rows.map(([key, rows]) => {
           const filteredRows = rows.filter((row) => !adminTableQuery || JSON.stringify(row).toLowerCase().includes(adminTableQuery.toLowerCase()));
           const rawColumns = Object.keys(rows[0] ?? { empty: "" }).filter((column) => column !== "appVersionId");
           const columns = [...rawColumns.filter((column) => column !== "id").slice(0, 7), ...(rawColumns.includes("id") ? ["id"] : [])];

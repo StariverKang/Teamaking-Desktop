@@ -1211,3 +1211,25 @@
   - `npm run test -- tests/unit/current-user-memberships.test.ts tests/unit/course-board-participation.test.ts tests/unit/social-discovery-visibility.test.ts tests/unit/onboarding-api.test.ts tests/unit/onboarding-guide.test.ts` 通过（5 files，10 tests）。
   - `npm run lint` 通过。
   - `npm run typecheck` 通过；`git diff --check` 通过。
+
+### AI 简历摘要与 Highlights 改进
+
+- 背景：
+  - 用户反馈 Profile 的 Auto Summary 只是拼接简历前文，Highlights 又几乎把完整简历经历搬出来，缺少归纳、关键词提炼和真正的个人高光。
+- 改动：
+  - 新增 OpenAI Responses API 简历分析服务，输出 `resume-ai-v1` 结构化 JSON；`OPENAI_API_KEY` 启用，`OPENAI_RESUME_MODEL` 可覆盖默认 `gpt-4.1-mini`。
+  - 新增 `/admin/ai-resume`：`super_admin` 可配置启用状态、OpenAI API key、模型和输入长度限制；后台配置优先于环境变量，并且 API key 只脱敏展示。
+  - `resumeParsedData` 保持 JSON 字段兼容，新增 `analysis` 和 `manualAnalysis`；展示优先级为手动修改、AI 分析、本地 fallback。
+  - 上传简历和“重新 AI 整理当前简历”会调用 AI；缺少 API key 或调用失败时生成本地压缩 fallback，不阻断上传保存。
+  - 每次简历整理写入 `profile.resume.ai_analysis` OperationLog，记录触发来源、模型、状态、摘要标题、Highlights 结果和耗时；不记录原始简历文本或 API key。
+  - Profile 编辑页首次打开旧解析数据会自动触发一次 AI 整理，失败后用 sessionStorage 做 24 小时 cooldown。
+  - Auto Summary 与 Highlights 改为强调色展示，Highlights 收敛到最多 8 条卡片，并提供手动编辑、删除、新增和恢复 AI 版本。
+- 验证：
+  - 新增 `tests/unit/resume-analysis.test.ts`，覆盖长中文简历压缩、关键词不凭空出现、手动优先和旧数据 AI 检测。
+  - 新增/扩展 `tests/unit/resume-ai-service.test.ts`，mock OpenAI SDK 覆盖无 key fallback、structured output 成功、后台配置覆盖环境变量、OpenAI 失败 fallback 和调用日志脱敏。
+  - 新增 `tests/unit/admin-ai-resume-api.test.ts`，覆盖后台配置读取脱敏、日志序列化、非 `super_admin` 禁止改配置、审计不记录 raw key。
+  - 新增 `tests/unit/profile-resume-api.test.ts`，覆盖上传简历走 AI parser、重新整理日志不写原始简历。
+  - 新增 `tests/unit/resume-render.test.ts`，覆盖强调色摘要/高光展示和手动编辑入口。
+  - 当前已通过 `npm run test -- tests/unit/resume-ai-service.test.ts tests/unit/admin-ai-resume-api.test.ts tests/unit/profile-resume-api.test.ts tests/unit/resume-analysis.test.ts tests/unit/resume-render.test.ts tests/unit/profile-assets.test.ts`、`npm run lint`、`npm run typecheck` 和 `git diff --check`。
+  - 浏览器 smoke 检查 `/profile/me`：简历区域出现强调色 Auto Summary、Highlights、重新 AI 整理按钮，以及手动微调/恢复 AI 入口。
+  - Playwright smoke 检查 `/admin/ai-resume`：AI Resume Analysis 页面、OpenAI 配置状态、API Key 状态、模型和调用日志表可见。
