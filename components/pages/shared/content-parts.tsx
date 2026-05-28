@@ -23,22 +23,73 @@ export function contentImageUrls(value: unknown) {
 
 export function MarkdownRenderer({ children, withHeadingIds = false }: { children: string; withHeadingIds?: boolean }) {
   const used = new Map<string, number>();
+  const headingStyles = {
+    h1: "mt-12 scroll-mt-24 border-b border-ink/15 pb-4 text-4xl font-semibold leading-tight text-ink first:mt-0 md:text-5xl",
+    h2: "mt-11 scroll-mt-24 border-b border-ink/12 pb-3 text-3xl font-semibold leading-tight text-ink first:mt-0 md:text-[2.1rem]",
+    h3: "mt-8 scroll-mt-24 text-2xl font-semibold leading-snug text-ink md:text-[1.55rem]",
+    h4: "mt-6 scroll-mt-24 text-lg font-semibold uppercase leading-snug text-coral"
+  };
   const headingComponent = (Tag: "h1" | "h2" | "h3" | "h4") => {
     function Heading({ children: headingChildren }: { children?: React.ReactNode }) {
-      const id = headingId(textFromReactChildren(headingChildren), used);
-      return <Tag id={id} className="scroll-mt-24">{headingChildren}</Tag>;
+      const id = withHeadingIds ? headingId(textFromReactChildren(headingChildren), used) : undefined;
+      return <Tag id={id} className={headingStyles[Tag]}>{headingChildren}</Tag>;
     }
     return Heading;
   };
-  const components = withHeadingIds ? {
+  const components = {
     h1: headingComponent("h1"),
     h2: headingComponent("h2"),
     h3: headingComponent("h3"),
-    h4: headingComponent("h4")
-  } : undefined;
+    h4: headingComponent("h4"),
+    p: ({ children: paragraphChildren }: { children?: React.ReactNode }) => (
+      <p className="my-4 text-[1.04rem] font-normal leading-8 text-ink/82">{paragraphChildren}</p>
+    ),
+    ul: ({ children: listChildren }: { children?: React.ReactNode }) => (
+      <ul className="my-5 grid list-disc gap-2 pl-6 text-[1.04rem] leading-8 text-ink/82 marker:text-coral">{listChildren}</ul>
+    ),
+    ol: ({ children: listChildren }: { children?: React.ReactNode }) => (
+      <ol className="my-5 grid list-decimal gap-2 pl-6 text-[1.04rem] leading-8 text-ink/82 marker:font-semibold marker:text-coral">{listChildren}</ol>
+    ),
+    li: ({ children: itemChildren }: { children?: React.ReactNode }) => (
+      <li className="pl-1">{itemChildren}</li>
+    ),
+    a: ({ href, children: linkChildren }: { href?: string; children?: React.ReactNode }) => (
+      <a href={href} className="font-semibold text-coral underline decoration-coral/35 underline-offset-4 hover:decoration-coral">
+        {linkChildren}
+      </a>
+    ),
+    strong: ({ children: strongChildren }: { children?: React.ReactNode }) => (
+      <strong className="font-semibold text-ink">{strongChildren}</strong>
+    ),
+    blockquote: ({ children: quoteChildren }: { children?: React.ReactNode }) => (
+      <blockquote className="my-6 border-l-4 border-coral/70 bg-chalk px-5 py-3 text-[1.02rem] leading-8 text-ink/72">
+        {quoteChildren}
+      </blockquote>
+    ),
+    table: ({ children: tableChildren }: { children?: React.ReactNode }) => (
+      <div className="my-6 overflow-x-auto border border-ink/15 bg-paper">
+        <table className="min-w-full border-collapse text-sm leading-6">{tableChildren}</table>
+      </div>
+    ),
+    th: ({ children: cellChildren }: { children?: React.ReactNode }) => (
+      <th className="border-b border-ink/20 bg-ink px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-paper">
+        {cellChildren}
+      </th>
+    ),
+    td: ({ children: cellChildren }: { children?: React.ReactNode }) => (
+      <td className="border-b border-ink/10 px-3 py-2 align-top text-ink/78">{cellChildren}</td>
+    ),
+    code: ({ className, children: codeChildren }: { className?: string; children?: React.ReactNode }) => (
+      <code className={className ? "text-paper" : "rounded-sm bg-mist px-1.5 py-0.5 text-[0.92em] font-semibold text-ink"}>{codeChildren}</code>
+    ),
+    pre: ({ children: preChildren }: { children?: React.ReactNode }) => (
+      <pre className="my-6 overflow-x-auto border border-ink/18 bg-ink p-4 text-sm leading-7 text-paper">{preChildren}</pre>
+    ),
+    hr: () => <hr className="my-9 border-ink/15" />
+  };
 
   return (
-    <div className="prose prose-sm max-w-none text-ink prose-headings:text-ink prose-a:text-coral prose-strong:text-ink prose-code:rounded prose-code:bg-mist prose-code:px-1 prose-pre:bg-ink prose-pre:text-paper">
+    <div className="max-w-none text-ink">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{children || ""}</ReactMarkdown>
     </div>
   );
