@@ -9,6 +9,7 @@ import {
   selectCommonCurriculumPdfLink,
   stableCommonCurriculumId
 } from "./common-curriculum-catalog.mjs";
+import { applyCrawlerAiAssist } from "./ai-catalog-assistant.mjs";
 import { loadPdfjs, pdfStandardFontDataUrl } from "./pdfjs-runtime.mjs";
 
 const ROOT = process.cwd();
@@ -29,6 +30,12 @@ const term = String(args.term ?? "Spring");
 const limit = args.limit === "all" || args.limit === undefined ? Infinity : Number(args.limit ?? "all");
 const outDir = path.resolve(ROOT, String(args.outDir ?? "storage/crawler_outputs"));
 const includeCommonCurriculum = booleanArg(args.commonCurriculum ?? args.includeCommonCurriculum, true);
+const aiMode = String(args.aiMode ?? "off");
+const aiModel = String(args.aiModel ?? process.env.CRAWLER_AI_MODEL ?? "gpt-4.1-mini");
+const aiTimeoutMs = Number(args.aiTimeoutMs ?? process.env.CRAWLER_AI_TIMEOUT_MS ?? 25000);
+const aiMaxTokens = Number(args.aiMaxTokens ?? 2000);
+const aiStrictMode = booleanArg(args.aiStrictMode, aiMode === "strict");
+const aiEnabled = booleanArg(args.aiEnabled ?? process.env.CRAWLER_AI_ENABLED, true);
 
 const FACULTIES = [
   { code: "FBM", name: "Faculty of Business and Management" },
@@ -57,6 +64,44 @@ const smallTitleWords = new Set(["a", "an", "and", "as", "at", "but", "by", "for
 function booleanArg(value, defaultValue) {
   if (value === undefined) return defaultValue;
   return !/^(false|0|no|none|off)$/i.test(String(value).trim());
+}
+
+function aiAssistMeta(summary) {
+  return {
+    target: summary.target,
+    status: summary.status,
+    mode: summary.mode,
+    model: summary.model,
+    fieldsFixed: summary.fieldsFixed,
+    filledCount: summary.filledCount,
+    invalidCount: summary.invalidCount,
+    errors: summary.errors,
+    warnings: summary.warnings
+  };
+}
+
+async function applyAiAssistToPayload(payload) {
+  const result = await applyCrawlerAiAssist({
+    target: "course_catalog",
+    payload,
+    mode: aiMode,
+    enabled: aiEnabled,
+    model: aiModel,
+    apiKey: process.env.CRAWLER_AI_API_KEY ?? process.env.OPENAI_API_KEY ?? "",
+    timeoutMs: aiTimeoutMs,
+    maxOutputTokens: aiMaxTokens,
+    strictMode: aiStrictMode
+  });
+  const nextPayload = result.payload && typeof result.payload === "object" && !Array.isArray(result.payload) ? result.payload : payload;
+  nextPayload.crawlerMeta = {
+    ...(nextPayload.crawlerMeta ?? {}),
+    aiAssist: aiAssistMeta(result.summary)
+  };
+  console.log(`ai assist course_catalog: status=${result.summary.status} mode=${result.summary.mode} fixed=${result.summary.fieldsFixed} invalid=${result.summary.invalidCount}`);
+  if (result.summary.status === "failed" && (aiStrictMode || aiMode === "strict")) {
+    throw new Error(`AI strict validation failed: ${result.summary.errors.join("; ") || `${result.summary.invalidCount} invalid field(s)`}`);
+  }
+  return nextPayload;
 }
 
 function absoluteUrl(base, href) {
@@ -414,7 +459,7 @@ async function main() {
     },
     ...commonCurriculum.sourceRefs
   ];
-  const payload = {
+  const payload = await applyAiAssistToPayload({
     schemaVersion: "teamaking.bnbu_course_import.v2",
     generatedAt: retrievedAt,
     importMode: "course_catalog",
@@ -453,7 +498,7 @@ async function main() {
     courses: selected,
     offerings: [],
     curriculumRules: []
-  };
+  });
   const outFile = path.join(outDir, "bnbu-course-catalog.teamaking.json");
   await writeFile(outFile, `${JSON.stringify(payload, null, 2)}\n`);
   console.log(`resolved course descriptions PDF: ${resolved.pdfUrl}`);

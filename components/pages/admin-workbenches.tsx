@@ -51,6 +51,17 @@ export function AiResumeWorkbench() {
   );
 }
 
+export function AiCrawlerWorkbench() {
+  return (
+    <AdminResourcePage
+      title="AI Crawler Assist"
+      endpoint="/api/admin/ai-crawler"
+      defaultActionPath="/api/admin/ai-crawler/config"
+      description="配置 BNBU crawler 的 AI 补齐/检验参数，并查看每次爬虫输出的 AI assist 摘要。"
+    />
+  );
+}
+
 export function ContentWorkbench() {
   return (
     <AdminResourcePage

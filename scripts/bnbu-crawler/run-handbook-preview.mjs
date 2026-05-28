@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { applyCrawlerAiAssist } from "./ai-catalog-assistant.mjs";
 import { loadPdfjs, pdfStandardFontDataUrl } from "./pdfjs-runtime.mjs";
 
 const ROOT = process.cwd();
@@ -23,6 +24,12 @@ const programmeCodes = csv(args.programmes ?? args.programmeCodes).map((item) =>
 const facultyCodes = csv(args.faculties ?? args.facultyCodes).map((item) => item.toUpperCase());
 const programmeNameQuery = String(args.programmeName ?? args.majorName ?? "").trim().toLowerCase();
 const facultyNameQuery = String(args.facultyName ?? "").trim().toLowerCase();
+const aiMode = String(args.aiMode ?? "off");
+const aiModel = String(args.aiModel ?? process.env.CRAWLER_AI_MODEL ?? "gpt-4.1-mini");
+const aiTimeoutMs = Number(args.aiTimeoutMs ?? process.env.CRAWLER_AI_TIMEOUT_MS ?? 25000);
+const aiMaxTokens = Number(args.aiMaxTokens ?? 2000);
+const aiStrictMode = booleanArg(args.aiStrictMode, aiMode === "strict");
+const aiEnabled = booleanArg(args.aiEnabled ?? process.env.CRAWLER_AI_ENABLED, true);
 
 const facultyCodeMap = new Map([
   ["Faculty of Business and Management", "FBM"],
@@ -72,6 +79,49 @@ const defaultJoinClassifications = new Set([
 
 function csv(value) {
   return String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function booleanArg(value, defaultValue) {
+  if (value === undefined) return defaultValue;
+  return !/^(false|0|no|none|off)$/i.test(String(value).trim());
+}
+
+function aiAssistMeta(summary) {
+  return {
+    target: summary.target,
+    status: summary.status,
+    mode: summary.mode,
+    model: summary.model,
+    fieldsFixed: summary.fieldsFixed,
+    filledCount: summary.filledCount,
+    invalidCount: summary.invalidCount,
+    errors: summary.errors,
+    warnings: summary.warnings
+  };
+}
+
+async function applyAiAssistToPayload(payload) {
+  const result = await applyCrawlerAiAssist({
+    target: "programme_handbook",
+    payload,
+    mode: aiMode,
+    enabled: aiEnabled,
+    model: aiModel,
+    apiKey: process.env.CRAWLER_AI_API_KEY ?? process.env.OPENAI_API_KEY ?? "",
+    timeoutMs: aiTimeoutMs,
+    maxOutputTokens: aiMaxTokens,
+    strictMode: aiStrictMode
+  });
+  const nextPayload = result.payload && typeof result.payload === "object" && !Array.isArray(result.payload) ? result.payload : payload;
+  nextPayload.crawlerMeta = {
+    ...(nextPayload.crawlerMeta ?? {}),
+    aiAssist: aiAssistMeta(result.summary)
+  };
+  console.log(`ai assist programme_handbook: status=${result.summary.status} mode=${result.summary.mode} fixed=${result.summary.fieldsFixed} invalid=${result.summary.invalidCount}`);
+  if (result.summary.status === "failed" && (aiStrictMode || aiMode === "strict")) {
+    throw new Error(`AI strict validation failed: ${result.summary.errors.join("; ") || `${result.summary.invalidCount} invalid field(s)`}`);
+  }
+  return nextPayload;
 }
 
 function absoluteUrl(base, href) {
@@ -415,7 +465,7 @@ async function main() {
   await mkdir(outDir, { recursive: true });
   const cohortPages = await resolveCohortPages();
   for (const cohortPage of cohortPages) {
-    const payload = await buildPayload(cohortPage);
+    const payload = await applyAiAssistToPayload(await buildPayload(cohortPage));
     const outFile = path.join(outDir, `bnbu-${cohortPage.cohort}-admission-handbook.teamaking.json`);
     await writeFile(outFile, `${JSON.stringify(payload, null, 2)}\n`);
     console.log(`wrote ${path.relative(ROOT, outFile)}`);

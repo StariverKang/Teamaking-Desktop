@@ -2,6 +2,8 @@ import path from "node:path";
 
 export type CrawlerTarget = "programme_handbook" | "course_catalog" | string;
 
+export type CrawlerAiMode = "off" | "enrich" | "validate" | "strict";
+
 export type NormalizedCrawlerJobInput = {
   name?: string;
   target: CrawlerTarget;
@@ -19,6 +21,9 @@ export type NormalizedCrawlerJobInput = {
   semesterName: string;
   outputMode: string;
   databaseAction: "download_only" | "create_pending" | "approve_import";
+  aiMode: CrawlerAiMode;
+  aiModel?: string;
+  aiMaxTokens?: number;
 };
 
 type NormalizeCrawlerJobInputDefaults = {
@@ -36,6 +41,20 @@ function optionalString(value: unknown) {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeAiMode(value: unknown): CrawlerAiMode {
+  const text = optionalString(value)?.toLowerCase();
+  if (text === "enrich" || text === "validate" || text === "strict") return text;
+  return "off";
+}
+
+function optionalPositiveInteger(value: unknown, fallback?: number) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const normalized = Math.trunc(numeric);
+  if (normalized <= 0) return fallback;
+  return normalized;
 }
 
 export function crawlerCsv(value: unknown) {
@@ -83,8 +102,10 @@ export function normalizeCrawlerJobInput(
   const cohorts = crawlerCsv(hasExplicitCohorts ? body.cohorts : natural.cohorts);
   const outputMode = textValue(body.outputMode) || "download";
   const databaseAction = textValue(body.databaseAction) || textValue(body.postCrawlAction) || "download_only";
+  const aiMode = normalizeAiMode(body.aiMode);
   const requestedName = optionalString(body.name) ?? optionalString(body.jobName);
   const target = textValue(body.target) || natural.target || "programme_handbook";
+  const aiMaxTokens = optionalPositiveInteger(body.aiMaxTokens);
 
   return {
     name: requestedName,
@@ -110,7 +131,10 @@ export function normalizeCrawlerJobInput(
     outputMode,
     databaseAction: ["download_only", "create_pending", "approve_import"].includes(databaseAction)
       ? databaseAction as NormalizedCrawlerJobInput["databaseAction"]
-      : "download_only"
+      : "download_only",
+    aiMode,
+    aiModel: optionalString(body.aiModel),
+    aiMaxTokens
   };
 }
 

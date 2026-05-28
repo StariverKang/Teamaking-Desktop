@@ -21,6 +21,7 @@ import {
 import { assertCrawlerRuntimeReady, crawlerRuntimeStatus } from "@/lib/server/crawler/runtime";
 import { crawlerErrorSummary } from "@/lib/server/crawler/errors";
 import { CourseImportWorkflow } from "@/lib/server/course-import/workflow";
+import { getCrawlerAiRuntimeConfig, getPublicCrawlerAiConfig } from "@/lib/server/services/crawler-ai-config-service";
 
 type OperationLogInput = {
   actorUserId?: string | null;
@@ -106,6 +107,73 @@ async function payloadFromStoredCrawlerOutput(output: any) {
   const parsed = JSON.parse(content);
   if (!isPlainRecord(parsed)) throw new ApiError(400, `爬虫输出不是有效 JSON object：${output.name}`);
   return parsed;
+}
+
+async function crawlerAiAssistFromOutput(output: any) {
+  try {
+    const content = await readStoredJson(output.storageKey);
+    const parsed = JSON.parse(content);
+    const meta = isPlainRecord(parsed) ? parsed.crawlerMeta : null;
+    const aiAssist = isPlainRecord(meta) ? meta.aiAssist : null;
+    return isPlainRecord(aiAssist) ? aiAssist : null;
+  } catch {
+    return null;
+  }
+}
+
+async function annotateCrawlerAiOutputs(outputs: any[]) {
+  return Promise.all(outputs.map(async (output) => ({
+    ...output,
+    aiAssist: await crawlerAiAssistFromOutput(output)
+  })));
+}
+
+async function logCrawlerAiOutputs(
+  deps: CrawlerModuleDeps,
+  job: any,
+  outputs: any[],
+  admin: any,
+  onProgress?: (message: string) => Promise<void> | void
+) {
+  const summaries = [];
+  for (const output of outputs) {
+    const aiAssist = output.aiAssist ?? await crawlerAiAssistFromOutput(output);
+    if (!aiAssist) continue;
+    summaries.push({ outputName: output.name, ...aiAssist });
+    await deps.operationLog({
+      actorUserId: admin.id,
+      actorRole: admin.role,
+      action: "crawler.ai_analyze",
+      targetType: "CrawlerJob",
+      targetId: job.id,
+      status: aiAssist.status === "failed" ? "failed" : aiAssist.status === "off" || aiAssist.status === "disabled" ? "skipped" : "success",
+      summary: {
+        jobId: job.id,
+        name: job.name,
+        outputName: output.name,
+        input: job.input,
+        aiAssist
+      },
+      metadata: {
+        aiAssist,
+        output: {
+          name: output.name,
+          storageKey: output.storageKey,
+          size: output.size
+        }
+      }
+    }).catch(() => null);
+  }
+  if (summaries.length) {
+    await onProgress?.(`Crawler AI assist summaries: ${JSON.stringify(summaries.map((item) => ({
+      outputName: item.outputName,
+      status: item.status,
+      mode: item.mode,
+      fieldsFixed: item.fieldsFixed,
+      invalidCount: item.invalidCount
+    })), null, 2)}\n`);
+  }
+  return summaries;
 }
 
 async function persistCrawlerJob(prisma: any, job: any) {
@@ -229,6 +297,9 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
     : jobScopedCrawlerOutputDir(crawlerOutputDir, createdJob.id);
   await mkdir(jobOutDir, { recursive: true });
   const beforeOutputs = input.outputMode === "git_import_json" ? await listCrawlerOutputs([jobOutDir]) : [];
+  const crawlerAiRuntime = input.aiMode === "off" ? null : await getCrawlerAiRuntimeConfig();
+  const effectiveAiModel = input.aiModel || crawlerAiRuntime?.model;
+  const effectiveAiStrictMode = Boolean(crawlerAiRuntime?.strictMode || input.aiMode === "strict");
   const args = [script];
   if (input.target === "course_catalog") {
     args.push(
@@ -252,6 +323,18 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
     if (input.programmeName) args.push(`--programmeName=${input.programmeName}`);
     if (input.facultyName) args.push(`--facultyName=${input.facultyName}`);
   }
+  if (input.aiMode !== "off") {
+    args.push(`--aiMode=${input.aiMode}`);
+    if (effectiveAiModel) args.push(`--aiModel=${effectiveAiModel}`);
+    if (input.aiMaxTokens) args.push(`--aiMaxTokens=${input.aiMaxTokens}`);
+    if (crawlerAiRuntime) {
+      args.push(
+        `--aiEnabled=${crawlerAiRuntime.enabled ? "true" : "false"}`,
+        `--aiTimeoutMs=${crawlerAiRuntime.timeoutMs}`,
+        `--aiStrictMode=${effectiveAiStrictMode ? "true" : "false"}`
+      );
+    }
+  }
   const command = ["node", ...args].map((item) => (item.includes(" ") ? JSON.stringify(item) : item)).join(" ");
   await deps.prisma.crawlerJob.update({ where: { id: createdJob.id }, data: { command } });
   const job: any = {
@@ -270,7 +353,14 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
     imports: []
   };
   crawlerJobs.set(createdJob.id, job);
-  const child = spawn(process.execPath, args, { cwd: /*turbopackIgnore: true*/ process.cwd(), env: process.env });
+  const childEnv = { ...process.env };
+  if (input.aiMode !== "off") {
+    childEnv.CRAWLER_AI_ENABLED = crawlerAiRuntime?.enabled ? "true" : "false";
+    if (effectiveAiModel) childEnv.CRAWLER_AI_MODEL = effectiveAiModel;
+    if (crawlerAiRuntime?.apiKey) childEnv.CRAWLER_AI_API_KEY = crawlerAiRuntime.apiKey;
+    if (crawlerAiRuntime?.timeoutMs) childEnv.CRAWLER_AI_TIMEOUT_MS = String(crawlerAiRuntime.timeoutMs);
+  }
+  const child = spawn(process.execPath, args, { cwd: /*turbopackIgnore: true*/ process.cwd(), env: childEnv });
   child.stdout.on("data", (chunk) => {
     job.logs.push(chunk.toString());
     void persistCrawlerJob(deps.prisma, job);
@@ -314,7 +404,7 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
             ? input.cohorts.some((cohort: string) => file.name.includes(`-${cohort}-`))
             : /^bnbu-\d{4}-admission-handbook\.teamaking\.json$/.test(file.name));
       }
-      job.outputs = job.outputs.map((output: any) => ({ ...output, jobId: input.outputMode === "git_import_json" ? output.jobId : job.id }));
+      job.outputs = await annotateCrawlerAiOutputs(job.outputs.map((output: any) => ({ ...output, jobId: input.outputMode === "git_import_json" ? output.jobId : job.id })));
       if (code !== 0 && !job.errorMessage) {
         job.errorMessage = crawlerErrorSummary((job.logs ?? []).join(""), `Crawler exited with code ${code}`);
       }
@@ -324,6 +414,7 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
           job.status = "importing";
           await appendJobLog(`Starting post-crawl import action: ${job.input.databaseAction}.\n`);
         }
+        await logCrawlerAiOutputs(deps, job, job.outputs, admin, appendJobLog);
         job.imports = await importCrawlerOutputsForJob(deps, job, job.outputs, admin, appendJobLog);
         job.outputs = job.outputs.map((output: any) => ({
           ...output,
@@ -390,6 +481,7 @@ export function createCrawlerModule(deps: CrawlerModuleDeps) {
           term: deps.defaults.term,
           limit: "all"
         },
+        crawlerAi: await getPublicCrawlerAiConfig(),
         targets: [
           {
             value: "programme_handbook",

@@ -1233,3 +1233,31 @@
   - 当前已通过 `npm run test -- tests/unit/resume-ai-service.test.ts tests/unit/admin-ai-resume-api.test.ts tests/unit/profile-resume-api.test.ts tests/unit/resume-analysis.test.ts tests/unit/resume-render.test.ts tests/unit/profile-assets.test.ts`、`npm run lint`、`npm run typecheck` 和 `git diff --check`。
   - 浏览器 smoke 检查 `/profile/me`：简历区域出现强调色 Auto Summary、Highlights、重新 AI 整理按钮，以及手动微调/恢复 AI 入口。
   - Playwright smoke 检查 `/admin/ai-resume`：AI Resume Analysis 页面、OpenAI 配置状态、API Key 状态、模型和调用日志表可见。
+
+## 2026-05-29
+
+### AI 简历高光缺失字段与展示细化
+
+- 改动：
+  - `lib/resume-analysis.ts` 去掉 fallback 中的“未明确”字样，缺失字段改为“待补充”，`evidence` 统一按 `职位/公司/动作/结果` 结构展示。
+  - `lib/server/services/resume-ai-service.ts` 的输入指引同步更新为：缺失要素可留空或写“待补充”，避免模型输出“未明确”。
+  - `components/pages/shared/portfolio-parts.tsx` 隐藏用户侧 `parser` 字段展示，改为“解析结果已生成”。
+  - 新增/更新 `tests/unit/resume-analysis.test.ts`：新增断言防止 fallback/highlight 中出现“未明确”。
+  - 更新 `tests/unit/resume-ai-service.test.ts`：补充 prompt 文本检查，确保不包含“未明确”。
+- 验证：
+  - `npm run test -- tests/unit/resume-analysis.test.ts tests/unit/resume-ai-service.test.ts` 通过（2 files，9 tests）。
+
+### AI 爬虫补齐/检验链路接入
+
+- 改动：
+  - `scripts/bnbu-crawler/ai-catalog-assistant.mjs` 修复 `applyCrawlerAiAssist(params)` 丢弃入参的问题，让 `mode/model/apiKey/payload` 真正生效。
+  - 修复 AI 补齐后的 `invalidCount` 计算：补齐后按合并后的 payload 重算，不再沿用补齐前缺失数。
+  - Course catalog 和 programme handbook runner 在写入 JSON 前接入 AI assist，并把 `crawlerMeta.aiAssist` 写入输出文件。
+  - `/api/crawler/jobs` 启动时把 AI mode、model、timeout、strict mode 传给 runner，API key 只走子进程环境变量，不写入 command。
+  - 新增 `/admin/ai-crawler` 配置页和 API resource，用于配置 crawler AI、查看 `crawler.ai_analyze` 调用日志。
+  - `/crawler` 表单新增 AI assist 模式选择：关闭、只检验、补齐、严格补齐并阻断失败结果。
+- 验证：
+  - `npm run test -- tests/unit/crawler-ai-assistant.test.ts tests/unit/crawler-io.test.ts tests/unit/resume-analysis.test.ts tests/unit/resume-ai-service.test.ts` 通过（4 files，20 tests）。
+  - `npm run lint` 通过。
+  - `npm run build` 通过，生产路由包含 `/admin/ai-crawler`。
+  - 本地生产服务器 smoke：`/crawler` 能显示 AI assist 选项，`/admin/ai-crawler` 能挂载并显示 crawler AI 日志区域；未启动真实爬虫任务。

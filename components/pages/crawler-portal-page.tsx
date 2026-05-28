@@ -31,6 +31,8 @@ export function CrawlerPortalPage() {
     limit: "all",
     outputMode: "download",
     databaseAction: "download_only",
+    aiMode: "off",
+    aiMaxTokens: "2000",
     instruction: "填写某一个 admission year 的 programme handbook 页面，输出该届学生的 programme plan 配置 JSON。"
   });
   const [result, setResult] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
@@ -63,6 +65,7 @@ export function CrawlerPortalPage() {
   const targets = data?.targets ?? [];
   const currentTarget = form.target ?? "programme_handbook";
   const isCourseCatalog = currentTarget === "course_catalog";
+  const crawlerAi = data?.crawlerAi ?? {};
 
   return (
     <PageShell
@@ -156,10 +159,26 @@ export function CrawlerPortalPage() {
                   <option value="approve_import">直接批准并更新线上数据库</option>
                 </select>
               </Field>
+              <Field label="AI assist" help={crawlerAi.enabled ? `使用 ${crawlerAi.model ?? "OpenAI"} 补齐/检验缺失课程字段；API key: ${crawlerAi.apiKeySet ? crawlerAi.apiKeySource : "missing"}` : "后台 AI 爬虫配置未启用；选择后会记录 disabled，不会调用模型。"}>
+                <select className={inputClass} value={form.aiMode ?? "off"} onChange={(event) => setForm({ ...form, aiMode: event.target.value })}>
+                  <option value="off">关闭 AI</option>
+                  <option value="validate">只检验缺失/异常字段</option>
+                  <option value="enrich">补齐缺失字段</option>
+                  <option value="strict">严格补齐并阻断失败结果</option>
+                </select>
+              </Field>
+              <Field label="AI max tokens" help="控制单次 AI 输出上限；只在 AI assist 开启时生效。">
+                <input className={inputClass} type="number" min={200} max={8000} value={form.aiMaxTokens ?? "2000"} onChange={(event) => setForm({ ...form, aiMaxTokens: event.target.value })} />
+              </Field>
             </div>
             {form.databaseAction === "approve_import" ? (
               <div className="border border-rust/30 bg-rust/5 px-3 py-2 text-sm leading-6 text-rust">
                 这个选项会在爬虫成功后自动创建导入批次并批准写入数据库；已有课程和用户数据不会被清空。
+              </div>
+            ) : null}
+            {form.aiMode && form.aiMode !== "off" ? (
+              <div className="border border-coral/30 bg-coral/5 px-3 py-2 text-sm leading-6 text-coral">
+                AI assist 只会补齐缺失字段或记录校验结果，不会覆盖 crawler 已经解析出的非空字段；strict 模式发现仍有关键缺失时会让任务失败。
               </div>
             ) : null}
             <button disabled={busy} className="w-fit rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">
@@ -200,6 +219,15 @@ export function CrawlerPortalPage() {
                             {job.imports.map((item: any) => (
                               <p key={`${item.outputName}-${item.batchId ?? item.error}`} className={item.status === "failed" ? "text-rust" : "text-forest"}>
                                 {item.outputName}: {item.status}{item.batchId ? ` · batch ${item.batchId}` : ""}{item.error ? ` · ${item.error}` : ""}
+                              </p>
+                            ))}
+                          </div>
+                        ) : null}
+                        {job.outputs?.some((output: any) => output.aiAssist) ? (
+                          <div className="mt-2 grid gap-1 border-t border-ink/10 pt-2">
+                            {job.outputs.filter((output: any) => output.aiAssist).map((output: any) => (
+                              <p key={`${output.storageKey}-ai`} className={output.aiAssist.status === "failed" ? "text-rust" : output.aiAssist.status === "disabled" ? "text-coral" : "text-forest"}>
+                                AI {output.aiAssist.mode}: {output.aiAssist.status} · fixed {output.aiAssist.fieldsFixed ?? 0} · invalid {output.aiAssist.invalidCount ?? 0}
                               </p>
                             ))}
                           </div>

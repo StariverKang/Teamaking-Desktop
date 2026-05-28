@@ -190,7 +190,7 @@ export function renderResumeParsedData(parsed: any, fallbackFileName: string, op
         <div>
           <p className="font-semibold text-ink">{parsed?.fileName || fallbackFileName || "尚未上传简历"}</p>
           <p className="mt-1 text-xs text-ink/50">
-            {parsed?.parser ? `Parser: ${parsed.parser}` : "上传后会在这里显示解析结果。"}
+            {parsed?.fileName ? "解析结果已生成" : "上传后会在这里显示解析结果。"}
             {analysis.provider ? ` · ${resolved.source === "manual" ? "Manual" : analysis.provider} / ${analysis.model}` : ""}
             {analysis.status === "fallback" ? " · fallback" : ""}
           </p>
@@ -325,7 +325,16 @@ export function renderResumeParsedData(parsed: any, fallbackFileName: string, op
                 onClick={() => {
                   const nextHighlights = [
                     ...analysis.highlights,
-                    { title: "新增高光", evidence: "补充一句具体证据。", category: "项目执行", keywords: [] }
+                    {
+                      title: "新增高光",
+                      evidence: "职位：待补充；公司：待补充；动作：补充一句具体证据；结果：待补充",
+                      position: "待补充",
+                      company: "待补充",
+                      action: "补充一句具体证据",
+                      result: "待补充",
+                      category: "项目执行",
+                      keywords: []
+                    }
                   ].slice(0, 8);
                   updateManualResumeAnalysis(parsed, { highlights: nextHighlights }, options.onChange);
                 }}

@@ -32,5 +32,6 @@ export const adminNav = [
   { href: "/admin/metrics", label: "Metrics" },
   { href: "/admin/configs", label: "Configs" },
   { href: "/admin/ai-resume", label: "AI Resume" },
+  { href: "/admin/ai-crawler", label: "AI Crawler" },
   { href: "/admin/logs", label: "Logs" }
 ];

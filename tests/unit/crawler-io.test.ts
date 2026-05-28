@@ -41,7 +41,10 @@ describe("crawler input normalization", () => {
       academicYear: "2026",
       term: "Spring",
       limit: "all",
-      databaseAction: "approve_import"
+      databaseAction: "approve_import",
+      aiMode: "enrich",
+      aiModel: "gpt-test",
+      aiMaxTokens: "1500"
     }, defaults);
 
     expect(input).toMatchObject({
@@ -51,6 +54,9 @@ describe("crawler input normalization", () => {
       term: "Spring",
       limit: "all",
       databaseAction: "approve_import",
+      aiMode: "enrich",
+      aiModel: "gpt-test",
+      aiMaxTokens: 1500,
       semesterCode: "2026-Spring",
       semesterName: "2026 Spring"
     });
