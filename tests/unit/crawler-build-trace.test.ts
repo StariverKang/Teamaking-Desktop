@@ -13,6 +13,7 @@ describe("crawler build tracing", () => {
     expect(config).toContain("node_modules/pdf-parse/package.json");
     expect(config).toContain("node_modules/pdf-parse/dist/**/*");
     expect(config).toContain("node_modules/pdf-parse/node_modules/pdfjs-dist/package.json");
+    expect(config).toContain("node_modules/openai/**/*");
   });
 
   it("loads pdfjs after installing Node DOMMatrix fallbacks", async () => {
