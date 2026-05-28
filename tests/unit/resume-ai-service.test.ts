@@ -69,9 +69,33 @@ describe("resume AI service", () => {
         keywordGroups: [{ label: "核心能力", keywords: ["KOL合作", "数据复盘"] }],
         highlights: [{
           title: "KOL增长执行",
-          evidence: "建联10+KOL并跟踪内容发布数据，形成推广复盘证据。",
+          evidence: "职位：市场部实习生；公司：MEXC；动作：建联10+KOL并跟踪内容发布数据；结果：形成推广复盘证据。",
+          position: "市场部实习生",
+          company: "MEXC",
+          action: "建联10+KOL并跟踪内容发布数据",
+          result: "形成推广复盘证据",
           category: "增长运营",
           keywords: ["KOL合作"]
+        },
+        {
+          title: "教学体验输出",
+          evidence: "职位：线上兼职教师；公司：北京世纪好未来；动作：重构授课SOP并推进周度复盘；结果：学生平均考取6.5+。",
+          position: "线上兼职教师",
+          company: "北京世纪好未来",
+          action: "重构授课SOP并推进周度复盘",
+          result: "学生平均考取6.5+。",
+          category: "教学与体系化",
+          keywords: ["教学体系"]
+        },
+        {
+          title: "活动运营",
+          evidence: "职位：产品运营实习生；公司：KuCoin；动作：联动KOL完成拉新活动配置；结果：提高活动响应率。",
+          position: "产品运营实习生",
+          company: "KuCoin",
+          action: "联动KOL完成拉新活动配置",
+          result: "提高活动响应率。",
+          category: "活动运营",
+          keywords: ["活动运营"]
         }]
       })
     });
@@ -89,7 +113,11 @@ describe("resume AI service", () => {
     }));
     expect(analysis.status).toBe("generated");
     expect(analysis.provider).toBe("openai");
-    expect(analysis.highlights).toHaveLength(1);
+    expect(analysis.highlights.length).toBeGreaterThanOrEqual(3);
+    const calledPayload = mocks.create.mock.calls[0]?.[0];
+    const joinedInput = Array.isArray(calledPayload.input) ? calledPayload.input.join("\n") : calledPayload.input;
+    expect(joinedInput).toContain("待补充");
+    expect(joinedInput).not.toContain("未明确");
   });
 
   it("lets admin SiteConfig override the environment model and API key", async () => {
@@ -110,7 +138,11 @@ describe("resume AI service", () => {
         keywordGroups: [{ label: "核心能力", keywords: ["活动运营"] }],
         highlights: [{
           title: "活动运营落地",
-          evidence: "跟进活动配置、文案校对和数据复盘，提升上线效率。",
+          evidence: "职位：产品运营实习生；公司：KuCoin；动作：跟进活动配置、文案校对和数据复盘；结果：提升上线效率。",
+          position: "产品运营实习生",
+          company: "KuCoin",
+          action: "跟进活动配置、文案校对和数据复盘",
+          result: "提升上线效率",
           category: "活动运营",
           keywords: ["活动运营"]
         }]
@@ -145,9 +177,33 @@ describe("resume AI service", () => {
         keywordGroups: [{ label: "核心能力", keywords: ["KOL协作"] }],
         highlights: [{
           title: "KOL 协作",
-          evidence: "建联10+KOL并跟踪内容发布数据。",
+          evidence: "职位：市场部实习生；公司：MEXC；动作：建联10+KOL并跟踪内容发布数据；结果：形成高频发布机制。",
+          position: "市场部实习生",
+          company: "MEXC",
+          action: "建联10+KOL并跟踪内容发布数据",
+          result: "形成高频发布机制",
           category: "增长运营",
           keywords: ["KOL协作"]
+        },
+        {
+          title: "活动推动",
+          evidence: "职位：活动执行；公司：KuCoin；动作：协同多个角色推进A/B试验与复盘；结果：活动执行效率提升。",
+          position: "活动执行",
+          company: "KuCoin",
+          action: "协同多个角色推进A/B试验与复盘",
+          result: "活动执行效率提升。",
+          category: "活动运营",
+          keywords: ["活动运营"]
+        },
+        {
+          title: "用户运营",
+          evidence: "职位：运营实习生；公司：MEXC；动作：搭建周报追踪看板并汇总发布数据；结果：建立复盘频率。",
+          position: "运营实习生",
+          company: "MEXC",
+          action: "搭建周报追踪看板并汇总发布数据",
+          result: "建立复盘频率。",
+          category: "数据分析",
+          keywords: ["数据复盘"]
         }]
       })
     });

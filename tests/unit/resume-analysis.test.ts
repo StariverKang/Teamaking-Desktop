@@ -28,9 +28,11 @@ describe("resume analysis normalization", () => {
     const parsed = parseResumeText(longResume, "resume.txt");
     const analysis = buildFallbackResumeAnalysis(parsed);
 
+    expect(analysis.highlights.length).toBeGreaterThanOrEqual(3);
     expect(analysis.highlights.length).toBeLessThanOrEqual(8);
     expect(analysis.summaryBody).not.toContain("香港浸会大学（珠海校区） 媒体与传播学 2025.09 至今 新腾");
     expect(analysis.keywordGroups.flatMap((group) => group.keywords)).not.toEqual(expect.arrayContaining(["python", "figma"]));
+    expect(analysis.highlights.every((item) => item.evidence.includes("动作：") && item.evidence.includes("结果："))).toBe(true);
     expect(analysis.highlights.every((item) => item.evidence.length <= 180)).toBe(true);
     expect(analysis.highlights.some((item) => item.evidence === "用户增长：根据旅行项目内容，设计宣发海报，用于美团、携程等平台上的产品主页信息；建联10+KOL合作产出推广视频，并撰写10+图文物料。")).toBe(false);
   });
@@ -46,6 +48,17 @@ describe("resume analysis normalization", () => {
     expect(resolveResumeAnalysis(withManual).source).toBe("manual");
     expect(resolveResumeAnalysis(withManual).analysis.summaryTitle).toBe("手动候选人定位");
     expect(resolveResumeAnalysis(withoutManualResumeAnalysis(withManual)).source).toBe("fallback");
+  });
+
+  it("uses neutral fallback values instead of '未明确' when fields are missing", () => {
+    const parsed = parseResumeText("实习经历\n项目中负责推进活动，协同团队推进。", "resume.txt");
+    const analysis = buildFallbackResumeAnalysis(parsed);
+
+    expect(analysis.highlights.every((item) => item.position !== "职位/公司未明确")).toBe(true);
+    expect(analysis.highlights.every((item) => item.company !== "职位/公司未明确")).toBe(true);
+    expect(analysis.highlights.every((item) => item.action !== "动作未明确")).toBe(true);
+    expect(analysis.highlights.every((item) => item.result !== "结果未在文本中明确写出")).toBe(true);
+    expect(analysis.highlights.every((item) => !item.evidence.includes("未明确"))).toBe(true);
   });
 
   it("detects legacy parsed data that has not received AI analysis", () => {

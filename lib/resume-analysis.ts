@@ -1,5 +1,6 @@
 export const resumeAiParserVersion = "resume-ai-v1";
 export const resumeAiHighlightLimit = 8;
+export const resumeAiHighlightMinimum = 3;
 
 export type ResumeKeywordGroup = {
   label: string;
@@ -9,6 +10,10 @@ export type ResumeKeywordGroup = {
 export type ResumeHighlight = {
   title: string;
   evidence: string;
+  position: string;
+  company: string;
+  action: string;
+  result: string;
   category: string;
   keywords: string[];
 };
@@ -117,6 +122,60 @@ function titleForLine(line: string, category: string) {
   return "项目执行亮点";
 }
 
+function extractAction(line: string) {
+  const [, rest = ""] = line.split(/[：:]/);
+  const actionSource = compactSpaces(rest) || compactSpaces(line);
+  return shorten(actionSource, 90);
+}
+
+function extractResult(line: string) {
+  const flattened = compactSpaces(line);
+  const segments = flattened.split(/[；;，,。]/).map((item) => item.trim()).filter(Boolean);
+  const hinted = segments.find((item) => /\d|%|\+|提升|增长|下降|减少|新增|完成|落地|产出|复盘|转化|优化|降低|节省|提升|回访|复核/.test(item));
+  return hinted ? shorten(hinted, 70) : "待补充";
+}
+
+function extractPositionOrCompany(line: string) {
+  const raw = compactSpaces(line.split(/[：:]/)[0]);
+  if (!raw) return "";
+  const isLong = raw.length > 42;
+  if (isLong) return "";
+  return raw;
+}
+
+function buildStructuredEvidence(line: string) {
+  const action = extractAction(line);
+  const result = extractResult(line);
+  const extracted = extractPositionOrCompany(line);
+  const safeAction = action || "待补充";
+  const safeResult = result || "待补充";
+  return {
+    position: extracted,
+    company: extracted,
+    action: safeAction,
+    result: safeResult,
+    evidence: `职位：${extracted || "待补充"}；公司：${extracted || "待补充"}；动作：${safeAction}；结果：${safeResult}`
+  };
+}
+
+function buildSparseFallbackHighlights(parsed: Record<string, unknown>, skills: string[]) {
+  const education = sectionItems(parsed, "education")[0];
+  const base = [education, ...skills].filter(Boolean);
+  return base.slice(0, resumeAiHighlightMinimum).map((topic, index) => {
+    const key = shorten(topic, 24) || "相关经历";
+    return {
+      title: index === 0 ? "经历信息补充" : index === 1 ? "任务与成果补充" : "结果与成长补充",
+      position: "待补充",
+      company: "待补充",
+      action: `围绕${key}整理可展示经历`,
+      result: "待补充",
+      evidence: `职位：待补充；公司：待补充；动作：围绕${key}整理可展示经历；结果：待补充`,
+      category: "项目执行",
+      keywords: [key]
+    };
+  });
+}
+
 function keywordsForLine(line: string, skills: string[]) {
   const matched = skills.filter((skill) => line.toLowerCase().includes(skill.toLowerCase()));
   const inferred = [
@@ -134,13 +193,14 @@ function keywordsForLine(line: string, skills: string[]) {
 
 function highlightFromLine(line: string, skills: string[]): ResumeHighlight {
   const category = categoryForLine(line);
-  const [, rest] = line.split(/[：:]/);
-  const evidence = rest && rest.trim().length > 12
-    ? shorten(rest, 135)
-    : shorten(line.replace(/^[^：:]{3,18}[：:]/, ""), 135);
+  const structured = buildStructuredEvidence(line);
   return {
     title: titleForLine(line, category),
-    evidence,
+    evidence: structured.evidence,
+    position: structured.position,
+    company: structured.company,
+    action: structured.action,
+    result: structured.result,
     category,
     keywords: keywordsForLine(line, skills)
   };
@@ -192,6 +252,7 @@ export function buildFallbackResumeAnalysis(parsedInput: unknown, options: Resum
     .map((line) => highlightFromLine(line, skills))
     .filter((item) => item.evidence.length > 8)
     .slice(0, resumeAiHighlightLimit);
+  const normalizedHighlights = highlights.length >= resumeAiHighlightMinimum ? highlights : [...highlights, ...buildSparseFallbackHighlights(parsed, skills)].slice(0, resumeAiHighlightMinimum);
   const education = sectionItems(parsed, "education")[0];
   const summaryBits = [
     education ? `背景：${shorten(education, 70)}` : "",
@@ -204,7 +265,7 @@ export function buildFallbackResumeAnalysis(parsedInput: unknown, options: Resum
     summaryTitle: summaryTitleForSkills(skills),
     summaryBody: summaryBits.join(" ") || "已提取简历文本，但还没有足够清晰的经历证据；建议补充项目成果、量化结果和个人职责后重新整理。",
     keywordGroups: keywordGroupsForSkills(skills),
-    highlights,
+    highlights: normalizedHighlights,
     generatedAt: options.generatedAt ?? new Date().toISOString(),
     provider: options.provider ?? "local-fallback",
     model: options.model ?? "rule-compression",
@@ -233,11 +294,18 @@ export function normalizeResumeAnalysis(value: unknown, fallback?: ResumeAnalysi
       return {
         title: shorten(record.title, 48),
         evidence: shorten(record.evidence, 180),
+        position: shorten(record.position, 36),
+        company: shorten(record.company, 36),
+        action: shorten(record.action, 90),
+        result: shorten(record.result, 90),
         category: shorten(record.category, 36) || "项目执行",
         keywords: uniqueStrings(textList(record.keywords, 8).map((keyword) => shorten(keyword, 32)), 5)
       };
     }).filter((item) => item.title && item.evidence).slice(0, resumeAiHighlightLimit)
     : [];
+  const finalHighlights = highlights.length >= resumeAiHighlightMinimum
+    ? highlights
+    : [...highlights, ...((fallback?.highlights ?? []).slice(0, resumeAiHighlightMinimum - highlights.length))].slice(0, resumeAiHighlightMinimum);
 
   if (!summaryTitle && !summaryBody && highlights.length === 0) return fallback ?? null;
 
@@ -246,7 +314,7 @@ export function normalizeResumeAnalysis(value: unknown, fallback?: ResumeAnalysi
     summaryTitle: summaryTitle || fallback?.summaryTitle || "简历摘要",
     summaryBody: summaryBody || fallback?.summaryBody || "暂无可展示摘要。",
     keywordGroups: groups.length ? groups : fallback?.keywordGroups ?? [],
-    highlights: highlights.length ? highlights : fallback?.highlights ?? [],
+    highlights: finalHighlights.length ? finalHighlights : fallback?.highlights ?? [],
     generatedAt: shorten(source.generatedAt, 40) || fallback?.generatedAt || new Date().toISOString(),
     provider: shorten(source.provider, 40) || fallback?.provider || "unknown",
     model: shorten(source.model, 60) || fallback?.model || "unknown",

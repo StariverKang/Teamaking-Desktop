@@ -32,15 +32,20 @@ const resumeAnalysisSchema = {
     },
     highlights: {
       type: "array",
+      minItems: 3,
       maxItems: resumeAiHighlightLimit,
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["title", "evidence", "category", "keywords"],
+        required: ["title", "evidence", "category", "keywords", "position", "company", "action", "result"],
         properties: {
           title: { type: "string" },
           evidence: { type: "string" },
           category: { type: "string" },
+          position: { type: "string" },
+          company: { type: "string" },
+          action: { type: "string" },
+          result: { type: "string" },
           keywords: { type: "array", maxItems: 5, items: { type: "string" } }
         }
       }
@@ -166,14 +171,17 @@ export async function analyzeResumeParsedData(parsed: any, context?: ResumeAiLog
         "Do not copy whole resume lines. Compress and synthesize.",
         "Do not invent tools, skills, schools, companies, dates, or metrics that are not present in the text.",
         "Prefer Chinese output while preserving English proper nouns and product/platform names.",
-        "Highlights must be real personal strengths or outcomes, not a full experience dump."
+        "Highlights must be real personal strengths or outcomes, not a full experience dump.",
+        "Each highlight evidence must include role/company/action/result phrased clearly and keep one line concise.",
       ].join(" "),
       input: [
         "请根据下面简历文本生成结构化 Profile 摘要：",
-        "- summaryTitle: 12-24 个中文字符，像候选人定位，不要写学校+公司流水账。",
-        "- summaryBody: 1 段，80-160 个中文字，归纳能力、方向和可见证据。",
+        "- summaryTitle: 12-24 个中文字符，用有个性但不夸张的关键词归纳简历所属人的特质+定位，不要写学校+公司流水账。",
+        "- summaryBody: 1 段，80-160 个中文字，归纳能力、方向、行业和可见证据。",
         "- keywordGroups: 2-4 组关键词，关键词必须能从原文找到证据。",
-        `- highlights: 最多 ${resumeAiHighlightLimit} 条，每条 title 短、evidence 一句话；不要复制整段经历，不要把每段经历都搬进来。`,
+        "- highlights: 3-8 条按需生成，不要强制凑齐上限。每条 title 短、evidence 一句话；优先覆盖最有代表性的经历。",
+        "- 每条 evidence 按“职位/公司/动作/结果”四要素写一条完整句，不要虚构。",
+        "- 缺失要素可留空或写“待补充”，不要新增未给出的信息。",
         "",
         rawText
       ].join("\n"),
