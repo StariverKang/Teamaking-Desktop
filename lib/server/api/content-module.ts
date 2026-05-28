@@ -6,7 +6,7 @@ import { getCurrentUser } from "@/lib/session";
 import { getActiveAppVersionId } from "@/lib/app-version";
 import { isDemoUser } from "@/lib/demo-data";
 import { userInclude } from "@/lib/server/services/user-service";
-import { activeAnnouncementWhere, contentDocumentPayload, defaultContentDocuments, isRecoverableContentStoreError, serializeAnnouncement, type PublicContentKind } from "@/lib/server/services/content-service";
+import { activeAnnouncementWhere, getPublicContentPayload, serializeAnnouncement, type PublicContentKind } from "@/lib/server/services/content-service";
 import { operationLog } from "@/lib/server/services/system-service";
 
 export async function handleContent(method: string, request: NextRequest) {
@@ -16,20 +16,7 @@ export async function handleContent(method: string, request: NextRequest) {
   if (!allowed.has(kind)) throw new ApiError(400, "内容类型无效。");
   const publicKind = kind as PublicContentKind;
 
-  let appVersionId = "legacy";
-  try {
-    appVersionId = await getActiveAppVersionId();
-    const rows = await prisma.contentDocument.findMany({
-      where: { appVersionId, kind: publicKind, status: "published" },
-      orderBy: [{ displayOrder: "asc" }, { publishedAt: "desc" }, { createdAt: "desc" }]
-    });
-    const documents = rows.length ? rows : defaultContentDocuments(publicKind, appVersionId);
-    return ok(contentDocumentPayload(documents));
-  } catch (error) {
-    if (!isRecoverableContentStoreError(error)) throw error;
-    console.warn("Public content store unavailable; serving built-in fallback.", error);
-    return ok(contentDocumentPayload(defaultContentDocuments(publicKind, appVersionId)));
-  }
+  return ok(await getPublicContentPayload(publicKind));
 }
 
 export async function handleSupportTickets(method: string, request: NextRequest) {

@@ -35,8 +35,8 @@ export function LandingPage() {
               进入演示验收
               <ArrowRight size={18} aria-hidden />
             </Link>
-            <Link href="/courses" className="focus-ring inline-flex items-center gap-2 rounded-sm border border-ink/40 bg-paper px-5 py-3 font-semibold text-ink">
-              先看看 Course Boards
+            <Link href="/contact-developer" className="focus-ring inline-flex items-center gap-2 rounded-sm border border-ink/40 bg-paper px-5 py-3 font-semibold text-ink">
+              联系开发者
               <ArrowRight size={18} aria-hidden />
             </Link>
           </div>

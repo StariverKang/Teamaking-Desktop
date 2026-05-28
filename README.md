@@ -46,7 +46,7 @@ Agent 开发原则：
 - Auth：学校邮箱注册 + 密码登录；注册和找回密码使用学校邮箱验证码；本地验收可使用 `/demo-access` 绕过验证码
 - File upload：本地验收写入 `public/uploads`，生产可用 Cloudflare R2；数据库记录 `fileUrl/storageKey/objectKey/mime/extension/scanStatus/metadata`
 - I18n：系统框架支持简体中文 / English；首次访问按 IP 国家/地区写入语言 cookie，用户可手动切换，用户可编辑内容不自动翻译
-- Content & Announcements：管理员在 `/admin/content` 统一维护联系开发者、开发者日志、帮助中心和全站公告；帮助中心/开发者日志支持文件夹树和文档树，公告仍会在用户未阅读前弹窗提醒
+- Content & Announcements：管理员在 `/admin/content` 统一维护联系开发者、开发者日志、帮助中心和全站公告；帮助中心/开发者日志支持文件夹树和文档树；`/help`、`/developer-log`、`/contact-developer` 对未登录用户公开，并在首屏使用服务端公开内容 payload，公告仍会在用户未阅读前弹窗提醒
 - Admin Maintenance：管理员可在 `/admin/maintenance` 软清空当前课程组队状态；好友关系、课程加入历史、Teamaking Post 和 TeamUp Interest 记录会保留，用于后续推荐和审计追溯
 
 ## 本地启动
@@ -219,12 +219,13 @@ npm run build
 5. 用户输入验证码并设置密码后完成注册，系统通过邮箱域名识别学校。
 6. 已注册用户之后使用学校邮箱和密码登录；忘记密码时走找回密码验证码模板。
 7. 首次用户进入 `/onboarding`，通过遮罩式新手引导了解平台；年级/入学年份优先由学校邮箱第二位数字自动推断，普通用户不能手动改。
-8. 用户在 `/courses` 查看推荐课程或搜索课程；未登录时只显示示例，不读取真实课程板或用户数据。
-9. 用户加入 Course Board 后，会出现在该课程板的 Course People 中。
-10. 用户可以在 `/boards/[boardId]` 创建 Teamaking Post。
-11. 其他用户可以在 Teamaking Post 详情页点击 Team Up。
-12. TeamUp Interest 状态可以按正向流程 `sent → viewed → mutual` 变化，也可以进入 `withdrawn`、`refused`、`closed`、`deleted` 或 `reported`。
-13. 用户可以在 `/friends` 查看 mutual follow 好友，在课程详情页评价真实课程，在 `/help`、`/developer-log`、`/contact-developer` 查看管理员维护的内容文档。
+8. 首页未登录第三个 CTA 进入 `/contact-developer`；未登录用户不能从首页直接跳到真实 Course Board 详情。
+9. 用户在 `/courses` 查看推荐课程或搜索课程；未登录时只显示示例，不读取真实课程板或用户数据。
+10. 用户加入 Course Board 后，会出现在该课程板的 Course People 中。
+11. 用户可以在 `/boards/[boardId]` 创建 Teamaking Post。
+12. 其他用户可以在 Teamaking Post 详情页点击 Team Up。
+13. TeamUp Interest 状态可以按正向流程 `sent → viewed → mutual` 变化，也可以进入 `withdrawn`、`refused`、`closed`、`deleted` 或 `reported`。
+14. 用户可以在 `/friends` 查看 mutual follow 好友，在课程详情页评价真实课程，在 `/help`、`/developer-log`、`/contact-developer` 查看管理员维护的内容文档。
 
 ## 重要产品边界
 
@@ -303,6 +304,7 @@ prisma/
 - `POST /api/auth/password-reset/complete`
 - `POST /api/auth/admin-login`
 - `GET /api/auth/me`
+- `POST /api/auth/logout`
 - `POST /api/demo/login`
 
 学生端：
@@ -412,6 +414,14 @@ prisma/
 其中 `ContactInfo.schoolEmail` 一定复制自 `User.email`，前端接口不会允许用户修改。
 
 已注册用户通过 `/api/auth/password-login` 登录；忘记密码通过 `/api/auth/password-reset/send-code` 和 `/api/auth/password-reset/complete` 重设。注册和找回密码各自使用独立的腾讯云 SES 模板。
+
+`/api/auth/logout` 会清除 HttpOnly `teamaking_session`。如果生产环境配置了 `SESSION_COOKIE_DOMAIN`，服务端会同时过期当前 host-only cookie 和共享 domain cookie，避免旧 cookie 在刷新、静置或进入 Course Board 时重新恢复账号。
+
+### 公开内容页面
+
+`/help`、`/developer-log`、`/contact-developer` 是未登录可见页面。页面首屏通过 `getPublicContentPayload()` 服务端读取已发布的 `ContentDocument`，客户端再用 `/api/content?kind=help|developer_log|developer_contact` 刷新，数据库暂不可用或没有发布内容时会显示可读 fallback，而不是要求登录或空白报错。
+
+帮助中心和开发者日志使用文件夹树 + 文档阅读器；联系开发者是独立公开内容卡片。公开 API 只返回 `published` 文档。当前本地帮助中心草稿源在 `storage/help-center-drafts/`，`01-*` 到 `06-*` 用于公开帮助文档，`00-manifest.md` 和 `99-archive` 保持草稿/归档用途。
 
 ### Course Board
 
@@ -616,6 +626,8 @@ DATABASE_URL="Neon direct connection string" npx prisma migrate deploy
 - 管理后台 `Users`、`Boards`、`Support Tickets`、`Metrics` 页面能读取数据库。
 - 管理后台编辑用户状态、Course Board 或工单后，数据能刷新显示。
 - 管理后台 `Content & Announcements` 可以按 tab 管理联系开发者、开发者日志、帮助中心和全站公告；帮助中心/开发者日志支持在树上分别新建分类文件夹和文档；主站任意页面顶部能看到公告条和弹窗，`/announcements` 能查看历史。
+- 无痕窗口或登出状态下，首页“联系开发者” CTA 打开 `/contact-developer`，不跳进真实 Course Board；`/help`、`/developer-log`、`/contact-developer` 和 `/api/content?kind=...` 均能读取已发布公开内容。
+- 点击登出后，刷新、静置或进入 Course Board 不应自动恢复账号；用 `/api/auth/me` 复核应返回未登录状态。
 - 主站语言切换器能在中文/英文间切换；用浏览器无痕窗口模拟非中文地区时默认英文，手动切换后 cookie 会记住选择。
 - 邮件模板：注册验证码和找回密码验证码都能发送到真实学校邮箱；Vercel 中 `EMAIL_DEBUG_CODE_RESPONSE=false`，前端响应不暴露验证码。
 

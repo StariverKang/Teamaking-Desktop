@@ -1103,3 +1103,88 @@
   - `npm run test -- tests/integration/course-import-workflow.integration.test.ts` 通过（1 passed，1 skipped；skip 原因是未设置 `TEST_DATABASE_URL`）。
   - crawler smoke 通过：`2023 limit=1` 输出 49 courses / 49 rules / 0 offerings。
   - multi-cohort crawler smoke 通过：`2025,2024,2023 limit=1` 均输出 49 courses / 49 rules / 0 offerings。
+
+### BNBU Course Catalog 通识目录合并（补记）
+
+- 背景：
+  - 5 月 27 日下午 README 已更新 course catalog 语义，但 PROJECT_LOG 当时漏记，需要补上从上次日志编辑后的 crawler/catalog 改动。
+  - 旧的 `course_catalog` 更像 Course Descriptions 单一来源，无法覆盖 University Core 和 General Education 这类学校级通识课程目录。
+- 改动：
+  - 新增 `scripts/bnbu-crawler/common-curriculum-catalog.mjs`，把 University Core 与 General Education PDF 解析为 course catalog 行，只补 `courses[]` 和 source refs，不生成 admission-year curriculum rules。
+  - `run-course-catalog.mjs` 合并 Course Descriptions、University Core、General Education 三类来源，输出统一的 `bnbu-course-catalog.teamaking.json`。
+  - 新增 `scripts/bnbu-crawler/pdfjs-runtime.mjs`，集中 PDF.js 运行时与标准字体路径解析，供 handbook/catalog 解析复用。
+  - Crawler UI/API 文案从 `Course descriptions` 调整为 `Course catalog`，并明确它是学校级课程总表，不替代 programme handbook 的 CourseBoard 规则。
+  - `next.config.mjs` 与 crawler build trace test 补充 common curriculum parser / PDF runtime 的 serverless tracing 约束。
+  - README、`docs/BNBU_COURSE_CRAWLER_REQUIREMENTS.md`、`docs/BNBU_CRAWLER_ADMIN_VARIABLES.md` 已同步 course catalog 与 programme handbook 的边界。
+- 验证：
+  - 新增 `tests/unit/common-curriculum-catalog.test.ts` 覆盖 cohort PDF 选择、University Core / GE 课程解析，以及不生成 rules 的边界。
+  - 新增/更新 crawler tracing 单测，避免 Vercel serverless 漏带 PDF runtime 或 common curriculum parser。
+
+## 2026-05-28
+
+### Help Center 草稿、Markdown 导入与阅读器收口
+
+- 背景：
+  - 帮助中心不能只做通用 FAQ，需要贴合 TEAMAKING 现有产品面、内容发布模型和管理员 `Content & Announcements` 工作流。
+  - 公开帮助页此前可能停留在 fallback / unavailable 状态；文章推荐也容易重复推荐同一批文档。
+- 改动：
+  - 以 `storage/help-center-drafts/` 作为本地帮助文档草稿源，整理 `00-manifest.md`、`01-getting-started` 到 `06-faq-and-glossary`、`99-archive` 的目录结构和 frontmatter 约定。
+  - 管理员 Markdown 导入流程支持文件夹优先创建、frontmatter 解析、same-slug 更新、重复 slug / 缺失 parent 的可读错误提示。
+  - `content-markdown.ts` 和 `components/pages/shared/content-parts.tsx` 补强 breadcrumb、文章目录、锚点跳转、正文排版、支持/联系入口和 related article 推荐。
+  - related article 现在按 slug/id/title 去重并限制数量，避免同一推荐在文章底部重复出现。
+  - 本地帮助草稿 `01-*` 到 `06-*` 已调整为 published 方向；`00-manifest.md` 与 `99-archive` 继续保留为草稿/归档。
+- 验证：
+  - `npm run test -- tests/unit/content-markdown.test.ts` 通过。
+  - 浏览器检查 `/help` 已能看到 32 个帮助中心节点和真实文档内容。
+
+### 公开内容首屏与首页 CTA 修复
+
+- 背景：
+  - 未登录用户不应该从首页直接进入真实 Course Board 详情；用户指出首页左侧第三个按钮应跳到“联系开发者”。
+  - 联系开发者、帮助中心、开发者日志属于公开说明内容，不应因为未登录而不可见。
+- 改动：
+  - 首页第三个 CTA 从 `/courses` 改为 `/contact-developer`，按钮文案改为“联系开发者”。
+  - `/help`、`/developer-log`、`/contact-developer` 改为服务端先调用 `getPublicContentPayload()` 获取公开首屏数据，再由客户端 API 刷新。
+  - `handleContent` 复用 `getPublicContentPayload()`，公开 API 只返回 `published` 的 `ContentDocument`，数据库不可用或缺少发布内容时提供可读 fallback。
+  - `ContentDocumentsPage` 与 `ContactDeveloperPage` 支持 `initialData`，公开页面统一隐藏内部侧栏。
+  - 本地数据库已同步 32 个帮助中心节点，并将 `developer_contact` 公开内容发布用于首屏验收。
+- 验证：
+  - 浏览器检查首页“联系开发者”链接指向 `/contact-developer`，旧的“先看看 Course Boards” CTA 不再出现。
+  - 浏览器检查 `/contact-developer` 首屏可见 WeChat/Email，`/help` 可见真实帮助文档树。
+  - `npm run test:e2e -- --project=chromium --grep "public entry"` 通过。
+
+### 登出后自动恢复账号修复
+
+- 背景：
+  - 用户反馈点击登出后，一旦刷新、静置、交互或进入 Course Board，会自动回到账号内。
+  - 排查方向锁定为旧 host-only session cookie 与新 `SESSION_COOKIE_DOMAIN` shared-domain cookie 可以并存，登出只清掉其中一个 scope 时，浏览器后续请求仍可能带回另一个 session。
+- 改动：
+  - `clearSessionCookie()` 改为手动追加过期 `Set-Cookie`：始终清 host-only `teamaking_session`，配置 `SESSION_COOKIE_DOMAIN` 时同时清 domain-scoped cookie。
+  - 删除 cookie 的 header 不再强制带 `Secure`，让本地 HTTP 和历史非 secure cookie 也能被过期。
+  - 新增 `tests/unit/session-cookie.test.ts`，覆盖 host-only 以及 host-only + shared-domain 两种清除场景。
+- 验证：
+  - `npm run test -- tests/unit/session-cookie.test.ts` 通过。
+  - 使用 `teamaking.lvh.me` 的 Playwright HTTP cookie harness 复现：登出前 `/api/auth/me` 有用户，登出后无用户且不剩 session cookie。
+  - 当前综合验证中，`npm run test -- tests/unit/content-module.test.ts tests/unit/content-markdown.test.ts tests/unit/session-cookie.test.ts` 通过（3 files，9 tests）。
+
+### 顶部账号入口与 TeamUp 可见性补记
+
+- 背景：
+  - 登录态顶部入口此前仍像固定登录/注册按钮，用户需要真实头像、Profile 和登出菜单。
+  - TeamUp Interest 发送者/发布者视角容易混在一起，可能把自己发出的 interest 放进 received/inbox 或在发布者面板暴露错误操作。
+- 改动：
+  - Navbar 通过 `/api/auth/me` 读取当前账号，展示头像/Profile 入口和登出动作。
+  - 新增 `/api/auth/logout`，配合 session cookie 清理让顶栏登出成为真实退出，不只是前端状态切换。
+  - TeamUp received/inbox 过滤当前用户自己发出的 interest；Teamaking Post 详情只向帖子发布者展示收到的 TeamUp Interest，发送者侧保留撤回边界。
+- 验证：
+  - 相关行为已在前序浏览器流和本轮 logout/public-entry 验收中复核；本轮进一步用 session-cookie 单测锁住登出 cookie scope。
+
+### 文档补齐
+
+- 背景：
+  - README 和 PROJECT_LOG 在最近几轮没有同步跟上，违反项目自己的“做完要更新日志”规则。
+- 改动：
+  - README 补充公开内容页面、首页未登录 CTA、`POST /api/auth/logout`、logout cookie scope、线上公开内容/登出验收项。
+  - PROJECT_LOG 补记 5 月 27 日 BNBU course catalog common curriculum merge，并记录 5 月 28 日帮助中心、公开内容、CTA、登出修复和账号入口边界。
+- 验证：
+  - `git diff --check` 用于确认本次文档补齐没有 trailing whitespace 或 patch 格式问题。

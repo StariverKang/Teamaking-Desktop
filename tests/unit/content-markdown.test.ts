@@ -87,11 +87,13 @@ describe("content markdown helpers", () => {
     const folder = { id: "folder", kind: "help", nodeType: "folder", title: "课程", slug: "courses", parentId: null };
     const current = { id: "a", kind: "help", nodeType: "document", parentId: "folder", title: "查找课程", slug: "find-courses", summary: "搜索课程代码", bodyMarkdown: "Course Board 和课程代码", displayOrder: 10 };
     const sibling = { id: "b", kind: "help", nodeType: "document", parentId: "folder", title: "加入 Course Board", slug: "join-board", summary: "Course Board", bodyMarkdown: "加入课程", displayOrder: 20 };
+    const duplicatedSibling = { ...sibling, id: "b-copy" };
     const other = { id: "c", kind: "help", nodeType: "document", parentId: null, title: "账号登录", slug: "login", summary: "学校邮箱", bodyMarkdown: "", displayOrder: 1 };
-    const documents = [folder, current, sibling, other];
+    const duplicatedCurrent = { ...current, id: "a-copy" };
+    const documents = [folder, current, duplicatedCurrent, sibling, duplicatedSibling, other];
 
     expect(contentBreadcrumb(current, documents).map((item) => item.slug)).toEqual(["courses", "find-courses"]);
-    expect(searchContentDocuments("课程代码", documents).map((item) => item.id)).toEqual(["a"]);
+    expect(searchContentDocuments("课程代码", documents).map((item) => item.id)).toEqual(["a", "a-copy"]);
     expect(relatedContentDocuments(current, documents, 2).map((item) => item.id)).toEqual(["b", "c"]);
   });
 });

@@ -241,8 +241,13 @@ export function searchContentDocuments(query: string, documents: any[]) {
 export function relatedContentDocuments(document: any, documents: any[], limit = 4) {
   if (!document) return [];
   const keywords = keywordsFor(document);
+  const seen = new Set<string>();
+  const currentKeys = new Set([document.id, document.slug].map((value) => String(value ?? "")).filter(Boolean));
   return documents
-    .filter((candidate) => candidate.id !== document.id && candidate.nodeType !== "folder")
+    .filter((candidate) => {
+      const candidateKeys = [candidate.id, candidate.slug].map((value) => String(value ?? "")).filter(Boolean);
+      return candidate.nodeType !== "folder" && !candidateKeys.some((key) => currentKeys.has(key));
+    })
     .map((candidate) => {
       let score = candidate.parentId && candidate.parentId === document.parentId ? 12 : 0;
       const candidateKeywords = new Set(keywordsFor(candidate));
@@ -254,6 +259,12 @@ export function relatedContentDocuments(document: any, documents: any[], limit =
     })
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || (a.candidate.displayOrder ?? 0) - (b.candidate.displayOrder ?? 0))
+    .filter((item) => {
+      const key = String(item.candidate.slug ?? item.candidate.id ?? item.candidate.title ?? "");
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     .slice(0, limit)
     .map((item) => item.candidate);
 }

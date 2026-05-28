@@ -251,7 +251,7 @@ export function ContentDocumentReader({
   const related = relatedContentDocuments(document, flatDocuments, 4);
   return (
     <article className="grid gap-7">
-      <div className={showArticleTools ? "grid gap-8 xl:grid-cols-[minmax(0,1fr)_240px]" : "grid gap-4"}>
+      <div className="grid gap-4">
         <div className="min-w-0">
           {showArticleTools ? (
             <ContentBreadcrumb document={document} breadcrumb={breadcrumb} onSelectDocument={onSelectDocument} />
@@ -264,6 +264,7 @@ export function ContentDocumentReader({
             {document.updatedAt ? <span>Updated {new Date(document.updatedAt).toLocaleString()}</span> : null}
           </div>
           {document.summary ? <p className="mt-3 text-sm leading-6 text-ink/64">{document.summary}</p> : null}
+          {showArticleTools && headings.length ? <ArticleTableOfContents headings={headings} /> : null}
           {contentImageUrls(document.imageUrls).length ? (
             <div className="mt-5 grid gap-3 md:grid-cols-3">
               {contentImageUrls(document.imageUrls).map((url) => (
@@ -276,7 +277,6 @@ export function ContentDocumentReader({
             {document.bodyMarkdown ? <MarkdownRenderer withHeadingIds={showArticleTools}>{document.bodyMarkdown}</MarkdownRenderer> : <p className="text-sm text-ink/52">这篇文档还没有正文。</p>}
           </div>
         </div>
-        {showArticleTools && headings.length ? <ArticleTableOfContents headings={headings} /> : null}
       </div>
       {showArticleTools ? <ArticleSupportAndRelated related={related} onSelectDocument={onSelectDocument} /> : null}
     </article>
@@ -309,16 +309,10 @@ function ContentBreadcrumb({ document, breadcrumb, onSelectDocument }: { documen
 
 function ArticleTableOfContents({ headings }: { headings: { depth: number; text: string; id: string }[] }) {
   return (
-    <aside className="xl:sticky xl:top-24 xl:self-start">
-      <details className="border border-ink/15 bg-paper p-3 xl:hidden">
-        <summary className="cursor-pointer text-sm font-semibold text-ink">本文目录</summary>
-        <HeadingLinks headings={headings} />
-      </details>
-      <div className="hidden border-l border-ink/15 pl-4 xl:block">
-        <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">On this page</p>
-        <HeadingLinks headings={headings} />
-      </div>
-    </aside>
+    <details open className="mt-5 border border-ink/15 bg-paper p-4">
+      <summary className="cursor-pointer text-lg font-semibold text-ink">本文目录</summary>
+      <HeadingLinks headings={headings} />
+    </details>
   );
 }
 
@@ -330,7 +324,7 @@ function HeadingLinks({ headings }: { headings: { depth: number; text: string; i
           key={heading.id}
           href={`#${heading.id}`}
           className="leading-5 hover:font-semibold hover:text-ink"
-          style={{ paddingLeft: `${Math.max(0, heading.depth - 1) * 12}px` }}
+          style={{ paddingLeft: `${Math.max(0, heading.depth - 2) * 24}px` }}
         >
           {heading.text}
         </a>

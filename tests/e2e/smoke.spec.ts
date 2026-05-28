@@ -1,6 +1,24 @@
 import { expect, test } from "@playwright/test";
 
-test("login and support surfaces render", async ({ page }) => {
+test("public entry, contact, help and support surfaces render", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("link", { name: "联系开发者" })).toHaveAttribute("href", "/contact-developer");
+  await expect(page.getByRole("link", { name: "先看看 Course Boards" })).toHaveCount(0);
+
+  await page.goto("/contact-developer");
+  await expect(page.getByRole("heading", { name: "联系开发者", level: 1 })).toBeVisible();
+  await expect(page.getByText("查看开发者简介、微信和邮箱")).toBeVisible();
+  const contactResponse = await page.request.get("/api/content?kind=developer_contact");
+  expect(contactResponse.ok()).toBeTruthy();
+  expect(((await contactResponse.json()).documents ?? []).length).toBeGreaterThan(0);
+
+  await page.goto("/help");
+  await expect(page.getByRole("heading", { name: "帮助中心", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "文档目录" })).toBeVisible();
+  const helpResponse = await page.request.get("/api/content?kind=help");
+  expect(helpResponse.ok()).toBeTruthy();
+  expect(((await helpResponse.json()).documents ?? []).length).toBeGreaterThan(0);
+
   await page.goto("/login");
   await expect(page.getByRole("heading", { name: /已注册用户登录|学校邮箱注册|找回密码/ })).toBeVisible();
 

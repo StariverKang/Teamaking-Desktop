@@ -16,8 +16,15 @@ import { useApi } from "@/lib/client/api";
 import { flattenContentDocuments, firstContentDocument, ContentDocumentTree, ContentDocumentReader } from "@/components/pages/shared/content-parts";
 import { searchContentDocuments } from "@/lib/content-markdown";
 
-export function ContentDocumentsPage({ kind, title, eyebrow, description }: { kind: "help" | "developer_log" | "developer_contact"; title: string; eyebrow: string; description: string }) {
-  const { data, error, loading } = useApi(`/api/content?kind=${kind}`);
+type PublicContentData = {
+  documents?: any[];
+  flatDocuments?: any[];
+};
+
+export function ContentDocumentsPage({ kind, title, eyebrow, description, initialData }: { kind: "help" | "developer_log" | "developer_contact"; title: string; eyebrow: string; description: string; initialData?: PublicContentData }) {
+  const { data: liveData, error, loading: liveLoading } = useApi(`/api/content?kind=${kind}`);
+  const data = liveData ?? initialData;
+  const loading = liveLoading && !initialData;
   const documents = useMemo(() => data?.documents ?? [], [data?.documents]);
   const flatDocuments = useMemo(() => flattenContentDocuments(documents), [documents]);
   const [selectedDocId, setSelectedDocId] = useState("");
@@ -60,7 +67,7 @@ export function ContentDocumentsPage({ kind, title, eyebrow, description }: { ki
   };
 
   return (
-    <PageShell title={title} eyebrow={eyebrow} description={description}>
+    <PageShell title={title} eyebrow={eyebrow} description={description} aside="none">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       <div className="grid gap-5">
         <Card>
@@ -119,13 +126,15 @@ export function ContentDocumentsPage({ kind, title, eyebrow, description }: { ki
   );
 }
 
-export function ContactDeveloperPage() {
-  const { data, error, loading } = useApi("/api/content?kind=developer_contact");
+export function ContactDeveloperPage({ initialData }: { initialData?: PublicContentData }) {
+  const { data: liveData, error, loading: liveLoading } = useApi("/api/content?kind=developer_contact");
+  const data = liveData ?? initialData;
+  const loading = liveLoading && !initialData;
   const documents = useMemo(() => data?.documents ?? [], [data?.documents]);
   const selectedDocument = firstContentDocument(documents);
 
   return (
-    <PageShell title="联系开发者" eyebrow="Contact" description="查看开发者简介、微信和邮箱；内容可由管理员在后台维护。">
+    <PageShell title="联系开发者" eyebrow="Contact" description="查看开发者简介、微信和邮箱；内容可由管理员在后台维护。" aside="none">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {!loading && selectedDocument ? (
         <Card>

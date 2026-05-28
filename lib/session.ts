@@ -11,6 +11,18 @@ function sessionCookieDomain() {
   return (process.env.SESSION_COOKIE_DOMAIN ?? "").trim() || undefined;
 }
 
+function expiredSessionCookieHeader(domain?: string) {
+  return [
+    `${SESSION_COOKIE}=`,
+    "Path=/",
+    "Max-Age=0",
+    "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    domain ? `Domain=${domain}` : null,
+    "HttpOnly",
+    "SameSite=lax"
+  ].filter(Boolean).join("; ");
+}
+
 export function setSessionCookie(response: NextResponse, userId: string) {
   response.cookies.set(SESSION_COOKIE, userId, {
     httpOnly: true,
@@ -32,13 +44,11 @@ export function setDemoSessionCookie(response: NextResponse, account: string) {
 }
 
 export function clearSessionCookie(response: NextResponse) {
-  response.cookies.set(SESSION_COOKIE, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    ...(sessionCookieDomain() ? { domain: sessionCookieDomain(), secure: true } : {}),
-    maxAge: 0
-  });
+  const domain = sessionCookieDomain();
+  response.headers.append("Set-Cookie", expiredSessionCookieHeader());
+  if (domain) {
+    response.headers.append("Set-Cookie", expiredSessionCookieHeader(domain));
+  }
 }
 
 export async function getCurrentUser() {

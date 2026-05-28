@@ -1,4 +1,6 @@
 import { stringArray } from "@/lib/http";
+import { prisma } from "@/lib/prisma";
+import { getActiveAppVersionId } from "@/lib/app-version";
 
 import { publicUser } from "@/lib/server/services/user-service";
 
@@ -123,6 +125,23 @@ export function contentDocumentPayload(documents: any[]) {
 export function isRecoverableContentStoreError(error: unknown) {
   const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
   return ["P1001", "P1002", "P1017", "P2021", "P2022"].includes(code);
+}
+
+export async function getPublicContentPayload(kind: PublicContentKind) {
+  let appVersionId = "legacy";
+  try {
+    appVersionId = await getActiveAppVersionId();
+    const rows = await prisma.contentDocument.findMany({
+      where: { appVersionId, kind, status: "published" },
+      orderBy: [{ displayOrder: "asc" }, { publishedAt: "desc" }, { createdAt: "desc" }]
+    });
+    const documents = rows.length ? rows : defaultContentDocuments(kind, appVersionId);
+    return contentDocumentPayload(documents);
+  } catch (error) {
+    if (!isRecoverableContentStoreError(error)) throw error;
+    console.warn("Public content store unavailable; serving built-in fallback.", error);
+    return contentDocumentPayload(defaultContentDocuments(kind, appVersionId));
+  }
 }
 
 export function activeAnnouncementWhere(appVersionId: string, now = new Date()) {
