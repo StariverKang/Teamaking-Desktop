@@ -41,14 +41,14 @@ export function CoursesPage() {
   const officialLinks = recommended?.officialLinks ?? myCourses?.officialLinks ?? [];
   const searchPagination = search?.pagination ?? { page: searchPage, pageSize: searchPageSize, total: 0, totalPages: 1 };
 
-  async function joinFirstBoard(course: any) {
+  async function openCourseBoard(course: any) {
     const result = await api(`/api/courses/${course.id}/join`, { method: "POST" });
     const boardId = result?.board?.id ?? course.offerings?.[0]?.boards?.[0]?.id;
     if (boardId) router.push(`/boards/${boardId}`);
   }
 
   return (
-    <PageShell title="Course Boards" eyebrow="Courses" description="搜索或加入课程板。加入只代表你在 TEAMAKING 平台内自选加入，不代表官方选课。">
+    <PageShell title="Course Boards" eyebrow="Courses" description="浏览课程板；只有在某课程下发布 Post 或发送 TeamUp 后，才算参与这个 Course Board。">
       {!isAuthed ? (
         <div className="grid gap-5">
           <Card>
@@ -70,7 +70,7 @@ export function CoursesPage() {
             {[
               ["COM3003", "Media Ethics", "Open to Team posts are hidden before login."],
               ["CST1001", "Introduction to Programming", "Course People are hidden before login."],
-              ["BUS2002", "Marketing Principles", "Join actions require verified identity."]
+              ["BUS2002", "Marketing Principles", "Posting or TeamUp actions require verified identity."]
             ].map(([code, title, body]) => (
               <Card key={code}>
                 <p className="text-sm font-semibold text-rust">{code}</p>
@@ -104,7 +104,7 @@ export function CoursesPage() {
               ))}
             </div>
             <p className="text-xs leading-5 text-ink/55">
-              已加入课程不会因后续更改专业而自动移除；疑似非本专业专业课会在“我的课程”中提示。
+              只有发布 Teamaking Post 或发送 TeamUp Interest 后，课程板才会进入“我的课程”；只浏览不会加入。
             </p>
           </div>
           <div className="mt-4 flex items-center gap-3">
@@ -117,7 +117,7 @@ export function CoursesPage() {
                 setSearchPage(1);
                 if (event.target.value.trim()) setTab("search");
               }}
-              placeholder="搜索课程代码或课程名称，例如 COM3003；free elective 可直接搜索加入"
+              placeholder="搜索课程代码或课程名称，例如 COM3003；free elective 可直接打开课程板"
             />
           </div>
           {tab === "search" && q.trim() ? (
@@ -142,8 +142,8 @@ export function CoursesPage() {
                         <Link href={`/courses/${course.id}`} className="border border-ink/30 px-3 py-2 text-xs font-semibold hover:bg-mist/50">
                           详情
                         </Link>
-                        <button onClick={() => joinFirstBoard(course)} className="border border-ink bg-ink px-3 py-2 text-xs font-semibold text-paper">
-                          加入课程板
+                        <button onClick={() => openCourseBoard(course)} className="border border-ink bg-ink px-3 py-2 text-xs font-semibold text-paper">
+                          打开课程板
                         </button>
                       </div>
                     </div>
@@ -195,7 +195,7 @@ export function CoursesPage() {
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             {(recommended?.courses ?? []).map((course: any) => (
-              <CourseCard key={course.id} course={course} onJoin={joinFirstBoard} />
+              <CourseCard key={course.id} course={course} onJoin={openCourseBoard} />
             ))}
             {(recommended?.courses ?? []).length === 0 ? (
               <Card>
@@ -221,7 +221,7 @@ export function CoursesPage() {
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-coral">{offering?.semester?.name ?? "Course Board"} · section {membership.sectionCode ?? "1001"}</p>
                     <h3 className="mt-1 font-serif text-xl font-semibold text-ink">{course?.code} · {course?.title ?? board?.title}</h3>
-                    <p className="mt-2 text-xs text-ink/56">{membership.source?.startsWith("auto_") ? "BNBU admission 配置默认加入" : "手动加入 / free elective / 自选课程板"}</p>
+                    <p className="mt-2 text-xs text-ink/56">{membership.source === "teamaking_post" ? "已发布 Open to Team" : "已发送 TeamUp Interest"}</p>
                     {membership.advisory ? (
                       <p className="mt-3 border-l-2 border-coral bg-coral/8 px-3 py-2 text-sm leading-6 text-coral">{membership.advisory.message}</p>
                     ) : null}
@@ -237,7 +237,7 @@ export function CoursesPage() {
                 </div>
               );
             })}
-            {(myCourses?.memberships ?? []).length === 0 ? <EmptyState title="还没有加入课程板" body="你可以从推荐课程或搜索结果加入课程板；这不会改动学校官方选课。" /> : null}
+            {(myCourses?.memberships ?? []).length === 0 ? <EmptyState title="还没有参与中的课程板" body="打开课程板后，发布 Teamaking Post 或对某条 Post 发送 TeamUp，才会出现在这里。" /> : null}
           </div>
         </section>
         ) : null}
@@ -263,13 +263,13 @@ export function CourseDetailPage({ courseId }: { courseId: string }) {
   const course = data?.course;
   const [joinMessage, setJoinMessage] = useState("");
 
-  async function joinCourse() {
+  async function openCourseBoardFromCourse() {
     if (!course) return;
     setJoinMessage("");
     const result = await api(`/api/courses/${course.id}/join`, { method: "POST" });
     const boardId = result?.board?.id;
     if (boardId) router.push(`/boards/${boardId}`);
-    else setJoinMessage(result?.message ?? "已加入课程板。");
+    else setJoinMessage(result?.message ?? "已打开课程板。");
   }
 
   return (
@@ -283,10 +283,10 @@ export function CourseDetailPage({ courseId }: { courseId: string }) {
             <h2 className="mt-1 font-serif text-2xl font-semibold text-ink">{course.title}</h2>
             <p className="mt-3 text-sm leading-6 text-ink/68">{course.description || "暂无课程描述。"}</p>
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              <button type="button" onClick={joinCourse} className="border border-ink bg-ink px-4 py-2 text-sm font-semibold text-paper">
-                加入课程板
+              <button type="button" onClick={openCourseBoardFromCourse} className="border border-ink bg-ink px-4 py-2 text-sm font-semibold text-paper">
+                打开 Course Board
               </button>
-              <p className="text-xs leading-5 text-ink/56">可用于自由选修或手动加入；只代表 TEAMAKING 平台内自选，不代表官方选课。</p>
+              <p className="text-xs leading-5 text-ink/56">只浏览或打开不会加入；发布 Post 或发送 TeamUp 后才会进入 Course People。</p>
             </div>
             {joinMessage ? <p className="mt-3 text-sm font-medium text-forest">{joinMessage}</p> : null}
           </Card>
@@ -347,15 +347,10 @@ export function BoardPage({ boardId }: { boardId: string }) {
     if (boardData?.myMembership?.sectionCode) setSectionCode(boardData.myMembership.sectionCode);
   }, [boardData?.myMembership?.sectionCode]);
 
-  async function joinOrLeave() {
+  async function leaveBoard() {
     setBoardMessage("");
-    if (boardData?.isJoined) {
-      const result = await api(`/api/boards/${boardId}/leave`, { method: "DELETE" });
-      setBoardMessage(result?.message ?? "已离开这个 Course Board。");
-    } else {
-      const result = await api(`/api/boards/${boardId}/join`, { method: "POST", body: JSON.stringify({ sectionCode }) });
-      setBoardMessage(result?.message ?? "已加入这个 Course Board。");
-    }
+    const result = await api(`/api/boards/${boardId}/leave`, { method: "DELETE" });
+    setBoardMessage(result?.message ?? "已离开这个 Course Board。");
     setRefresh((value) => value + 1);
   }
 
@@ -368,12 +363,13 @@ export function BoardPage({ boardId }: { boardId: string }) {
 
   async function createPost(event: FormEvent) {
     event.preventDefault();
-    await api(`/api/boards/${boardId}/teamaking-posts`, { method: "POST", body: JSON.stringify(postForm) });
+    const result = await api(`/api/boards/${boardId}/teamaking-posts`, { method: "POST", body: JSON.stringify({ ...postForm, sectionCode }) });
+    setBoardMessage(result?.message ?? "Teamaking Post 已发布；你已参与这个 Course Board。");
     setRefresh((value) => value + 1);
   }
 
   return (
-    <PageShell title={board?.title ?? "Course Board"} eyebrow="Course Board" description="Open to Team 是协作信号；Course People 是平台内自选加入名单，不是官方选课名单。">
+    <PageShell title={board?.title ?? "Course Board"} eyebrow="Course Board" description="Open to Team 是协作信号；发布 Post 或发送 TeamUp 后才会进入 Course People。">
       {authLoading || loading ? <LoadingState /> : <ErrorBox message={error} />}
       {!isAuthed ? (
         <div className="grid gap-5">
@@ -425,14 +421,22 @@ export function BoardPage({ boardId }: { boardId: string }) {
                 </p>
                 <p className="mt-2 text-sm text-ink/58">当前平台成员：{boardData.memberCount}</p>
               </div>
-              <button onClick={joinOrLeave} className="focus-ring rounded-lg bg-ink px-4 py-2 font-semibold text-white">
-                {boardData.isJoined ? "Leave Course Board" : "Join Course Board"}
-              </button>
+              {boardData.isJoined ? (
+                <button onClick={leaveBoard} className="focus-ring rounded-sm bg-ink px-4 py-2 font-semibold text-white">
+                  Leave Course Board
+                </button>
+              ) : (
+                <div className="max-w-xs border border-ink/20 bg-paper px-3 py-2 text-sm leading-6 text-ink/62">
+                  浏览不会加入；发布 Post 或发送 TeamUp 后才会显示在 Course People。
+                </div>
+              )}
             </div>
-            <form onSubmit={boardData.isJoined ? changeSection : (event) => { event.preventDefault(); joinOrLeave(); }} className="mt-5 grid gap-3 border border-ink/15 bg-paper p-4">
+            <form onSubmit={boardData.isJoined ? changeSection : (event) => event.preventDefault()} className="mt-5 grid gap-3 border border-ink/15 bg-paper p-4">
               <div>
                 <p className="text-sm font-semibold text-ink">Section / 班级</p>
-                <p className="mt-1 text-xs leading-5 text-ink/58">输入 10xx 格式的 section 编号。如果这门课没有多个 section/班级，默认使用 1001。Section 只用于 TEAMAKING 内部组队筛选，不代表官方选课验证。</p>
+                <p className="mt-1 text-xs leading-5 text-ink/58">
+                  输入 10xx 格式的 section 编号。如果这门课没有多个 section/班级，默认使用 1001。创建 Post 时会用这个 section；已经参与后可继续更新。
+                </p>
               </div>
               {sections.length ? (
                 <div className="flex flex-wrap gap-2">
@@ -450,9 +454,13 @@ export function BoardPage({ boardId }: { boardId: string }) {
               ) : null}
               <div className="grid gap-2 md:grid-cols-[180px_auto]">
                 <input className={inputClass} value={sectionCode} maxLength={4} onChange={(event) => setSectionCode(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="1001" />
-                <button className="w-fit rounded-sm border border-ink/40 px-4 py-2 text-sm font-semibold">
-                  {boardData.isJoined ? "Update section" : "Join with section"}
-                </button>
+                {boardData.isJoined ? (
+                  <button className="w-fit rounded-sm border border-ink/40 px-4 py-2 text-sm font-semibold">
+                    Update section
+                  </button>
+                ) : (
+                  <p className="self-center text-xs leading-5 text-ink/52">这个 section 会在你发布 Post 后写入 Course People。</p>
+                )}
               </div>
             </form>
             {boardMessage ? (
@@ -464,35 +472,38 @@ export function BoardPage({ boardId }: { boardId: string }) {
               </div>
             ) : null}
           </Card>
-          {boardData.isJoined ? (
-            <Card>
-              <h2 className="text-xl font-semibold text-ink">Create Teamaking Post</h2>
-              <form onSubmit={createPost} className="mt-4 grid gap-4">
-                <Field label="标题">
-                  <input className={inputClass} value={postForm.title} onChange={(event) => setPostForm({ ...postForm, title: event.target.value })} />
-                </Field>
-                <Field label="Strengths">
-                  <ToggleGroup values={strengths} selected={postForm.strengths} onChange={(values) => setPostForm({ ...postForm, strengths: values })} />
-                </Field>
-                <Field label="Contribution types">
-                  <ToggleGroup values={contributionTypes} selected={postForm.contributionTypes} onChange={(values) => setPostForm({ ...postForm, contributionTypes: values })} />
-                </Field>
-                <Field label="Expected outcome">
-                  <textarea className={inputClass} rows={3} value={postForm.expectedOutcome} onChange={(event) => setPostForm({ ...postForm, expectedOutcome: event.target.value })} placeholder="A polished report with strong argumentation and clean slides." />
-                </Field>
-                <Field label="Visibility">
-                  <select className={inputClass} value={postForm.visibility} onChange={(event) => setPostForm({ ...postForm, visibility: event.target.value })}>
-                    <option value="same_course_board">同一 Course Board 可见</option>
-                    <option value="same_school">同校可见</option>
-                  </select>
-                </Field>
-                <button className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-coral px-4 py-2 font-semibold text-white">
-                  <Plus size={16} aria-hidden />
-                  Create Teamaking Post
-                </button>
-              </form>
-            </Card>
-          ) : null}
+          <Card>
+            <h2 className="text-xl font-semibold text-ink">Create Teamaking Post</h2>
+            {!boardData.isJoined ? (
+              <p className="mt-2 text-sm leading-6 text-ink/62">
+                发布后才会算作参与这个 Course Board，并出现在 Dashboard 的当前课程板和 Course People 中。
+              </p>
+            ) : null}
+            <form onSubmit={createPost} className="mt-4 grid gap-4">
+              <Field label="标题">
+                <input className={inputClass} value={postForm.title} onChange={(event) => setPostForm({ ...postForm, title: event.target.value })} />
+              </Field>
+              <Field label="Strengths">
+                <ToggleGroup values={strengths} selected={postForm.strengths} onChange={(values) => setPostForm({ ...postForm, strengths: values })} />
+              </Field>
+              <Field label="Contribution types">
+                <ToggleGroup values={contributionTypes} selected={postForm.contributionTypes} onChange={(values) => setPostForm({ ...postForm, contributionTypes: values })} />
+              </Field>
+              <Field label="Expected outcome">
+                <textarea className={inputClass} rows={3} value={postForm.expectedOutcome} onChange={(event) => setPostForm({ ...postForm, expectedOutcome: event.target.value })} placeholder="A polished report with strong argumentation and clean slides." />
+              </Field>
+              <Field label="Visibility">
+                <select className={inputClass} value={postForm.visibility} onChange={(event) => setPostForm({ ...postForm, visibility: event.target.value })}>
+                  <option value="same_course_board">同一 Course Board 可见</option>
+                  <option value="same_school">同校可见</option>
+                </select>
+              </Field>
+              <button className="focus-ring inline-flex w-fit items-center gap-2 rounded-sm bg-coral px-4 py-2 font-semibold text-white">
+                <Plus size={16} aria-hidden />
+                Create Teamaking Post
+              </button>
+            </form>
+          </Card>
           <div className="flex gap-2">
             <button onClick={() => setTab("posts")} className={`rounded-lg px-4 py-2 font-semibold ${tab === "posts" ? "bg-ink text-white" : "bg-white text-ink"}`}>
               Open to Team
@@ -546,7 +557,7 @@ export function TeamakingPostPage({ postId }: { postId: string }) {
   async function teamUp(event: FormEvent) {
     event.preventDefault();
     const result = await api(`/api/teamaking-posts/${postId}/team-up`, { method: "POST", body: JSON.stringify(form) });
-    setMessage(result.existing ? "你已经发送过 TeamUp Interest，可在对方回应前撤回。" : "TeamUp Interest 已发送。");
+    setMessage(result.existing ? "你已经发送过 TeamUp Interest；这个课程板会继续显示在当前课程板中。" : "TeamUp Interest 已发送；你现在会进入这个课程板的 Course People。");
     setRefresh((value) => value + 1);
   }
 

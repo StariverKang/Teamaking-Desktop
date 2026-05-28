@@ -185,7 +185,7 @@ export async function handleAuth(method: string, path: string[], request: NextRe
     } catch {
       user = null;
     }
-    return ok({ user: user ? publicUser(user) : null });
+    return ok({ user: user ? publicUser(user, undefined, { includeMemberships: true }) : null });
   }
 
   if (method === "POST" && path[1] === "logout") {

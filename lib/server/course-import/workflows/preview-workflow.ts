@@ -337,7 +337,7 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>,
         ? "这是学校级 course catalog 导入；批准后只更新课程元数据和课程有效状态，不生成 admission-year rules。"
         : incomingOfferings.length
           ? "包含真实开课记录，会创建或更新 CourseBoard。"
-          : "这是按入学年份发布的 programme handbook / curriculum plan 导入；批准后只写入课程目录和 admission-year programme plan rules。CourseBoard 和默认加入由 Semester activation 单独触发。"
+          : "这是按入学年份发布的 programme handbook / curriculum plan 导入；批准后只写入课程目录和 admission-year programme plan rules。CourseBoard 激活和推荐匹配由 Semester activation 单独触发。"
     },
     counts: {
       newFaculties: facultyCodes.filter((code) => !existingFacultyCodes.has(code)).length,

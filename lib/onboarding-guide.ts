@@ -31,7 +31,7 @@ export const defaultOnboardingGuide: OnboardingGuide = {
       targetSelector: '[data-onboarding-target="academic-form"]',
       placement: "right",
       title: "先确认基础学业信息",
-      body: "显示名、Faculty、Major、入学年份和年级会影响课程推荐、Course Board 默认加入和同校可见性；这里不是官方选课系统。"
+      body: "显示名、Faculty、Major、入学年份和年级会影响课程推荐和同校可见性；这里不是官方选课系统。"
     },
     {
       id: "dashboard-overview",
@@ -62,8 +62,8 @@ export const defaultOnboardingGuide: OnboardingGuide = {
       route: "/courses",
       targetSelector: '[data-onboarding-target="courses-search"]',
       placement: "bottom",
-      title: "搜索或加入 Course Board",
-      body: "加入 Course Board 只代表你在 TEAMAKING 内自选加入，用于协作展示和匹配，不代表 BNBU 官方选课。"
+      title: "搜索并打开 Course Board",
+      body: "打开 Course Board 只是浏览；只有发布 Teamaking Post，或对该课程下的 Post 发送 TeamUp Interest 后，才算参与这门课的 Course Board。"
     },
     {
       id: "teamup-entry",

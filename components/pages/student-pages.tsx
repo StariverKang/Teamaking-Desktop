@@ -74,8 +74,8 @@ export function OnboardingPage() {
             <h2 className="text-xl font-semibold text-ink">TEAMAKING 使用方式</h2>
             <div className="mt-4 grid gap-3 text-sm leading-6 text-ink/68">
               <p>1. 完成 Proof-of-Work Profile，让别人先看到你的实际贡献。</p>
-              <p>2. 自己加入 Course Board，出现在 Course People 里。</p>
-              <p>3. 发布 Open to Team 信号，其他同学可以轻量 Team Up。</p>
+              <p>2. 浏览 Course Board，找到对应课程下的协作信号。</p>
+              <p>3. 发布 Open to Team 信号，或对同课 Post 发 TeamUp 后，才会进入 Course People。</p>
               <p>4. 最终沟通和组队在平台外完成，MVP 主要通过 WeChat 联系。</p>
             </div>
             <button type="button" onClick={() => router.push("/dashboard")} className="focus-ring mt-5 rounded-lg border border-ink/12 px-4 py-2 font-semibold">
@@ -170,7 +170,7 @@ export function DashboardPage() {
               <p className="text-sm text-ink/58">Quick links</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Link className="rounded-lg border border-ink/12 px-3 py-2 text-sm font-semibold" href="/courses">
-                  加入课程板
+                  浏览课程板
                 </Link>
                 <Link className="rounded-lg border border-ink/12 px-3 py-2 text-sm font-semibold" href="/profile/me">
                   编辑 Profile
@@ -189,11 +189,11 @@ export function DashboardPage() {
                   <Link key={membership.id} href={`/boards/${board.id}`} className="border-2 border-ink bg-paper p-4 transition hover:-translate-y-0.5 hover:shadow-hard">
                     <p className="text-sm font-semibold text-coral">{course?.code}</p>
                     <h3 className="mt-1 text-lg font-semibold text-ink">{course?.title ?? board.title}</h3>
-                    <p className="mt-2 text-xs text-ink/58">{membership.source?.startsWith("auto_") ? "BNBU 课程配置默认加入" : "手动加入"} · {board?.courseOffering?.semester?.name}</p>
+                    <p className="mt-2 text-xs text-ink/58">{membership.source === "teamaking_post" ? "已发布 Open to Team" : "已发送 TeamUp Interest"} · {board?.courseOffering?.semester?.name}</p>
                   </Link>
                 );
               })}
-              {currentMemberships.length === 0 ? <p className="text-sm text-ink/58">当前还没有加入的 Course Board。</p> : null}
+              {currentMemberships.length === 0 ? <p className="text-sm text-ink/58">当前还没有参与中的 Course Board。发布某课程的 Teamaking Post，或对该课程 Post 发送 TeamUp 后会显示在这里。</p> : null}
             </div>
           </section>
           <section>

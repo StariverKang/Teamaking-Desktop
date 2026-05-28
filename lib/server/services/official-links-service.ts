@@ -410,7 +410,7 @@ export function buildOfficialAcademicLinks(
       key: "mis",
       label: "MIS 本学期真实选课 / 课表",
       href: BNBU_MIS_URL,
-      description: "TEAMAKING 加入 Course Board 不等于官方选课，真实课表请以 MIS 为准。"
+      description: "TEAMAKING 参与 Course Board 不等于官方选课，真实课表请以 MIS 为准。"
     }
   ];
 }

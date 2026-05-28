@@ -47,7 +47,7 @@ export function CourseCard({ course, onJoin }: { course: any; onJoin?: (course: 
             onClick={() => onJoin(course)}
             className="focus-ring inline-flex items-center gap-2 border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper"
           >
-            加入课程板
+            打开 Course Board
             <ArrowRight size={15} aria-hidden />
           </button>
         ) : null}

@@ -7,7 +7,7 @@ import { demoPosts, isDemoUser } from "@/lib/demo-data";
 import { createDemoTeamUpInterest, demoInterestsForPost, demoPostById } from "@/lib/demo-store";
 import { profileInclude, userInclude } from "@/lib/server/services/user-service";
 import { operationLog } from "@/lib/server/services/system-service";
-import { assertSameSchool, ensureBoardMember } from "@/lib/server/services/course-service";
+import { assertSameSchool, ensureCourseBoardParticipation } from "@/lib/server/services/course-service";
 import { contactContextForViewer, publicUserForViewer, enrichPostForViewer } from "@/lib/server/services/social-service";
 
 export async function handleTeamakingPosts(method: string, path: string[], request: NextRequest) {
@@ -38,9 +38,6 @@ export async function handleTeamakingPosts(method: string, path: string[], reque
     });
     if (!post) throw new ApiError(404, "找不到这个 Teamaking Post。");
     assertSameSchool(user, post.board.courseOffering.course.schoolId);
-    if (post.visibility === "same_course_board") {
-      await ensureBoardMember(user.id, post.boardId);
-    }
     return ok({ post: await enrichPostForViewer(post, user) });
   }
 
@@ -180,10 +177,11 @@ export async function handleTeamakingPosts(method: string, path: string[], reque
       where: { id: postId },
       include: {
         user: { include: { contactInfo: true } },
-        board: true
+        board: { include: { courseOffering: { include: { course: true } } } }
       }
     });
     if (!post) throw new ApiError(404, "找不到这个 Teamaking Post。");
+    assertSameSchool(sender, post.board.courseOffering.course.schoolId);
     if (post.userId === sender.id) {
       throw new ApiError(400, "不能给自己的 Teamaking Post 发送 Team Up。");
     }
@@ -193,6 +191,13 @@ export async function handleTeamakingPosts(method: string, path: string[], reque
       where: { postId_senderId: { postId, senderId: sender.id } }
     });
     if (existing && existing.status !== "deleted") {
+      await prisma.$transaction(async (tx) => {
+        await ensureCourseBoardParticipation(tx, {
+          userId: sender.id,
+          boardId: post.boardId,
+          source: "team_up"
+        });
+      });
       return ok({ request: existing, existing: true, message: "你已经对这条 Teamaking Post 发过 TeamUp Interest。" });
     }
 
@@ -207,21 +212,29 @@ export async function handleTeamakingPosts(method: string, path: string[], reque
         receiverContactSnapshot: contactSnapshot(post.user.contactInfo, await contactContextForViewer(post.userId, sender, postId)),
         status: "sent"
     };
-    const requestRow = existing
-      ? await prisma.teamUpRequest.update({ where: { id: existing.id }, data: requestData })
-      : await prisma.teamUpRequest.create({ data: requestData });
+    const result = await prisma.$transaction(async (tx) => {
+      const membership = await ensureCourseBoardParticipation(tx, {
+        userId: sender.id,
+        boardId: post.boardId,
+        source: "team_up"
+      });
+      const request = existing
+        ? await tx.teamUpRequest.update({ where: { id: existing.id }, data: requestData })
+        : await tx.teamUpRequest.create({ data: requestData });
+      return { membership, request };
+    });
 
     await operationLog({
       actorUserId: sender.id,
       actorRole: sender.role,
       action: existing ? "team_up_requests.resend" : "team_up_requests.create",
       targetType: "TeamUpRequest",
-      targetId: requestRow.id,
+      targetId: result.request.id,
       method,
       path: request.nextUrl.pathname,
-      summary: { postId, receiverId: post.userId }
+      summary: { postId, receiverId: post.userId, membershipId: result.membership.id }
     });
-    return created({ request: requestRow });
+    return created({ request: result.request, membership: result.membership, message: "TeamUp Interest 已发送；你现在会出现在这个 Course Board 的 Course People 和 Dashboard 当前课程板中。" });
   }
 
   throw new ApiError(404, "找不到 Teamaking Post 接口。");

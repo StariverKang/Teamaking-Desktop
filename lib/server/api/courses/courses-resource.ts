@@ -4,8 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { ApiError, assertString, created, ok, optionalString, readBody } from "@/lib/http";
 import { requireUser } from "@/lib/session";
 import { demoCourseById, demoCourses, isDemoUser } from "@/lib/demo-data";
+import { activeCourseBoardParticipationWhere } from "@/lib/course-board-participation";
 import { userInclude, publicUser, scoreCourseMatch } from "@/lib/server/services/user-service";
-import { courseInclude, serializeCourseReviewComment, assertSameSchool, commentsForCourse, courseJoinAdvisory, normalizeSectionCode, findOrCreateBoardSection } from "@/lib/server/services/course-service";
+import { courseInclude, serializeCourseReviewComment, assertSameSchool, commentsForCourse, courseJoinAdvisory } from "@/lib/server/services/course-service";
 import { operationLog } from "@/lib/server/services/system-service";
 import { buildOfficialAcademicLinks, officialAcademicLinksForUser } from "@/lib/server/services/official-links-service";
 
@@ -68,7 +69,7 @@ export async function handleCourses(method: string, path: string[], request: Nex
                 classification: rule.classification,
                 classificationLabel: rule.classificationLabel,
                 studentAction: rule.studentAction,
-                reason: rule.studentAction === "default_join" ? "根据 BNBU 课程配置默认加入" : "根据 BNBU 课程配置推荐"
+                reason: rule.studentAction === "default_join" ? "根据 BNBU 课程配置重点推荐" : "根据 BNBU 课程配置推荐"
               }
             }))
         });
@@ -132,7 +133,7 @@ export async function handleCourses(method: string, path: string[], request: Nex
       ? await prisma.semester.findFirst({ where: { schoolId: user.schoolId, isCurrent: true } })
       : null;
     const rows = await prisma.courseBoardMembership.findMany({
-      where: { userId: user.id, status: "active" },
+      where: activeCourseBoardParticipationWhere({ userId: user.id }),
       include: {
         board: {
           include: {
@@ -215,13 +216,10 @@ export async function handleCourses(method: string, path: string[], request: Nex
       const board = course.offerings?.[0]?.boards?.[0];
       return ok({
         board,
-        membership: { id: "demo-membership-current", userId: user.id, boardId: board?.id },
-        message: "本地视觉演示模式已模拟加入 Course Board。"
+        message: "本地视觉演示模式已打开 Course Board。发布 Post 或发送 TeamUp 后才算加入。"
       });
     }
 
-    const body = await readBody(request);
-    const sectionCode = normalizeSectionCode(body.sectionCode);
     const course = await prisma.course.findUnique({ where: { id: courseId } });
     if (!course || course.status !== "active") throw new ApiError(404, "找不到可加入的课程。");
     assertSameSchool(user, course.schoolId);
@@ -276,32 +274,19 @@ export async function handleCourses(method: string, path: string[], request: Nex
             data: {
               courseOfferingId: offeringId,
               title: `${course.code} ${course.title}`,
-              rules: "这是 TEAMAKING 平台内自选加入的 Course Board，可用于自由选修、跨专业合作或兴趣组队；不代表官方选课名单。"
+              rules: "这是 TEAMAKING 平台内的 Course Board，可用于自由选修、跨专业合作或兴趣组队；只有发布 Post 或发送 TeamUp 后才会进入 Course People，不代表官方选课名单。"
             }
           });
         }
       }
 
-      const section = await findOrCreateBoardSection(tx, board.id, sectionCode, user.id);
-      const membership = await tx.courseBoardMembership.upsert({
-        where: { userId_boardId: { userId: user.id, boardId: board.id } },
-        update: { status: "active", source: "manual", sectionId: section.id, sectionCode, leftAt: null },
-        create: {
-          userId: user.id,
-          boardId: board.id,
-          sectionId: section.id,
-          sectionCode,
-          source: "manual",
-          status: "active"
-        }
-      });
-      return { board, membership };
+      return { board };
     });
 
     await operationLog({
       actorUserId: user.id,
       actorRole: user.role,
-      action: "course.manual_join",
+      action: "course_board.open",
       targetType: "Course",
       targetId: course.id,
       method,
@@ -309,15 +294,13 @@ export async function handleCourses(method: string, path: string[], request: Nex
       summary: {
         courseCode: course.code,
         boardId: result.board.id,
-        sectionCode,
-        reason: "student_search_or_free_elective"
+        reason: "student_opened_course_board"
       }
     });
 
     return ok({
       board: result.board,
-      membership: result.membership,
-      message: `你已加入 ${result.board.title} 的 ${sectionCode} section。自由选修/手动加入只代表平台内自选，不代表官方选课名单。`
+      message: `已打开 ${result.board.title}。只有发布 Teamaking Post 或发送 TeamUp Interest 后，才会加入这个 Course Board。`
     });
   }
 

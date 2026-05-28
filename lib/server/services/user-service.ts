@@ -1,4 +1,5 @@
 import { contactSnapshot } from "@/lib/contact";
+import { visibleCourseBoardMemberships } from "@/lib/course-board-participation";
 
 export const profileInclude = {
   faculty: true,
@@ -73,8 +74,8 @@ export function profileWithAcademicLock(user: any) {
   };
 }
 
-export function publicUser(user: any, contactContext?: Parameters<typeof contactSnapshot>[1]) {
-  return {
+export function publicUser(user: any, contactContext?: Parameters<typeof contactSnapshot>[1], options: { includeMemberships?: boolean } = {}) {
+  const serialized: any = {
     id: user.id,
     email: user.email,
     role: user.role,
@@ -87,6 +88,10 @@ export function publicUser(user: any, contactContext?: Parameters<typeof contact
     contactInfo: user.contactInfo ? contactSnapshot(user.contactInfo, contactContext) : null,
     skills: user.skills ?? []
   };
+  if (options.includeMemberships) {
+    serialized.memberships = visibleCourseBoardMemberships(user.memberships);
+  }
+  return serialized;
 }
 
 export function listFromJson(value: unknown) {

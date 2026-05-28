@@ -32,7 +32,7 @@ export async function findOrCreateBoard(tx: any, courseOfferingId: string, title
     data: {
       courseOfferingId,
       title,
-      rules: "请尊重同学，清楚表达自己的贡献方式。必修/核心课程可能由 BNBU 课程配置默认加入；你可以自行退出，Course People 不代表官方选课名单。"
+      rules: "请尊重同学，清楚表达自己的贡献方式。BNBU 课程配置只负责推荐和激活课程板；发布 Post 或发送 TeamUp Interest 后才会进入 Course People，且不代表官方选课名单。"
     }
   });
 }

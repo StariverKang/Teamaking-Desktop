@@ -1,7 +1,9 @@
 import { academicTermForRelativeTermCode, curriculumRuleMatchesUser, ruleHasProgrammeScope, ruleMatchesUserRelativeTerm } from "@/lib/server/course-import/curriculum-matching";
+import { type CourseBoardParticipationSource, preferredParticipationSource } from "@/lib/course-board-participation";
 
 import { countRows } from "@/lib/server/course-import/import-helpers";
-import { prisma } from "@/lib/prisma";import { ApiError } from "@/lib/http";
+import { prisma } from "@/lib/prisma";
+import { ApiError } from "@/lib/http";
 import { ERROR_CODES } from "@/lib/error-codes";
 
 import { isPlainRecord, numberValues, textValue, textValues } from "@/lib/server/services/json-service";
@@ -55,12 +57,7 @@ export async function getBoardForUser(boardId: string) {
         }
       },
       memberships: true,
-      sections: {
-        include: {
-          members: { where: { status: "active" }, select: { id: true } }
-        },
-        orderBy: { code: "asc" }
-      }
+      sections: { orderBy: { code: "asc" } }
     }
   });
 
@@ -74,14 +71,40 @@ export function assertSameSchool(user: { schoolId: string | null }, schoolId?: s
   }
 }
 
-export async function ensureBoardMember(userId: string, boardId: string) {
-  const membership = await prisma.courseBoardMembership.findUnique({
-    where: { userId_boardId: { userId, boardId } }
-  });
-
-  if (!membership || membership.status !== "active") {
-    throw new ApiError(403, "请先加入这个 Course Board，再创建 Teamaking Post。");
+export async function ensureCourseBoardParticipation(
+  tx: any,
+  input: {
+    userId: string;
+    boardId: string;
+    source: CourseBoardParticipationSource;
+    sectionCode?: string | null;
   }
+) {
+  const sectionCode = normalizeSectionCode(input.sectionCode);
+  const section = await findOrCreateBoardSection(tx, input.boardId, sectionCode, input.userId);
+  const existing = await tx.courseBoardMembership.findUnique({
+    where: { userId_boardId: { userId: input.userId, boardId: input.boardId } }
+  });
+  const source = preferredParticipationSource(existing?.source, input.source);
+
+  return tx.courseBoardMembership.upsert({
+    where: { userId_boardId: { userId: input.userId, boardId: input.boardId } },
+    update: {
+      status: "active",
+      source,
+      sectionId: section.id,
+      sectionCode,
+      leftAt: null
+    },
+    create: {
+      userId: input.userId,
+      boardId: input.boardId,
+      sectionId: section.id,
+      sectionCode,
+      source,
+      status: "active"
+    }
+  });
 }
 
 export async function commentsForCourse(courseId: string, page: number, pageSize: number) {

@@ -197,7 +197,7 @@ export function MatchesPage() {
               ) : null}
             </>
           ) : !loading ? (
-            <EmptyState title="暂时没有相关用户" body="加入课程板、完善专业信息，或等待更多同学开放 Profile 后，这里会优先显示同课和同专业的人。" />
+            <EmptyState title="暂时没有相关用户" body="发布课程 Post、发送 TeamUp、完善专业信息，或等待更多同学开放 Profile 后，这里会优先显示同课和同专业的人。" />
           ) : null}
         </section>
       </div>

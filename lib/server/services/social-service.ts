@@ -1,6 +1,8 @@
 
-import { prisma } from "@/lib/prisma";import { isAdminRole } from "@/lib/session";
+import { prisma } from "@/lib/prisma";
+import { isAdminRole } from "@/lib/session";
 import { contactSnapshot } from "@/lib/contact";
+import { courseBoardParticipationSources } from "@/lib/course-board-participation";
 
 import { listFromJson, publicUser } from "@/lib/server/services/user-service";
 
@@ -19,12 +21,14 @@ export async function shareActiveBoard(ownerId: string, viewerId: string) {
     where: {
       userId: ownerId,
       status: "active",
+      source: { in: [...courseBoardParticipationSources] },
       board: {
         status: "active",
         memberships: {
           some: {
             userId: viewerId,
-            status: "active"
+            status: "active",
+            source: { in: [...courseBoardParticipationSources] }
           }
         }
       }

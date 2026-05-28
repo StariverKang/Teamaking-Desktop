@@ -1188,3 +1188,26 @@
   - PROJECT_LOG 补记 5 月 27 日 BNBU course catalog common curriculum merge，并记录 5 月 28 日帮助中心、公开内容、CTA、登出修复和账号入口边界。
 - 验证：
   - `git diff --check` 用于确认本次文档补齐没有 trailing whitespace 或 patch 格式问题。
+
+### Course Board 参与定义修复
+
+- 背景：
+  - 用户指出 Dashboard 的 “My current Course Boards” 不清楚什么才算加入，而且在课程下发了 Post 后也没有显示为加入。
+  - 旧模型把“打开/手动加入课程板”和“真正参与协作”混在一起；同时 `/api/auth/me` 返回的当前用户对象没有携带 membership，导致 Dashboard 即使后端有记录也显示空。
+- 产品定义：
+  - 打开 Course Board、查看课程详情、浏览推荐课程都不算加入。
+  - 只有在某个 Course Board 下发布 Teamaking Post，或对该 Course Board 下的 Post 发送 TeamUp Interest，才算参与这个 Course Board。
+  - Dashboard 的 My current Course Boards、Course People、同课推荐和 same-course-board 可见性只认 `source=teamaking_post` 与 `source=team_up` 的 active membership。
+- 改动：
+  - 新增 `lib/course-board-participation.ts`，集中定义参与来源、过滤条件和 source 优先级。
+  - `/api/auth/me` 的当前用户序列化支持返回过滤后的 memberships，修复 Dashboard 当前课程板为空的问题。
+  - 创建 Teamaking Post 时不再要求先加入课程板；API 会在同一个 transaction 中创建/更新 `teamaking_post` membership。
+  - 发送 TeamUp Interest 时会创建/更新 `team_up` membership；旧的已存在 interest 也会补齐参与记录。
+  - Course People、`/api/courses/my`、Matches 同课推荐、same-course-board portfolio 可见性均改为只使用参与 membership。
+  - 课程列表、课程详情、Course Board 页文案从“加入课程板”改成“打开/浏览课程板”，并在创建 Post / TeamUp 处解释参与规则。
+  - README 和 onboarding guide 同步新的 Course Board 参与定义。
+- 验证：
+  - 先新增失败用例 `tests/unit/current-user-memberships.test.ts`，复现当前用户不返回 membership 的问题。
+  - `npm run test -- tests/unit/current-user-memberships.test.ts tests/unit/course-board-participation.test.ts tests/unit/social-discovery-visibility.test.ts tests/unit/onboarding-api.test.ts tests/unit/onboarding-guide.test.ts` 通过（5 files，10 tests）。
+  - `npm run lint` 通过。
+  - `npm run typecheck` 通过；`git diff --check` 通过。

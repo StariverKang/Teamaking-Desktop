@@ -68,7 +68,21 @@ export async function getCurrentUser() {
       school: true,
       profile: { include: { faculty: true, major: true } },
       contactInfo: true,
-      skills: { include: { skill: true } }
+      skills: { include: { skill: true } },
+      memberships: {
+        include: {
+          board: {
+            include: {
+              courseOffering: {
+                include: {
+                  course: true,
+                  semester: true
+                }
+              }
+            }
+          }
+        }
+      }
     }
   });
 }

@@ -29,7 +29,7 @@ export function CourseImportsAdminPanel({ ctx }: { ctx: AdminResourceContext }) 
       };
       const isAdmissionBatch = (row: any) => Array.isArray(row.cohortYears) && row.cohortYears.length > 0;
       const cleanupSummaryMessage = (result: any) => {
-        return `清理完成：${result?.batchCount ?? 0} 个 admission 批次，删除 ${result?.rulesDeleted ?? 0} 条规则、${result?.activeAutoMembershipsDeleted ?? 0} 个 active 自动加入、${result?.programmePlanOfferingsDeleted ?? 0} 个空 Programme Plan board。`;
+        return `清理完成：${result?.batchCount ?? 0} 个 admission 批次，删除 ${result?.rulesDeleted ?? 0} 条规则、${result?.activeAutoMembershipsDeleted ?? 0} 个 active 推荐匹配、${result?.programmePlanOfferingsDeleted ?? 0} 个空 Programme Plan board。`;
       };
       const pendingCount = importBatches.filter((row: any) => row.status === "pending").length;
       const clearedCount = importBatches.filter((row: any) => row.status === "cleared").length;
@@ -41,7 +41,7 @@ export function CourseImportsAdminPanel({ ctx }: { ctx: AdminResourceContext }) 
               <div>
                 <p className="text-sm font-semibold uppercase tracking-wide text-ink/50">Admission-year configuration operations</p>
                 <h3 className="mt-1 text-xl font-semibold text-ink">导入队列与配置历史</h3>
-                <p className="mt-1 text-sm text-ink/60">每一行是一份 JSON 配置操作。批准后会写入课程目录和 admission-year programme plan rules；CourseBoard 和默认加入需要在下面的学期激活入口单独触发。</p>
+                <p className="mt-1 text-sm text-ink/60">每一行是一份 JSON 配置操作。批准后会写入课程目录和 admission-year programme plan rules；CourseBoard 激活和推荐匹配需要在下面的学期激活入口单独触发。</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <span className="rounded-sm bg-paper px-3 py-1 text-sm font-semibold text-ink">{pendingCount} pending</span>
@@ -52,7 +52,7 @@ export function CourseImportsAdminPanel({ ctx }: { ctx: AdminResourceContext }) 
                   type="button"
                   disabled={Boolean(busyAction) || activeAdmissionCount === 0}
                   onClick={() => {
-                    if (!window.confirm("清空所有 admission 导入数据？这会删除 admission 规则和 active 自动加入记录，课程目录数据会保留。")) return;
+                    if (!window.confirm("清空所有 admission 导入数据？这会删除 admission 规则和 active 推荐匹配记录，课程目录数据会保留。")) return;
                     runAction("/api/admin/course-imports/clear-admission", "POST", {}, {
                       busy: "clear-all-admission",
                       success: (response) => cleanupSummaryMessage(response.result)
@@ -168,7 +168,7 @@ export function CourseImportsAdminPanel({ ctx }: { ctx: AdminResourceContext }) 
                 success: (response) => {
                   const result = response.result ?? {};
                   const totals = result.totals ?? {};
-                  return `已激活 ${result.semester?.name ?? "该学期"}：命中 ${result.dedupedRules ?? 0} 条去重规则，创建/复用 ${totals.boardsActivatedOrReused ?? 0} 个 Course Board，新增 ${totals.membershipsCreated ?? 0} 个默认加入。`;
+                  return `已激活 ${result.semester?.name ?? "该学期"}：命中 ${result.dedupedRules ?? 0} 条去重规则，创建/复用 ${totals.boardsActivatedOrReused ?? 0} 个 Course Board，新增 ${totals.membershipsCreated ?? 0} 条推荐匹配。`;
                 }
               });
             }}
@@ -176,7 +176,7 @@ export function CourseImportsAdminPanel({ ctx }: { ctx: AdminResourceContext }) 
             <div className="md:col-span-5">
               <p className="text-sm font-semibold uppercase tracking-wide text-ink/50">Semester activation</p>
               <h3 className="mt-1 text-lg font-semibold text-ink">发起学期并激活 admission plan</h3>
-              <p className="mt-1 text-sm text-ink/60">这里才会按真实 Spring/Fall 计算各届学生的 relative term，创建/复用对应 CourseBoard，并对 default_join 规则执行自动加入。爬取和导入不会再决定学期激活。</p>
+              <p className="mt-1 text-sm text-ink/60">这里才会按真实 Spring/Fall 计算各届学生的 relative term，创建/复用对应 CourseBoard，并对 default_join 规则执行推荐匹配。爬取和导入不会再决定学期激活，用户发布 Post 或发送 TeamUp 后才算参与。</p>
             </div>
             <input
               className={inputClass}

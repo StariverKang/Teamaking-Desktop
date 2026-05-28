@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { ok } from "@/lib/http";
 import { requireUser } from "@/lib/session";
 import { demoPeople, demoPosts, isDemoUser } from "@/lib/demo-data";
+import { activeCourseBoardParticipationWhere } from "@/lib/course-board-participation";
 import { profileInclude, userInclude, publicUser } from "@/lib/server/services/user-service";
 import { enrichPost } from "@/lib/server/services/social-service";
 
@@ -60,12 +61,11 @@ export async function handleMatches(request: NextRequest) {
     });
   }
 
-  const courseHistoryStatuses = ["active", "history", "left"];
   const memberships = await prisma.courseBoardMembership.findMany({
-    where: { userId: user.id, status: { in: courseHistoryStatuses } },
+    where: activeCourseBoardParticipationWhere({ userId: user.id }),
     include: { board: { include: { courseOffering: { include: { course: true } } } } }
   });
-  const boardIds = [...new Set(memberships.filter((membership) => membership.status === "active").map((membership) => membership.boardId))];
+  const boardIds = [...new Set(memberships.map((membership) => membership.boardId))];
   const courseIds = [
     ...new Set(memberships.map((membership) => membership.board.courseOffering.courseId).filter(Boolean))
   ];
@@ -111,15 +111,14 @@ export async function handleMatches(request: NextRequest) {
 
   if (courseIds.length) {
     const sameCourseMemberships = await prisma.courseBoardMembership.findMany({
-      where: {
-        status: { in: courseHistoryStatuses },
+      where: activeCourseBoardParticipationWhere({
         userId: { not: user.id },
         board: { courseOffering: { courseId: { in: courseIds } } },
         user: {
           schoolId: user.schoolId ?? "",
           profile: { openToBeDiscovered: true }
         }
-      },
+      }),
       include: {
         user: { include: userInclude },
         board: { include: { courseOffering: { include: { course: true } } } }
