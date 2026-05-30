@@ -1287,3 +1287,29 @@
   - 已通过 `npm run prisma:validate`、`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`npm run test:e2e -- --project=chromium tests/e2e/site-copy.spec.ts`。
   - in-app browser 验收：`/admin/site-copy` 能显示字段列表且不被 onboarding tour 跳走；管理员在 `/courses` 能看到工具条和搜索 placeholder。
   - 本地 dev DB 仍有既有 schema drift：课程接口查询 `Course.catalogEffectiveYear` 时可能报 `P2022`；这不是 Interface Copy 改动引入，e2e 已 mock 课程数据验证文案链路。
+
+## 2026-05-30
+
+### 2026 Spring admission 推荐为空修复
+
+- 背景：
+  - 复现路径为先清空 admission 数据，再导入 course catalog 和 2023/2024/2025 admission handbook，随后激活 2026 Spring 学期；学生个人主页和 Course Board Recommended 区看不到专业推荐。
+  - 诊断时用 2025 MCOM 学生计算 2026 Spring relative term，结果是 `Y1S2`，但当前 crawler 产物和数据库 active rules 只有 `Y1S1/Y2S1` 等 Fall 侧规则，Spring 激活匹配数为 0。
+- 根因：
+  - `scripts/bnbu-crawler/run-handbook-preview.mjs` 只按课程代码首位 fallback 成 `YxS1`，没有读取 handbook PDF 课程安排表里的 `Sem 1 / Sem 2` 坐标列。
+  - 因此使用 crawler 重新生成 admission JSON 时，Spring 课程如 2025 MCOM 的 `MCOM1003/MCOM1013` 没有生成 `Y1S2`，后续 semester activation 和 `/api/courses/recommended` 都没有可匹配规则。
+- 改动：
+  - programme handbook runner 新增 PDF semester-table 坐标解析，将课程行学分所在列映射为 `Y1S1/Y1S2/Y2S1/...`。
+  - semester table 解析兼容 `Sem 1/2` 和 `Semester 1/2` 表头，并放宽课程代码列的 x 坐标容忍度，减少不同 handbook PDF 布局差异导致的漏读。
+  - `parseCourses()` 优先使用 PDF term map，只有缺少坐标表时才回退到旧的课程代码首位推断。
+  - runner 增加 import guard，便于 Vitest 直接导入纯函数而不会启动真实爬虫。
+  - 新增 `tests/unit/handbook-runner-term-map.test.ts`，锁住 `MCOM1003 -> Y1S2`、`MCOM2013 -> Y2S1`、`Y3S2/Y4S2` 和多学期课程映射。
+  - 测试读取现有 2024/2025 BNBU handbook fixture，逐专业断言每个 major 都保留 `Y1S2/Y2S2/Y3S2`，防止全量导入再次退化成只有 `S1`。
+- 验证：
+  - `npm run test -- tests/unit/handbook-runner-term-map.test.ts` 通过。
+  - `npm run test -- tests/unit/handbook-runner-term-map.test.ts tests/unit/crawler-build-trace.test.ts tests/unit/crawler-io.test.ts` 通过。
+  - `npm run lint`、`npm run typecheck`、`npm run test` 和 `git diff --check` 均通过。
+  - 真实小爬取 `node scripts/bnbu-crawler/run-handbook-preview.mjs --cohorts=2025 --programmes=MCOM --limit=1 --outDir=/tmp/teamaking-handbook-runner-check --aiMode=off` 通过，输出中 `MCOM1003` 和 `MCOM1013` 均为 `Y1S2`。
+  - 真实全专业爬取 `2023,2024,2025` admission handbook 均通过逐专业矩阵检查：2023 共 31 个专业 / 1467 条 rules、2024 共 31 个专业 / 1410 条 rules、2025 共 32 个专业 / 1439 条 rules，`Y1S2/Y2S2/Y3S2` 缺失列表均为空。
+- 后续操作：
+  - 已用旧 runner 导入的 admission 数据需要用修复后的 crawler 重新生成、创建 pending、批准导入，并再次激活目标学期；代码修复不会自动改写既有数据库里的错误 rule。

@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { applyCrawlerAiAssist } from "./ai-catalog-assistant.mjs";
 import { loadPdfjs, pdfStandardFontDataUrl } from "./pdfjs-runtime.mjs";
 
@@ -193,10 +194,61 @@ function cleanTitle(value) {
   return value.replace(/[①②③④⑤⑥⑦⑧⑨]/g, "").replace(/\s+/g, " ").trim();
 }
 
-function relativeTermFromCode(code) {
+export function relativeTermFromCode(code) {
   const digit = Number(code.match(/[A-Z]+(\d)/)?.[1] ?? 1);
   const year = Math.min(Math.max(digit || 1, 1), 4);
   return [`Y${year}S1`];
+}
+
+function nearestRelativeTerm(x, headerColumns) {
+  let best = null;
+  for (const column of headerColumns) {
+    const distance = Math.abs(x - column.x);
+    if (!best || distance < best.distance) best = { ...column, distance };
+  }
+  return best && best.distance < 18 ? best.term : null;
+}
+
+function mergeCourseTermMaps(target, source) {
+  for (const [code, terms] of source.entries()) {
+    target.set(code, [...new Set([...(target.get(code) ?? []), ...terms])]);
+  }
+}
+
+export function courseTermMapFromPositionedText(items) {
+  const textItems = items
+    .filter((item) => item && typeof item.str === "string" && item.str.trim())
+    .map((item) => ({ str: item.str.trim(), x: Number(item.x), y: Number(item.y) }))
+    .filter((item) => Number.isFinite(item.x) && Number.isFinite(item.y));
+  const semHeaders = textItems
+    .filter((item) => /^(?:Sem|Semester)\s*[12]$/i.test(item.str) && item.x > 240)
+    .sort((a, b) => a.x - b.x);
+  const headerColumns = [];
+  let year = 1;
+  for (const header of semHeaders) {
+    const sem = /2/.test(header.str) ? 2 : 1;
+    headerColumns.push({ x: header.x + 8, term: `Y${year}S${sem}` });
+    if (sem === 2) year += 1;
+  }
+  if (!headerColumns.length) return new Map();
+
+  const rows = new Map();
+  for (const item of textItems) {
+    const key = String(Math.round(item.y));
+    rows.set(key, [...(rows.get(key) ?? []), item]);
+  }
+
+  const termsByCode = new Map();
+  for (const row of rows.values()) {
+    const code = row.find((item) => /^[A-Z]{2,6}(?:\d{4}|\dXX\d)[A-Z]?$/.test(item.str) && item.x < 160)?.str;
+    if (!code) continue;
+    const terms = row
+      .filter((item) => /^\d(?:\.\d)?$/.test(item.str) && item.x > 240)
+      .map((item) => nearestRelativeTerm(item.x, headerColumns))
+      .filter(Boolean);
+    if (terms.length) termsByCode.set(code, [...new Set(terms)]);
+  }
+  return termsByCode;
 }
 
 async function fetchText(url) {
@@ -244,6 +296,41 @@ async function pdfText(buffer) {
   }
   await doc.destroy();
   return lines.join("\n");
+}
+
+async function pdfCourseTermMap(buffer) {
+  const { getDocument, VerbosityLevel, Util } = await loadPdfjs();
+  const data = new Uint8Array(buffer);
+  const doc = await getDocument({
+    data,
+    standardFontDataUrl: pdfStandardFontDataUrl,
+    disableWorker: true,
+    verbosity: VerbosityLevel.ERRORS
+  }).promise;
+  const termsByCode = new Map();
+  try {
+    for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
+      const page = await doc.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1 });
+      const content = await page.getTextContent();
+      const positionedItems = content.items.map((item) => {
+        const text = typeof item.str === "string" ? item.str : "";
+        const transform = Array.isArray(item.transform) && Util?.transform
+          ? Util.transform(viewport.transform, item.transform)
+          : item.transform;
+        return {
+          str: text,
+          x: Number(transform?.[4]),
+          y: Number(transform?.[5])
+        };
+      });
+      mergeCourseTermMaps(termsByCode, courseTermMapFromPositionedText(positionedItems));
+      page.cleanup();
+    }
+  } finally {
+    await doc.destroy();
+  }
+  return termsByCode;
 }
 
 function parseCohortLinks(html, baseUrl) {
@@ -296,7 +383,7 @@ function ownerUnitFor(programme, courseCode) {
   return { type: "faculty", code: programme.facultyCode, name: programme.facultyName };
 }
 
-function parseCourses(text, programme, sourceId, cohortYear) {
+export function parseCourses(text, programme, sourceId, cohortYear, termsByCode = new Map()) {
   const courses = [];
   const rules = [];
   const planSemester = planSemesterForCohort(cohortYear);
@@ -313,7 +400,8 @@ function parseCourses(text, programme, sourceId, cohortYear) {
     const ownerUnit = ownerUnitFor(programme, code);
     const programmeScoped = programmeScopedClassifications.has(category.classification);
     const studentAction = defaultJoinClassifications.has(category.classification) ? "default_join" : "searchable_add";
-    const relativeTermCodes = programmeScoped || studentAction === "default_join" ? relativeTermFromCode(code) : [];
+    const inferredTerms = termsByCode.get(code) ?? relativeTermFromCode(code);
+    const relativeTermCodes = programmeScoped || studentAction === "default_join" ? inferredTerms : [];
     courses.push({
       code,
       title: cleanTitle(titleRaw),
@@ -336,7 +424,7 @@ function parseCourses(text, programme, sourceId, cohortYear) {
       studentAction,
       ownerUnit,
       sourceRefIds: [sourceId],
-      confidence: relativeTermCodes.length ? "low" : "medium"
+      confidence: termsByCode.has(code) ? "medium" : relativeTermCodes.length ? "low" : "medium"
     });
   }
   return { courses, rules };
@@ -412,6 +500,7 @@ async function buildPayload(cohortPage) {
     const sourceId = `handbook-${cohortPage.cohort}-${programme.code.toLowerCase()}`;
     const buffer = await fetchBuffer(programme.href);
     const text = await pdfText(buffer);
+    const termsByCode = await pdfCourseTermMap(buffer);
     sourceRefs.push({
       id: sourceId,
       title: `${programme.name} Handbook ${cohortPage.cohort} Admission`,
@@ -420,10 +509,10 @@ async function buildPayload(cohortPage) {
       retrievedAt,
       sha256: createHash("sha256").update(buffer).digest("hex")
     });
-    const parsed = parseCourses(text, programme, sourceId, cohortPage.cohort);
+    const parsed = parseCourses(text, programme, sourceId, cohortPage.cohort, termsByCode);
     courses.push(...parsed.courses);
     rules.push(...parsed.rules);
-    console.log(`parsed ${cohortPage.cohort} ${programme.code}: ${parsed.courses.length} course rows`);
+    console.log(`parsed ${cohortPage.cohort} ${programme.code}: ${parsed.courses.length} course rows, ${termsByCode.size} term-mapped rows`);
   }
   const faculties = [...new Map(selected.map((item) => [item.facultyCode, { code: item.facultyCode, name: item.facultyName }])).values()].sort((a, b) => a.code.localeCompare(b.code));
   return {
@@ -481,7 +570,11 @@ async function flushAndExit(code) {
   process.exit(code);
 }
 
-main().then(() => flushAndExit(0)).catch((error) => {
-  console.error(error);
-  void flushAndExit(1);
-});
+const isCliEntrypoint = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isCliEntrypoint) {
+  main().then(() => flushAndExit(0)).catch((error) => {
+    console.error(error);
+    void flushAndExit(1);
+  });
+}
