@@ -84,17 +84,11 @@ export function courseEffectiveYearFromPayload(payload: Record<string, unknown>,
   if (explicitCourseYear) return explicitCourseYear;
   const explicitPayloadYear = numberValue(payload.catalogEffectiveYear) ?? numberValue(isPlainRecord(payload.crawlerMeta) ? payload.crawlerMeta.catalogEffectiveYear : undefined);
   if (explicitPayloadYear) return explicitPayloadYear;
-  const semester = isPlainRecord(payload.semester) ? payload.semester : {};
-  const semesterYear = numberValue(semester.academicYear);
-  if (semesterYear) return semesterYear;
-  const cohortYears = Array.isArray(payload.cohortYears)
-    ? payload.cohortYears.map((item) => numberValue(item)).filter((item): item is number => Boolean(item))
-    : [];
-  return cohortYears.length ? Math.max(...cohortYears) : null;
+  return null;
 }
 
 export function importModeForLifecycle(payload: Record<string, unknown>, fallback?: string) {
-  return textValue(payload.importMode) || fallback || (records(payload.curriculumRules).length ? "cohort_programme_handbook" : "course_catalog");
+  return textValue(payload.importMode) || fallback || (records(payload.curriculumRules).length || records(payload.offerings).length ? "cohort_programme_handbook" : "course_catalog");
 }
 
 export function courseCatalogSnapshotCompleteness(payload: Record<string, unknown>) {

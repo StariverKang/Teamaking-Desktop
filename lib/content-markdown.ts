@@ -21,6 +21,7 @@ export type MarkdownHeading = {
   depth: number;
   text: string;
   id: string;
+  line: number;
 };
 
 type Frontmatter = Record<string, string>;
@@ -185,16 +186,21 @@ export function extractMarkdownHeadings(markdown: string): MarkdownHeading[] {
   const used = new Map<string, number>();
   return markdown
     .split(/\r?\n/)
-    .map((line) => /^(#{1,4})\s+(.+?)\s*$/.exec(line))
-    .filter((match): match is RegExpExecArray => Boolean(match))
-    .map((match) => {
+    .map((line, index) => ({ match: /^(#{1,4})\s+(.+?)\s*$/.exec(line), line: index + 1 }))
+    .filter((item): item is { match: RegExpExecArray; line: number } => Boolean(item.match))
+    .map(({ match, line }) => {
       const text = match[2].replace(/[#*_`[\]()]/g, "").trim();
       return {
         depth: match[1].length,
         text,
-        id: headingId(text, used)
+        id: headingId(text, used),
+        line
       };
     });
+}
+
+export function extractMarkdownHeadingIdByLine(markdown: string) {
+  return new Map(extractMarkdownHeadings(markdown).map((heading) => [heading.line, heading.id]));
 }
 
 export function flattenContentDocuments(documents: any[]): any[] {

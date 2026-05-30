@@ -62,6 +62,23 @@ describe("crawler input normalization", () => {
     });
   });
 
+  it("separates course catalog effective year from semester metadata", () => {
+    const input = normalizeCrawlerJobInput({
+      target: "course_catalog",
+      courseDescriptionsUrl: "https://ar.bnbu.edu.cn/info/1021/1430.htm",
+      catalogEffectiveYear: "2027",
+      academicYear: "2026",
+      term: "Fall"
+    }, defaults);
+
+    expect(input).toMatchObject({
+      target: "course_catalog",
+      catalogEffectiveYear: "2027",
+      academicYear: "2026",
+      term: "Fall"
+    });
+  });
+
   it("uses job-scoped download directories", () => {
     expect(jobScopedCrawlerOutputDir("/tmp/teamaking/crawler_outputs", "job_123"))
       .toBe(path.join("/tmp/teamaking/crawler_outputs", "job_123"));
@@ -88,7 +105,14 @@ describe("crawler input normalization", () => {
       "",
       "Node.js v24.14.1"
     ].join("\n");
-    expect(crawlerErrorSummary(stderr)).toBe("Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'pdfjs-dist' imported from /var/task/scripts/bnbu-crawler/run-handbook-preview.mjs");
+    expect(crawlerErrorSummary(stderr)).toContain("PDF 解析依赖缺失");
+    expect(crawlerErrorSummary(stderr)).toContain("pdfjs-dist");
+  });
+
+  it("classifies handbook and network crawler errors for admins", () => {
+    expect(crawlerErrorSummary("TypeError: fetch failed\ncause: Error: read ECONNRESET")).toContain("网络或 PDF 下载中断");
+    expect(crawlerErrorSummary("Error: Could not find programme handbook page for 2022 admission at https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm")).toContain("未在 handbook 总入口找到指定 admission year");
+    expect(crawlerErrorSummary("Error: Admission year mismatch: the page appears to be 2025 admission, but --cohorts=2022 was provided.")).toContain("Admission year 与页面内容不一致");
   });
 
   it("lists crawler outputs recursively and annotates job scoped files", async () => {

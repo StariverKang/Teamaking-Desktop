@@ -76,7 +76,7 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>,
   const semesterInput = isPlainRecord(payload.semester) ? payload.semester : {};
   const semesterCode = textValue(semesterInput.code);
   const school = await getActiveSchool("BNBU");
-  const semester = school
+  const semester = !courseCatalogImport && school && semesterCode
     ? await prisma.semester.findFirst({
         where: {
           schoolId: school.id,
@@ -329,12 +329,12 @@ export async function buildCourseImportPreview(payload: Record<string, unknown>,
     validation,
     importMode: courseCatalogImport ? "course_catalog" : handbookOnlyImport ? "cohort_handbook" : "combined_with_offerings",
     semester: {
-      code: semesterCode,
-      exists: Boolean(semester),
+      code: courseCatalogImport ? null : semesterCode,
+      exists: !courseCatalogImport && Boolean(semester),
       willBecomeCurrent: semesterInput.isCurrentCandidate === true,
-      label: textValue(semesterInput.name),
+      label: courseCatalogImport ? "School-wide course catalog" : textValue(semesterInput.name),
       note: courseCatalogImport
-        ? "这是学校级 course catalog 导入；批准后只更新课程元数据和课程有效状态，不生成 admission-year rules。"
+        ? "这是学校级 course catalog 导入；批准后只更新课程元数据和课程有效状态，不创建学期、专业或年级绑定。所有 active 课程都可搜索并手动打开 Course Board。"
         : incomingOfferings.length
           ? "包含真实开课记录，会创建或更新 CourseBoard。"
           : "这是按入学年份发布的 programme handbook / curriculum plan 导入；批准后只写入课程目录和 admission-year programme plan rules。CourseBoard 激活和推荐匹配由 Semester activation 单独触发。"

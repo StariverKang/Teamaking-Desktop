@@ -15,6 +15,7 @@ export type NormalizedCrawlerJobInput = {
   programmeName: string;
   facultyName: string;
   limit: string;
+  catalogEffectiveYear: string;
   academicYear: string;
   term: string;
   semesterCode: string;
@@ -105,6 +106,7 @@ export function normalizeCrawlerJobInput(
   const aiMode = normalizeAiMode(body.aiMode);
   const requestedName = optionalString(body.name) ?? optionalString(body.jobName);
   const target = textValue(body.target) || natural.target || "programme_handbook";
+  const catalogEffectiveYear = textValue(body.catalogEffectiveYear) || (target === "course_catalog" ? textValue(body.academicYear) || natural.academicYear : "") || defaults.academicYear || String(new Date().getFullYear());
   const aiMaxTokens = optionalPositiveInteger(body.aiMaxTokens);
 
   return {
@@ -124,6 +126,7 @@ export function normalizeCrawlerJobInput(
     programmeName: textValue(body.programmeName),
     facultyName: textValue(body.facultyName),
     limit: textValue(body.limit) || natural.limit || "all",
+    catalogEffectiveYear,
     academicYear,
     term,
     semesterCode: textValue(body.semesterCode) || `${academicYear}-${term}`,

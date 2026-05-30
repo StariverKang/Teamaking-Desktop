@@ -395,7 +395,7 @@ export async function handleOnboarding(method: string, path: string[], request: 
     const majorId = assertString(body.majorId, "majorId");
     const displayName = optionalString(body.displayName) ?? user.profile?.displayName ?? user.email.split("@")[0];
     const entryYear = academic.entryYear ?? (typeof body.entryYear === "number" && Number.isFinite(body.entryYear) ? Math.trunc(body.entryYear) : undefined);
-    const entryTerm = academic.entryTerm ?? optionalString(body.entryTerm) ?? "Fall";
+    const entryTerm = "Fall";
 
     const profile = await prisma.userProfile.upsert({
       where: { userId: user.id },

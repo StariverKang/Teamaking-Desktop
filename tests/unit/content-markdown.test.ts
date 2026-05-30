@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   contentBreadcrumb,
+  extractMarkdownHeadingIdByLine,
   extractMarkdownHeadings,
   parseContentMarkdownFile,
   relatedContentDocuments,
@@ -76,11 +77,12 @@ describe("content markdown helpers", () => {
 
   it("extracts stable heading ids with duplicate handling", () => {
     expect(extractMarkdownHeadings("# Overview\n## FAQ\n### FAQ\n##### Ignored\n## FAQ")).toEqual([
-      { depth: 1, text: "Overview", id: "overview" },
-      { depth: 2, text: "FAQ", id: "faq" },
-      { depth: 3, text: "FAQ", id: "faq-2" },
-      { depth: 2, text: "FAQ", id: "faq-3" }
+      { depth: 1, text: "Overview", id: "overview", line: 1 },
+      { depth: 2, text: "FAQ", id: "faq", line: 2 },
+      { depth: 3, text: "FAQ", id: "faq-2", line: 3 },
+      { depth: 2, text: "FAQ", id: "faq-3", line: 5 }
     ]);
+    expect([...extractMarkdownHeadingIdByLine("# Overview\n## FAQ").entries()]).toEqual([[1, "overview"], [2, "faq"]]);
   });
 
   it("builds breadcrumbs, search results, and related article recommendations", () => {

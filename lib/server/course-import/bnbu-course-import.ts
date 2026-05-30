@@ -220,27 +220,33 @@ export function validateBnbuCourseImportPayload(payload: unknown): BnbuValidatio
   if (!school) errors.push("school is required");
   if (school && text(school.shortName) !== "BNBU") errors.push("school.shortName must be BNBU");
 
-  const semester = isRecord(payload.semester) ? payload.semester : null;
-  const semesterCode = semester ? text(semester.code) : "";
-  if (!semester) errors.push("semester is required");
-  if (semester && !semesterCode) errors.push("semester.code is required");
-  if (semester && !text(semester.name)) errors.push("semester.name is required");
-  if (semester && typeof semester.academicYear !== "number") errors.push("semester.academicYear must be a number");
-  if (semester && !text(semester.term)) errors.push("semester.term is required");
-  if (semester && semester.isCurrentCandidate === true) {
-    const importTermIndex = semesterAcademicTermIndex(semester);
-    const currentTermIndex = currentAcademicTermIndex();
-    if (importTermIndex !== null && importTermIndex < currentTermIndex) {
-      errors.push("semester.isCurrentCandidate cannot be true for a historical semester");
-    }
-  }
-
   const sourceRefs = recordArray(payload.sourceRefs);
   const faculties = recordArray(payload.faculties);
   const majors = recordArray(payload.majors);
   const courses = recordArray(payload.courses);
   const offerings = recordArray(payload.offerings);
   const curriculumRules = recordArray(payload.curriculumRules);
+  const importMode = text(payload.importMode) || (curriculumRules.length || offerings.length ? "cohort_programme_handbook" : "course_catalog");
+  const isCourseCatalog = importMode === "course_catalog";
+  const crawlerMeta = isRecord(payload.crawlerMeta) ? payload.crawlerMeta : {};
+  const semester = isRecord(payload.semester) ? payload.semester : null;
+  const semesterCode = semester ? text(semester.code) : "";
+  if (!isCourseCatalog && !semester) errors.push("semester is required");
+  if (!isCourseCatalog && semester && !semesterCode) errors.push("semester.code is required");
+  if (!isCourseCatalog && semester && !text(semester.name)) errors.push("semester.name is required");
+  if (!isCourseCatalog && semester && typeof semester.academicYear !== "number") errors.push("semester.academicYear must be a number");
+  if (!isCourseCatalog && semester && !text(semester.term)) errors.push("semester.term is required");
+  if (isCourseCatalog && semester) errors.push("course_catalog must not contain semester metadata; course catalog rows are school-wide and not tied to an academic term");
+  if (isCourseCatalog && number(payload.catalogEffectiveYear) === undefined && number(crawlerMeta.catalogEffectiveYear) === undefined) {
+    errors.push("course_catalog requires catalogEffectiveYear for catalog lifecycle review");
+  }
+  if (!isCourseCatalog && semester && semester.isCurrentCandidate === true) {
+    const importTermIndex = semesterAcademicTermIndex(semester);
+    const currentTermIndex = currentAcademicTermIndex();
+    if (importTermIndex !== null && importTermIndex < currentTermIndex) {
+      errors.push("semester.isCurrentCandidate cannot be true for a historical semester");
+    }
+  }
 
   const sourceIds = sourceRefs.map((item) => text(item.id)).filter(Boolean);
   const facultyCodes = faculties.map((item) => text(item.code)).filter(Boolean);
@@ -249,9 +255,12 @@ export function validateBnbuCourseImportPayload(payload: unknown): BnbuValidatio
   const ruleIds = curriculumRules.map((item) => text(item.id)).filter(Boolean);
 
   if (sourceRefs.length === 0) warnings.push("sourceRefs is empty; admin review will have weaker traceability");
-  if (faculties.length === 0) errors.push("faculties must contain at least one faculty");
-  if (majors.length === 0) warnings.push("majors is empty; only allMajors/faculty rules can auto-match users");
+  if (!isCourseCatalog && faculties.length === 0) errors.push("faculties must contain at least one faculty");
+  if (!isCourseCatalog && majors.length === 0) warnings.push("majors is empty; only allMajors/faculty rules can auto-match users");
   if (courses.length === 0) errors.push("courses must contain at least one course");
+  if (isCourseCatalog && majors.length > 0) errors.push("course_catalog must not contain majors; major-specific placement belongs in programme handbook imports");
+  if (isCourseCatalog && offerings.length > 0) errors.push("course_catalog must not contain offerings; real timetable evidence belongs in a semester offering import");
+  if (isCourseCatalog && curriculumRules.length > 0) errors.push("course_catalog must not contain curriculumRules; admission-year recommendations belong in programme handbook imports");
   if (offerings.length === 0) {
     if (isV2) {
       // v2 handbook/programme-plan imports are allowed to be cohort curriculum only.
@@ -260,7 +269,7 @@ export function validateBnbuCourseImportPayload(payload: unknown): BnbuValidatio
       errors.push("offerings must contain at least one offering");
     }
   }
-  if (curriculumRules.length === 0) warnings.push("curriculumRules is empty; courses will be searchable only if imported manually later");
+  if (!isCourseCatalog && curriculumRules.length === 0) warnings.push("curriculumRules is empty; courses will not create admission-year recommendations");
 
   duplicated(sourceIds).forEach((id) => errors.push(`duplicate sourceRef id: ${id}`));
   duplicated(facultyCodes).forEach((code) => errors.push(`duplicate faculty code: ${code}`));
@@ -310,6 +319,7 @@ export function validateBnbuCourseImportPayload(payload: unknown): BnbuValidatio
     if (courseCode && !courseCodeSet.has(courseCode)) errors.push(`offerings[${index}] references unknown courseCode: ${courseCode}`);
     const offeringSemesterCode = text(item.semesterCode);
     if (!offeringSemesterCode) errors.push(`offerings[${index}].semesterCode is required`);
+    if (!semesterCode) errors.push(`offerings[${index}] requires top-level semester metadata`);
     if (offeringSemesterCode && semesterCode && offeringSemesterCode !== semesterCode) errors.push(`offerings[${index}].semesterCode must match semester.code`);
     const offeringSourceIds = textArray(item.sourceRefIds);
     offeringSourceIds.forEach((id) => {
@@ -345,7 +355,8 @@ export function validateBnbuCourseImportPayload(payload: unknown): BnbuValidatio
     if (!text(item.id)) errors.push(`curriculumRules[${index}].id is required`);
     if (!courseCode) errors.push(`curriculumRules[${index}].courseCode is required`);
     if (courseCode && !courseCodeSet.has(courseCode)) errors.push(`curriculumRules[${index}] references unknown courseCode: ${courseCode}`);
-    if (text(item.semesterCode) !== semesterCode) errors.push(`curriculumRules[${index}].semesterCode must match semester.code`);
+    if (!semesterCode) errors.push(`curriculumRules[${index}] requires top-level semester metadata`);
+    if (semesterCode && text(item.semesterCode) !== semesterCode) errors.push(`curriculumRules[${index}].semesterCode must match semester.code`);
     if (!classificationSet.has(classification)) errors.push(`curriculumRules[${index}].classification is invalid`);
     if (!studentActionSet.has(studentAction)) errors.push(`curriculumRules[${index}].studentAction is invalid`);
     if (classification === "unknown" && !["recommend_only", "hidden"].includes(studentAction)) {
@@ -405,7 +416,7 @@ export function validateBnbuCourseImportPayload(payload: unknown): BnbuValidatio
       curriculumRules: curriculumRules.length
     },
     schemaVersion,
-    semesterCode
+    semesterCode: semesterCode || undefined
   };
 }
 

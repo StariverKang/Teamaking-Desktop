@@ -15,17 +15,21 @@ export function academicTermIndex(year?: number | null, term?: string | null) {
   return year * 2 + offset;
 }
 
+function admissionEntryTerm() {
+  return "Fall";
+}
+
 export function relativeTermCodeForProfile(profile: any, semester: any) {
   const entryYear = typeof profile?.entryYear === "number" ? profile.entryYear : null;
-  const entryTerm = textValue(profile?.entryTerm);
   const semesterYear = typeof semester?.year === "number" ? semester.year : null;
   const semesterTerm = textValue(semester?.term);
-  const entryIndex = academicTermIndex(entryYear, entryTerm);
+  const entryIndex = academicTermIndex(entryYear, admissionEntryTerm());
   const semesterIndex = academicTermIndex(semesterYear, semesterTerm);
   if (entryIndex === null || semesterIndex === null) return null;
   const diff = semesterIndex - entryIndex;
   if (diff < 0) return null;
   const year = Math.floor(diff / 2) + 1;
+  if (year > 4) return null;
   const term = (diff % 2) + 1;
   return `Y${year}S${term}`;
 }
@@ -35,8 +39,9 @@ export function relativeTermCodeForEntry(entryYear: number, entryTerm: string, s
 }
 
 export function academicTermForRelativeTermCode(entryYear: number, entryTerm: string, relativeTermCode: string) {
+  void entryTerm;
   const match = /^Y(\d+)S([12])$/i.exec(relativeTermCode.trim());
-  const entryIndex = academicTermIndex(entryYear, entryTerm);
+  const entryIndex = academicTermIndex(entryYear, admissionEntryTerm());
   if (!match || entryIndex === null) return null;
   const yearOffset = Number(match[1]) - 1;
   const termOffset = Number(match[2]) - 1;
@@ -77,12 +82,15 @@ export function curriculumRuleMatchesUser(rule: any, user: any, semesterOverride
   const audience = audienceForRule(rule);
   const profile = user.profile;
   if (!profile) return false;
+  const termContext = semesterOverride ?? rule.semester;
+  const hasTermContext = typeof termContext?.year === "number" && Boolean(textValue(termContext?.term));
+  const userRelativeTermCode = hasTermContext ? relativeTermCodeForProfile(profile, termContext) : null;
+  if (hasTermContext && typeof profile?.entryYear === "number" && !userRelativeTermCode) return false;
 
   const relativeTermCodes = Array.isArray(rule.relativeTermCodes)
     ? textValues(rule.relativeTermCodes).map((code) => code.toUpperCase())
     : relativeTermCodesForRule(rule);
   if (relativeTermCodes.length) {
-    const userRelativeTermCode = relativeTermCodeForProfile(profile, semesterOverride ?? rule.semester);
     if (!userRelativeTermCode || !relativeTermCodes.includes(userRelativeTermCode)) return false;
   }
 
@@ -111,15 +119,15 @@ export function ruleMatchesUserRelativeTerm(rule: any, user: any, semester: any)
   const relativeTermCodes = Array.isArray(rule.relativeTermCodes)
     ? textValues(rule.relativeTermCodes).map((code) => code.toUpperCase())
     : relativeTermCodesForRule(rule);
-  if (!relativeTermCodes.length) return true;
   const code = relativeTermCodeForProfile(user.profile, semester);
+  if (!relativeTermCodes.length) return Boolean(code);
   return Boolean(code && relativeTermCodes.includes(code));
 }
 
 export function defaultJoinUserMatchesRelativeTerm(user: { profile?: unknown }, relativeTermCodes: string[], semester: any) {
-  if (!relativeTermCodes.length) return true;
   const normalizedCodes = relativeTermCodes.map((code) => code.toUpperCase());
   const code = relativeTermCodeForProfile(user.profile, semester);
+  if (!relativeTermCodes.length) return Boolean(code);
   return Boolean(code && normalizedCodes.includes(code));
 }
 

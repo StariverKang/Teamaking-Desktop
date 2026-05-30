@@ -305,10 +305,7 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
     args.push(
       `--courseDescriptionsUrl=${input.courseDescriptionsUrl}`,
       `--limit=${input.limit}`,
-      `--semesterCode=${input.semesterCode}`,
-      `--semesterName=${input.semesterName}`,
-      `--academicYear=${input.academicYear}`,
-      `--term=${input.term}`,
+      `--catalogEffectiveYear=${input.catalogEffectiveYear}`,
       `--outDir=${jobOutDir}`
     );
   } else {
@@ -374,8 +371,9 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
   child.on("error", (error) => {
     job.status = "process_error";
     job.finishedAt = new Date().toISOString();
-    job.errorMessage = error.message;
-    job.logs.push(`\n${error.stack || error.message}\n`);
+    const detail = error.stack || error.message;
+    job.errorMessage = crawlerErrorSummary(detail, error.message);
+    job.logs.push(`\n${detail}\n`);
     void persistCrawlerJob(deps.prisma, job);
   });
   child.on("close", async (code) => {
@@ -405,8 +403,8 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
             : /^bnbu-\d{4}-admission-handbook\.teamaking\.json$/.test(file.name));
       }
       job.outputs = await annotateCrawlerAiOutputs(job.outputs.map((output: any) => ({ ...output, jobId: input.outputMode === "git_import_json" ? output.jobId : job.id })));
-      if (code !== 0 && !job.errorMessage) {
-        job.errorMessage = crawlerErrorSummary((job.logs ?? []).join(""), `Crawler exited with code ${code}`);
+      if (code !== 0) {
+        job.errorMessage = crawlerErrorSummary((job.logs ?? []).join(""), job.errorMessage || `Crawler exited with code ${code}`);
       }
       if (code === 0) {
         await appendJobLog(`Collected ${job.outputs.length} crawler output file(s).\n`);
@@ -476,9 +474,8 @@ export function createCrawlerModule(deps: CrawlerModuleDeps) {
           target,
           handbookUrl: deps.defaults.handbookUrl,
           courseDescriptionsUrl: deps.defaults.courseDescriptionsUrl,
+          catalogEffectiveYear: deps.defaults.academicYear,
           cohorts: "",
-          academicYear: deps.defaults.academicYear,
-          term: deps.defaults.term,
           limit: "all"
         },
         crawlerAi: await getPublicCrawlerAiConfig(),

@@ -23,10 +23,7 @@ const args = Object.fromEntries(
 );
 
 const courseDescriptionsUrl = String(args.courseDescriptionsUrl ?? args.url ?? DEFAULT_COURSE_DESCRIPTIONS_URL);
-const semesterCode = String(args.semesterCode ?? "2026-Spring");
-const semesterName = String(args.semesterName ?? "2026 Spring");
-const academicYear = Number(args.academicYear ?? 2026);
-const term = String(args.term ?? "Spring");
+const catalogEffectiveYear = Number(args.catalogEffectiveYear ?? args.academicYear ?? 2026);
 const limit = args.limit === "all" || args.limit === undefined ? Infinity : Number(args.limit ?? "all");
 const outDir = path.resolve(ROOT, String(args.outDir ?? "storage/crawler_outputs"));
 const includeCommonCurriculum = booleanArg(args.commonCurriculum ?? args.includeCommonCurriculum, true);
@@ -36,6 +33,10 @@ const aiTimeoutMs = Number(args.aiTimeoutMs ?? process.env.CRAWLER_AI_TIMEOUT_MS
 const aiMaxTokens = Number(args.aiMaxTokens ?? 2000);
 const aiStrictMode = booleanArg(args.aiStrictMode, aiMode === "strict");
 const aiEnabled = booleanArg(args.aiEnabled ?? process.env.CRAWLER_AI_ENABLED, true);
+
+if (!Number.isFinite(catalogEffectiveYear)) {
+  throw new Error("catalogEffectiveYear must be a number for course catalog imports");
+}
 
 const FACULTIES = [
   { code: "FBM", name: "Faculty of Business and Management" },
@@ -437,7 +438,7 @@ async function main() {
   const parsed = mergeByCode([...courseDescriptionCourses, ...commonCurriculum.courses]);
   const selected = parsed.slice(0, limit).map((course) => ({
     ...course,
-    effectiveYear: academicYear
+    effectiveYear: catalogEffectiveYear
   }));
   const snapshotCompleteness = Number.isFinite(limit) || !includeCommonCurriculum ? "partial" : "near_full";
   if (!selected.length) throw new Error(`No course descriptions were parsed from ${resolved.pdfUrl}`);
@@ -463,14 +464,14 @@ async function main() {
     schemaVersion: "teamaking.bnbu_course_import.v2",
     generatedAt: retrievedAt,
     importMode: "course_catalog",
-    catalogEffectiveYear: academicYear,
+    catalogEffectiveYear,
     snapshotCompleteness,
     crawlerMeta: {
       runner: "scripts/bnbu-crawler/run-course-catalog.mjs",
       courseDescriptionsUrl,
       resolvedPdfUrl: resolved.pdfUrl,
       commonCurriculum: includeCommonCurriculum,
-      catalogEffectiveYear: academicYear,
+      catalogEffectiveYear,
       snapshotCompleteness,
       commonCurriculumSources: commonCurriculum.parsedSources,
       limit: Number.isFinite(limit) ? limit : "all",
@@ -484,13 +485,6 @@ async function main() {
       shortName: "BNBU",
       name: "Beijing Normal-Hong Kong Baptist University",
       emailDomain: "mail.bnbu.edu.cn"
-    },
-    semester: {
-      code: semesterCode,
-      name: semesterName,
-      academicYear,
-      term,
-      isCurrentCandidate: false
     },
     sourceRefs,
     faculties: FACULTIES,

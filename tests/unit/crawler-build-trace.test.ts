@@ -56,4 +56,14 @@ describe("crawler build tracing", () => {
       expect(source).toContain("main().then(() => flushAndExit(0))");
     }
   });
+
+  it("keeps course catalog output free of semester placement metadata", async () => {
+    const source = await readFile(path.join(process.cwd(), "scripts/bnbu-crawler/run-course-catalog.mjs"), "utf8");
+    expect(source).toContain('importMode: "course_catalog"');
+    expect(source).toContain("catalogEffectiveYear");
+    expect(source).not.toContain("semesterCode");
+    expect(source).not.toContain("semesterName");
+    expect(source).not.toContain("term,");
+    expect(source).not.toContain("semester: {");
+  });
 });

@@ -7,6 +7,7 @@ import { ChevronRight, FileText, Folder, LifeBuoy, Mail } from "lucide-react";
 import { EmptyState, StatusPill } from "@/components/app-shell";
 import {
   contentBreadcrumb,
+  extractMarkdownHeadingIdByLine,
   extractMarkdownHeadings,
   flattenContentDocuments as flattenContentDocumentsCore,
   headingId,
@@ -22,7 +23,7 @@ export function contentImageUrls(value: unknown) {
 }
 
 export function MarkdownRenderer({ children, withHeadingIds = false }: { children: string; withHeadingIds?: boolean }) {
-  const used = new Map<string, number>();
+  const headingIdsByLine = withHeadingIds ? extractMarkdownHeadingIdByLine(children || "") : new Map<number, string>();
   const headingStyles = {
     h1: "mt-12 scroll-mt-24 border-b border-ink/15 pb-4 text-4xl font-semibold leading-tight text-ink first:mt-0 md:text-5xl",
     h2: "mt-11 scroll-mt-24 border-b border-ink/12 pb-3 text-3xl font-semibold leading-tight text-ink first:mt-0 md:text-[2.1rem]",
@@ -30,8 +31,10 @@ export function MarkdownRenderer({ children, withHeadingIds = false }: { childre
     h4: "mt-6 scroll-mt-24 text-lg font-semibold uppercase leading-snug text-coral"
   };
   const headingComponent = (Tag: "h1" | "h2" | "h3" | "h4") => {
-    function Heading({ children: headingChildren }: { children?: React.ReactNode }) {
-      const id = withHeadingIds ? headingId(textFromReactChildren(headingChildren), used) : undefined;
+    function Heading({ children: headingChildren, node }: { children?: React.ReactNode; node?: { position?: { start?: { line?: number } } } }) {
+      const id = withHeadingIds
+        ? headingIdsByLine.get(node?.position?.start?.line ?? 0) ?? headingId(textFromReactChildren(headingChildren))
+        : undefined;
       return <Tag id={id} className={headingStyles[Tag]}>{headingChildren}</Tag>;
     }
     return Heading;
@@ -228,6 +231,29 @@ export function ContentDocumentTree({
   );
 }
 
+const contentDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit"
+});
+
+const contentDateTimeFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23"
+});
+
+function formatContentDate(value: string | Date, withTime = false) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return (withTime ? contentDateTimeFormatter : contentDateFormatter).format(date);
+}
+
 export function ContentDocumentReader({
   document,
   emptyTitle = "选择一篇文档",
@@ -260,8 +286,8 @@ export function ContentDocumentReader({
           )}
           <h2 className="mt-3 text-3xl font-semibold text-ink">{document.title}</h2>
           <div className="mt-2 flex flex-wrap gap-2 text-xs text-ink/56">
-            {document.publishedAt ? <span>Published {new Date(document.publishedAt).toLocaleDateString()}</span> : null}
-            {document.updatedAt ? <span>Updated {new Date(document.updatedAt).toLocaleString()}</span> : null}
+            {document.publishedAt ? <span>Published {formatContentDate(document.publishedAt)}</span> : null}
+            {document.updatedAt ? <span>Updated {formatContentDate(document.updatedAt, true)}</span> : null}
           </div>
           {document.summary ? <p className="mt-3 text-sm leading-6 text-ink/64">{document.summary}</p> : null}
           {showArticleTools && headings.length ? <ArticleTableOfContents headings={headings} /> : null}

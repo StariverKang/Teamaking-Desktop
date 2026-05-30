@@ -26,13 +26,20 @@ const existingCourse = {
 const catalogPayload = {
   importMode: "course_catalog",
   catalogEffectiveYear: 2026,
-  crawlerMeta: { snapshotCompleteness: "near_full", limit: "all", selectedCourses: 2, parsedCourses: 2 },
-  semester: { academicYear: 2026 }
+  crawlerMeta: { snapshotCompleteness: "near_full", limit: "all", selectedCourses: 2, parsedCourses: 2 }
 };
 
 describe("course import lifecycle diff", () => {
   it("uses the course catalog effective year from the payload", () => {
     expect(courseEffectiveYearFromPayload(catalogPayload)).toBe(2026);
+  });
+
+  it("does not infer course catalog effective year from semester or admission context", () => {
+    expect(courseEffectiveYearFromPayload({
+      importMode: "course_catalog",
+      semester: { academicYear: 2026 },
+      cohortYears: [2025]
+    })).toBeNull();
   });
 
   it("recommends accepting newer course catalog metadata", () => {
@@ -81,7 +88,7 @@ describe("course import lifecycle diff", () => {
   it("keeps existing metadata when the incoming catalog year is older", () => {
     const diffs = buildCourseFieldDiffsForCourse({
       importMode: "course_catalog",
-      payload: { ...catalogPayload, catalogEffectiveYear: 2024, semester: { academicYear: 2024 } },
+      payload: { ...catalogPayload, catalogEffectiveYear: 2024 },
       existing: existingCourse,
       incoming: { ...existingCourse, description: "Older crawl description." }
     });
@@ -96,7 +103,7 @@ describe("course import lifecycle diff", () => {
   it("blocks same-year conflicting catalog metadata", () => {
     const diffs = buildCourseFieldDiffsForCourse({
       importMode: "course_catalog",
-      payload: { ...catalogPayload, catalogEffectiveYear: 2025, semester: { academicYear: 2025 } },
+      payload: { ...catalogPayload, catalogEffectiveYear: 2025 },
       existing: existingCourse,
       incoming: { ...existingCourse, description: "Different 2025 description." }
     });

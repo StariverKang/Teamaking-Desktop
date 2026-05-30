@@ -205,7 +205,7 @@ export function CoursesPage() {
               <Card>
                 <h3 className="font-serif text-xl font-semibold text-ink">暂时没有匹配到本学期专业课程</h3>
                 <p className="mt-2 text-sm leading-6 text-ink/64">
-                  请确认个人 Profile 中的 admission year、major 已保存，并确认对应年份 handbook JSON 已由管理员批准导入。
+                  这里仅显示培养方案推荐。你仍然可以在 Search / Free elective 搜索所有 active 课程并手动打开 Course Board。
                 </p>
               </Card>
             ) : null}

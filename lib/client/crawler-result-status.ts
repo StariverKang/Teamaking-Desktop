@@ -22,6 +22,13 @@ function outputCount(job: any) {
   return Array.isArray(job?.outputs) ? job.outputs.length : 0;
 }
 
+function logTail(job: any) {
+  const logs = Array.isArray(job?.logs) ? job.logs.map(textValue).filter(Boolean) : [];
+  const tail = logs.join("\n").split("\n").map((line: string) => line.trim()).filter(Boolean).reverse()
+    .find((line: string) => !/^Node\.js v/i.test(line) && !/^Finished with exit code/i.test(line));
+  return tail?.slice(0, 360) ?? "";
+}
+
 export function crawlerResultStatus(job: any): CrawlerResultStatus {
   const status = textValue(job?.status);
   const error = textValue(job?.errorMessage);
@@ -57,7 +64,8 @@ export function crawlerResultStatus(job: any): CrawlerResultStatus {
   }
 
   if (status === "process_error" || (Number.isFinite(job?.exitCode) && job.exitCode !== 0)) {
-    return { label: "进程错误", detail: error || `Crawler exited with code ${job.exitCode}`, tone: "error" };
+    const detail = error || logTail(job) || `Crawler exited with code ${job.exitCode}`;
+    return { label: "进程错误", detail, tone: "error" };
   }
 
   if (status === "finalization_failed") {

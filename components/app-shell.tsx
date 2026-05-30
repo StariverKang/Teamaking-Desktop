@@ -78,7 +78,7 @@ function AuthNav() {
   if (!user) {
     return (
       <Link
-        href="/login"
+        href="/login?mode=register"
         className="focus-ring inline-flex items-center gap-2 border border-ink bg-rust px-3 py-2 text-sm font-semibold text-paper shadow-soft md:px-4"
       >
         <MailCheck size={16} aria-hidden />

@@ -14,6 +14,7 @@ export function CourseImportPreview({ preview, ctx }: { preview: any; ctx: Admin
     const validation = preview.validation ?? {};
     const coverage = preview.coverage ?? {};
     const isCohortHandbook = preview.importMode === "cohort_handbook";
+    const isCourseCatalog = preview.importMode === "course_catalog";
     const databaseCoverage = preview.databaseCoverage ?? actionData?.databaseCoverage;
     const tables = preview.tables ?? {};
     const activeTable =
@@ -47,12 +48,12 @@ export function CourseImportPreview({ preview, ctx }: { preview: any; ctx: Admin
       ["Searchable rules", counts.searchableRules],
       ["Offering courses", counts.offeringCourses],
       ["Offering sections", counts.offeringSections],
-      ...(!isCohortHandbook ? [["Rules in term context", counts.rulesInAcademicTermContext], ["Boards to activate", counts.courseBoardsToActivate]] : []),
+      ...(!isCohortHandbook && !isCourseCatalog ? [["Rules in term context", counts.rulesInAcademicTermContext], ["Boards to activate", counts.courseBoardsToActivate]] : []),
       ["Protected course conflicts", counts.protectedCourseConflicts],
       ["Course field diffs", counts.courseFieldDiffs],
       ["Retirement candidates", counts.retirementCandidates],
       ["Blocking course changes", counts.blockingCourseChanges],
-      ...(!isCohortHandbook ? [["Estimated default joins", counts.estimatedDefaultJoinUsers]] : [])
+      ...(!isCohortHandbook && !isCourseCatalog ? [["Estimated default joins", counts.estimatedDefaultJoinUsers]] : [])
     ];
     const tabs = [
       ["coverage", "Coverage"],
@@ -370,7 +371,7 @@ export function CourseImportPreview({ preview, ctx }: { preview: any; ctx: Admin
           <div>
             <h3 className="text-lg font-semibold text-ink">Import Preview</h3>
             <p className="mt-1 text-sm text-ink/58">
-              {preview.importMode === "cohort_handbook" ? "Admission-year programme handbook" : "Combined import"} · {preview.semester?.label ?? preview.semester?.code ?? "Academic term context"}
+              {isCourseCatalog ? "School-wide course catalog" : preview.importMode === "cohort_handbook" ? "Admission-year programme handbook" : "Combined import"} · {preview.semester?.label ?? preview.semester?.code ?? "Academic term context"}
             </p>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-ink/64">{preview.semester?.note}</p>
           </div>

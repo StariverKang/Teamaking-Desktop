@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { validateBnbuCourseImportPayload } from "@/lib/bnbu-course-import";
-import { isPlainRecord, numberValues, records, textValue, textValues } from "@/lib/server/json-utils";
+import { isPlainRecord, numberValue, numberValues, records, textValue, textValues } from "@/lib/server/json-utils";
 import { audienceForRule, cohortYearsForRule } from "@/lib/server/course-import/curriculum-matching";
 
 export { audienceForRule, cohortYearsForRule };
@@ -54,13 +54,16 @@ export function buildCourseImportBatchSummary(payload: Record<string, unknown>, 
   const counts = preview?.counts ?? {};
   const cohortYears = importCohortYearsFromPayload(payload, preview);
   const semesterInput = isPlainRecord(payload.semester) ? payload.semester : {};
+  const crawlerMeta = isPlainRecord(payload.crawlerMeta) ? payload.crawlerMeta : {};
+  const catalogEffectiveYear = numberValue(payload.catalogEffectiveYear) ?? numberValue(crawlerMeta.catalogEffectiveYear);
   const sourceLabel = sourceLabelForImport(payload, cohortYears);
   return {
     schemaVersion: validation.schemaVersion ?? textValue(payload.schemaVersion),
-    semesterCode: validation.semesterCode ?? textValue(semesterInput.code),
+    semesterCode: (validation.semesterCode ?? textValue(semesterInput.code)) || undefined,
     semesterLabel: textValue(semesterInput.name),
     cohortYears,
-    importMode: preview?.importMode ?? (records(payload.offerings).length ? "combined_with_offerings" : "cohort_handbook"),
+    importMode: (preview?.importMode ?? textValue(payload.importMode)) || (records(payload.offerings).length ? "combined_with_offerings" : "cohort_handbook"),
+    catalogEffectiveYear,
     sourceLabel,
     generatedAt: textValue(payload.generatedAt),
     counts: {

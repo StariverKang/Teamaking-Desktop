@@ -26,8 +26,7 @@ export function CrawlerPortalPage() {
     handbookUrl: "https://ar.bnbu.edu.cn/current_students/student_handbook/programme_handbook.htm",
     courseDescriptionsUrl: "https://ar.bnbu.edu.cn/info/1021/1430.htm",
     cohorts: "",
-    academicYear: "2026",
-    term: "Spring",
+    catalogEffectiveYear: "2026",
     limit: "all",
     outputMode: "download",
     databaseAction: "download_only",
@@ -73,7 +72,7 @@ export function CrawlerPortalPage() {
       eyebrow="Crawler"
       aside="none"
       workspace
-      description="独立爬虫入口：programme handbook 生成 admission-year 课程安排；Course Descriptions 课程总表补充官方课程描述。"
+      description="独立爬虫入口：programme handbook 生成 admission-year 培养方案规则；Course Descriptions 生成学校级课程总表。"
     >
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {error && /请先完成|unauthorized|API_UNAUTHORIZED/i.test(error) ? (
@@ -86,7 +85,7 @@ export function CrawlerPortalPage() {
       <div className="grid gap-5 xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)] xl:items-start">
         <Card className="xl:max-h-[calc(100vh-12rem)] xl:overflow-y-auto">
           <h2 className="text-xl font-semibold text-ink">Crawl request</h2>
-          <p className="mt-2 text-sm leading-6 text-ink/62">推荐直接填写某一年的 admission handbook 页面并一次爬一年。Programme handbook 只生成该届学生的课程安排；Course Descriptions 是课程总表，只补课程描述；BNBU class schedule 只是时间表，不作为课程存在或 CourseBoard 配置依据。</p>
+          <p className="mt-2 text-sm leading-6 text-ink/62">推荐直接填写某一年的 admission handbook 页面并一次爬一年。Programme handbook 只生成该届学生的培养方案推荐；Course Descriptions 是学校级课程库，所有 active 课程都可搜索并手动打开课程板；BNBU class schedule 只是时间表，不作为课程存在依据。</p>
           {result ? (
             <div className={`mt-4 border px-3 py-2 text-sm font-medium ${
               result.type === "error" ? "border-rust/40 bg-rust/5 text-rust" : "border-forest/30 bg-forest/10 text-forest"
@@ -136,14 +135,7 @@ export function CrawlerPortalPage() {
                 </>
               )}
               {isCourseCatalog ? (
-                <>
-                  <Field label="Metadata year" help="只写入输出 JSON 的 semester metadata。"><input className={inputClass} value={form.academicYear ?? ""} onChange={(event) => setForm({ ...form, academicYear: event.target.value })} /></Field>
-                  <Field label="Metadata term" help="只写入输出 JSON 的 semester metadata。">
-                    <select className={inputClass} value={form.term ?? "Spring"} onChange={(event) => setForm({ ...form, term: event.target.value })}>
-                      {["Spring", "Fall"].map((item) => <option key={item}>{item}</option>)}
-                    </select>
-                  </Field>
-                </>
+                <Field label="Catalog effective year" help="用于课程目录版本和生命周期对比；不会创建 semester，也不会限制学生年级、专业或学期。"><input className={inputClass} value={form.catalogEffectiveYear ?? ""} onChange={(event) => setForm({ ...form, catalogEffectiveYear: event.target.value })} /></Field>
               ) : null}
               <Field label="Limit"><input className={inputClass} value={form.limit ?? "all"} onChange={(event) => setForm({ ...form, limit: event.target.value })} /></Field>
               <Field label="Output mode">
@@ -195,7 +187,7 @@ export function CrawlerPortalPage() {
             </div>
             <div className="mt-4 max-h-80 overflow-auto border border-ink/15">
               <table className="w-full min-w-[820px] border-collapse text-left text-sm">
-                <thead className="sticky top-0 bg-ink text-paper"><tr>{["Job", "Status", "Scope", "Metadata / plan", "Started", "Result", "Actions", "Log"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
+                <thead className="sticky top-0 bg-ink text-paper"><tr>{["Job", "Status", "Scope", "Catalog / plan", "Started", "Result", "Actions", "Log"].map((header) => <th key={header} className="px-3 py-2">{header}</th>)}</tr></thead>
                 <tbody>
                   {jobs.length ? jobs.map((job: any) => {
                     const result = crawlerResultStatus(job);
@@ -207,7 +199,7 @@ export function CrawlerPortalPage() {
                       </td>
                       <td className="px-3 py-2"><StatusPill status={job.status} /></td>
                       <td className="px-3 py-2">{job.target === "course_catalog" ? "Course catalog" : job.input?.cohorts?.length ? job.input.cohorts.join(", ") : "inferred from page"}</td>
-                      <td className="px-3 py-2">{job.target === "course_catalog" ? job.input?.semesterCode ?? "not set" : "admission-year plan"}</td>
+                      <td className="px-3 py-2">{job.target === "course_catalog" ? `effective ${job.input?.catalogEffectiveYear ?? "not set"}` : "admission-year plan"}</td>
                       <td className="px-3 py-2">{job.startedAt ? new Date(job.startedAt).toLocaleString() : ""}</td>
                       <td className="max-w-[300px] px-3 py-2 text-xs text-ink/64">
                         <div className="grid gap-1">

@@ -136,17 +136,15 @@ export async function payloadFromDataset(datasetId: string) {
     }
   });
   if (!dataset) throw new ApiError(404, "找不到这个导入数据集。");
-  return {
+  const summary = isPlainRecord(dataset.summary) ? dataset.summary : {};
+  const importMode = textValue(summary.importMode) || (dataset.rules.length || dataset.offerings.length ? "cohort_programme_handbook" : "course_catalog");
+  const catalogEffectiveYear = numberValue(summary.catalogEffectiveYear) ?? dataset.courses.map((row) => numberValue(row.effectiveYear)).find((value) => value !== undefined);
+  const payload: Record<string, unknown> = {
     schemaVersion: dataset.schemaVersion,
     generatedAt: dataset.createdAt.toISOString(),
+    importMode,
+    ...(catalogEffectiveYear ? { catalogEffectiveYear } : {}),
     school: dataset.school ? { shortName: dataset.school.shortName, name: dataset.school.name, emailDomain: dataset.school.domains?.[0]?.domain } : { shortName: "BNBU" },
-    semester: {
-      code: dataset.semesterCode,
-      name: dataset.semesterCode,
-      academicYear: Number(String(dataset.semesterCode ?? "").match(/20\d{2}/)?.[0] ?? new Date().getFullYear()),
-      term: String(dataset.semesterCode ?? "").includes("Fall") ? "Fall" : "Spring",
-      isCurrentCandidate: false
-    },
     sourceRefs: dataset.sourceRefs.map((row) => row.raw),
     faculties: dataset.faculties.map((row) => row.raw),
     majors: dataset.majors.map((row) => row.raw),
@@ -154,4 +152,14 @@ export async function payloadFromDataset(datasetId: string) {
     offerings: dataset.offerings.map((row) => row.raw),
     curriculumRules: dataset.rules.map((row) => row.raw)
   };
+  if (importMode !== "course_catalog") {
+    payload.semester = {
+      code: dataset.semesterCode,
+      name: dataset.semesterCode,
+      academicYear: Number(String(dataset.semesterCode ?? "").match(/20\d{2}/)?.[0] ?? new Date().getFullYear()),
+      term: String(dataset.semesterCode ?? "").includes("Fall") ? "Fall" : "Spring",
+      isCurrentCandidate: false
+    };
+  }
+  return payload;
 }

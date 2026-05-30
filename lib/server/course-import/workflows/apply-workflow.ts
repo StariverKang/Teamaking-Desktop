@@ -193,7 +193,10 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
   if (!summary.ok) throw new ApiError(400, `导入文件校验失败：${summary.errors.join("; ")}`);
   const appVersionId = await getActiveAppVersionId();
   const courseCatalogImport = textValue(payload.importMode) === "course_catalog";
-  const handbookOnlyImport = records(payload.offerings).length === 0 && !courseCatalogImport;
+  const incomingOfferings = records(payload.offerings);
+  const incomingRules = records(payload.curriculumRules);
+  const handbookOnlyImport = incomingOfferings.length === 0 && !courseCatalogImport;
+  const requiresSemester = incomingOfferings.length > 0 || incomingRules.length > 0;
 
   return prisma.$transaction(async (tx) => {
     const schoolInput = isPlainRecord(payload.school) ? payload.school : {};
@@ -219,35 +222,46 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
       create: { schoolId: school.id, domain: emailDomain, status: "active" }
     });
 
-    if (!handbookOnlyImport && semesterInput.isCurrentCandidate === true) {
+    if (requiresSemester && !handbookOnlyImport && semesterInput.isCurrentCandidate === true) {
       await tx.semester.updateMany({ where: { schoolId: school.id }, data: { isCurrent: false } });
     }
 
-    const semesterCode = textValue(semesterInput.code);
-    const existingSemester = await tx.semester.findFirst({
-      where: { schoolId: school.id, OR: [{ code: semesterCode }, { name: textValue(semesterInput.name) }] }
-    });
-    const semester = existingSemester
-      ? await tx.semester.update({
-          where: { id: existingSemester.id },
-          data: {
-            code: semesterCode,
-            name: textValue(semesterInput.name),
-            year: Number(semesterInput.academicYear),
-            term: textValue(semesterInput.term),
-            isCurrent: !handbookOnlyImport && semesterInput.isCurrentCandidate === true ? true : existingSemester.isCurrent
-          }
-        })
-      : await tx.semester.create({
-          data: {
-            schoolId: school.id,
-            code: semesterCode,
-            name: textValue(semesterInput.name),
-            year: Number(semesterInput.academicYear),
-            term: textValue(semesterInput.term),
-            isCurrent: !handbookOnlyImport && semesterInput.isCurrentCandidate === true
-          }
-        });
+    let semester: any = null;
+    if (requiresSemester) {
+      const semesterCode = textValue(semesterInput.code);
+      const semesterName = textValue(semesterInput.name);
+      if (!semesterCode || !semesterName) throw new ApiError(400, "培养方案或开课记录导入需要完整 semester metadata。");
+      const existingSemester = await tx.semester.findFirst({
+        where: {
+          schoolId: school.id,
+          OR: [
+            ...(semesterCode ? [{ code: semesterCode }] : []),
+            ...(semesterName ? [{ name: semesterName }] : [])
+          ]
+        }
+      });
+      semester = existingSemester
+        ? await tx.semester.update({
+            where: { id: existingSemester.id },
+            data: {
+              code: semesterCode,
+              name: semesterName,
+              year: Number(semesterInput.academicYear),
+              term: textValue(semesterInput.term),
+              isCurrent: !handbookOnlyImport && semesterInput.isCurrentCandidate === true ? true : existingSemester.isCurrent
+            }
+          })
+        : await tx.semester.create({
+            data: {
+              schoolId: school.id,
+              code: semesterCode,
+              name: semesterName,
+              year: Number(semesterInput.academicYear),
+              term: textValue(semesterInput.term),
+              isCurrent: !handbookOnlyImport && semesterInput.isCurrentCandidate === true
+            }
+          });
+    }
 
     const facultyByCode = new Map<string, any>();
     for (const facultyInput of records(payload.faculties)) {
@@ -412,7 +426,8 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
       }
     }
 
-    for (const offeringInput of records(payload.offerings)) {
+    for (const offeringInput of incomingOfferings) {
+      if (!semester) throw new ApiError(400, "开课记录导入需要 semester metadata。");
       const course = courseByCode.get(textValue(offeringInput.courseCode));
       if (!course) continue;
       const sections = textValues(offeringInput.sections);
@@ -467,12 +482,11 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
       }
     }
 
-    const incomingRules = records(payload.curriculumRules);
     const incomingRuleIds = incomingRules.map((rule) => textValue(rule.id)).filter(Boolean);
     const incomingRuleIdSet = new Set(incomingRuleIds);
     const incomingCohortYears = uniqueSortedNumbers(incomingRules.flatMap(cohortYearsForRule));
     let deactivatedRuleCount = 0;
-    if (incomingRuleIds.length && incomingCohortYears.length) {
+    if (semester && incomingRuleIds.length && incomingCohortYears.length) {
       const existingRulesForSemester = await tx.courseCurriculumRule.findMany({
         where: { semesterId: semester.id, status: "active" },
         select: { id: true, externalId: true, audience: true }
@@ -499,6 +513,7 @@ export async function applyBnbuCourseImport(payload: Record<string, unknown>, ba
     let autoJoinDeferredToSemesterActivation = 0;
     let rulesInAcademicTermContext = 0;
     for (const ruleInput of incomingRules) {
+      if (!semester) throw new ApiError(400, "培养方案规则导入需要 semester metadata。");
       const course = courseByCode.get(textValue(ruleInput.courseCode));
       if (!course) continue;
       const classification = textValue(ruleInput.classification);

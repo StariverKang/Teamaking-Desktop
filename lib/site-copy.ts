@@ -117,9 +117,9 @@ export const siteCopyEntries: SiteCopyEntry[] = [
     key: "landing.cta.demo",
     route: "/",
     group: "Landing",
-    label: "Demo CTA",
+    label: "Learn CTA",
     kind: "button",
-    defaultValue: { zh: zh("进入演示验收"), en: en("Enter demo review") }
+    defaultValue: { zh: zh("了解TEAMAKING"), en: en("Learn TEAMAKING") }
   }),
   entry({
     key: "landing.cta.contact",
@@ -151,7 +151,7 @@ export const siteCopyEntries: SiteCopyEntry[] = [
     group: "Landing",
     label: "Profile feature title",
     kind: "card",
-    defaultValue: { zh: zh("展示个人成果"), en: en("Show real work") }
+    defaultValue: { zh: zh("通过作品展示个人工作能力"), en: en("Show work ability through proof-of-work") }
   }),
   entry({
     key: "landing.feature.profile.body",
@@ -159,7 +159,7 @@ export const siteCopyEntries: SiteCopyEntry[] = [
     group: "Landing",
     label: "Profile feature body",
     kind: "card",
-    defaultValue: { zh: zh("用作品、证书、简历摘要和联系方式，让同学先看到你真实做过什么。"), en: en("Use work, certificates, resume summaries, and contact settings so classmates can see what you have actually done.") }
+    defaultValue: { zh: zh("把作品、课程项目、证明材料和简历摘要放在一个可被理解的 Profile 里。"), en: en("Put work, course projects, evidence, and resume summaries into a Profile classmates can understand.") }
   }),
   entry({
     key: "landing.feature.team.title",
@@ -167,7 +167,7 @@ export const siteCopyEntries: SiteCopyEntry[] = [
     group: "Landing",
     label: "Team feature title",
     kind: "card",
-    defaultValue: { zh: zh("按目标成绩找组员"), en: en("Find teammates by target outcome") }
+    defaultValue: { zh: zh("基于个人履历与真实水平的课程/赛事学术匹配"), en: en("Match courses and academic events through real profiles") }
   }),
   entry({
     key: "landing.feature.team.body",
@@ -175,7 +175,7 @@ export const siteCopyEntries: SiteCopyEntry[] = [
     group: "Landing",
     label: "Team feature body",
     kind: "card",
-    defaultValue: { zh: zh("在课程板里说明你希望冲 A / A- / B+，或只求稳过，匹配节奏相近的小组作业伙伴。"), en: en("Use Course Boards to explain whether you are aiming for A, A-, B+, or a steady pass, then find classmates with similar pace.") }
+    defaultValue: { zh: zh("用个人履历、公开成果和协作信号，寻找更接近真实能力与目标的伙伴。"), en: en("Use profiles, visible work, and collaboration signals to find people closer to your real level and goals.") }
   }),
   entry({
     key: "landing.feature.course.title",
@@ -183,7 +183,7 @@ export const siteCopyEntries: SiteCopyEntry[] = [
     group: "Landing",
     label: "Course feature title",
     kind: "card",
-    defaultValue: { zh: zh("讨论课程内容"), en: en("Discuss course work") }
+    defaultValue: { zh: zh("课程内容讨论与共学"), en: en("Discuss course content and learn together") }
   }),
   entry({
     key: "landing.feature.course.body",
@@ -191,7 +191,7 @@ export const siteCopyEntries: SiteCopyEntry[] = [
     group: "Landing",
     label: "Course feature body",
     kind: "card",
-    defaultValue: { zh: zh("围绕真实课程发帖、评价课程、整理经验，减少只靠群聊找信息的混乱。"), en: en("Post around real courses, review course work, and collect experience instead of relying only on scattered group chats.") }
+    defaultValue: { zh: zh("围绕 Course Board 聚合课程经验、Open to Team 信号和同课讨论。"), en: en("Use Course Boards to gather course experience, Open to Team signals, and course discussions.") }
   }),
 
   entry({

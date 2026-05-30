@@ -80,7 +80,7 @@ export const portfolioTypeLabels: Record<string, string> = {
 export const portfolioTypes = Object.keys(portfolioTypeLabels).filter((type) => type !== "resume" && type !== "career_certification");
 export const currentCalendarYear = new Date().getFullYear();
 export const defaultEntryYear = new Date().getMonth() + 1 >= 8 ? currentCalendarYear : currentCalendarYear - 1;
-export const entryTermOptions = ["Fall", "Spring"];
+export const entryTermOptions = ["Fall"];
 
 export const acceptedProfileFiles = [
   ".md",

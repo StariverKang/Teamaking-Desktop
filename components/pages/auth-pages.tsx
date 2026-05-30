@@ -2,14 +2,20 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
   ArrowRight,
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
   Check,
+  LayoutDashboard,
   KeyRound,
   MailCheck,
-  Send
+  Send,
+  ShieldCheck,
+  UsersRound
 } from "lucide-react";
 import { Card, PageShell } from "@/components/app-shell";
 import { CopyTarget, EditableCopy, useCopyText } from "@/components/site-copy-runtime";
@@ -17,16 +23,56 @@ import { CopyTarget, EditableCopy, useCopyText } from "@/components/site-copy-ru
 import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
 
 import { api } from "@/lib/client/api";
+import { loginModeFromValue, type LoginMode } from "@/lib/login-mode";
+
+const publicExperienceStorageKey = "teamaking.publicExperience.seen.v1";
+
+const landingFeatures = [
+  {
+    titleKey: "landing.feature.profile.title",
+    bodyKey: "landing.feature.profile.body",
+    title: "通过作品展示个人工作能力",
+    body: "把作品、课程项目、证明材料和简历摘要放在一个可被理解的 Profile 里。",
+    href: "/help?article=proof-of-work-profile"
+  },
+  {
+    titleKey: "landing.feature.team.title",
+    bodyKey: "landing.feature.team.body",
+    title: "基于个人履历与真实水平的课程/赛事学术匹配",
+    body: "用个人履历、公开成果和协作信号，寻找更接近真实能力与目标的伙伴。",
+    href: "/help?article=matches"
+  },
+  {
+    titleKey: "landing.feature.course.title",
+    bodyKey: "landing.feature.course.body",
+    title: "课程内容讨论与共学",
+    body: "围绕 Course Board 聚合课程经验、Open to Team 信号和同课讨论。",
+    href: "/help?article=course-board-basics"
+  }
+];
 
 export function LandingPage() {
+  const router = useRouter();
   const loginCta = useCopyText("landing.cta.login", "用学校邮箱开始");
-  const demoCta = useCopyText("landing.cta.demo", "进入演示验收");
+  const learnCta = useCopyText("landing.cta.demo", "了解TEAMAKING");
   const contactCta = useCopyText("landing.cta.contact", "联系开发者");
-  const features = [
-    ["landing.feature.profile.title", "landing.feature.profile.body", "展示个人成果", "用作品、证书、简历摘要和联系方式，让同学先看到你真实做过什么。"],
-    ["landing.feature.team.title", "landing.feature.team.body", "按目标成绩找组员", "在课程板里说明你希望冲 A / A- / B+，或只求稳过，匹配节奏相近的小组作业伙伴。"],
-    ["landing.feature.course.title", "landing.feature.course.body", "讨论课程内容", "围绕真实课程发帖、评价课程、整理经验，减少只靠群聊找信息的混乱。"]
-  ];
+
+  useEffect(() => {
+    if (typeof window === "undefined" || window.sessionStorage.getItem(publicExperienceStorageKey)) return;
+    const timer = window.setTimeout(async () => {
+      if (window.location.pathname !== "/") return;
+      try {
+        const data = await api("/api/auth/me");
+        if (data?.user) return;
+      } catch {
+        // Treat auth failures as an anonymous public visit.
+      }
+      window.sessionStorage.setItem(publicExperienceStorageKey, "1");
+      router.push("/experience");
+    }, 3500);
+    return () => window.clearTimeout(timer);
+  }, [router]);
+
   return (
     <main className="mx-auto max-w-7xl px-5 py-10">
       <section className="grid min-h-[calc(100vh-140px)] items-center gap-8 lg:grid-cols-[1.05fr_0.95fr]">
@@ -36,12 +82,12 @@ export function LandingPage() {
           <p className="mt-5 text-2xl font-semibold text-moss"><EditableCopy copyKey="landing.hero.tagline" fallback="Your work speaks before you team up." /></p>
           <p className="mt-3 text-xl text-ink/68"><EditableCopy copyKey="landing.hero.subtitle" fallback="让认真做事的人，先被看见。" /></p>
           <div className="mt-8 flex flex-wrap gap-3">
-            <Link href="/login" className="focus-ring inline-flex items-center gap-2 rounded-lg bg-coral px-5 py-3 font-semibold text-white shadow-soft">
+            <Link href="/login?mode=register" className="focus-ring inline-flex items-center gap-2 rounded-lg bg-coral px-5 py-3 font-semibold text-white shadow-soft">
               <MailCheck size={18} aria-hidden />
               {loginCta}
             </Link>
-            <Link href="/demo-access" className="focus-ring inline-flex items-center gap-2 rounded-sm bg-ink px-5 py-3 font-semibold text-paper">
-              {demoCta}
+            <Link href="/help?article=what-is-teamaking" className="focus-ring inline-flex items-center gap-2 rounded-sm bg-ink px-5 py-3 font-semibold text-paper">
+              {learnCta}
               <ArrowRight size={18} aria-hidden />
             </Link>
             <Link href="/contact-developer" className="focus-ring inline-flex items-center gap-2 rounded-sm border border-ink/40 bg-paper px-5 py-3 font-semibold text-ink">
@@ -60,13 +106,15 @@ export function LandingPage() {
               <span className="border border-coral/35 bg-coral/10 px-2.5 py-1 text-xs font-semibold text-coral">course + people + proof</span>
             </div>
             <div className="mt-4 grid gap-3">
-              {features.map(([titleKey, bodyKey, title, body], index) => (
-                <div key={titleKey} className="border border-ink/16 bg-chalk/75 p-4">
+              {landingFeatures.map((feature, index) => (
+                <div key={feature.titleKey} className="border border-ink/16 bg-chalk/75 p-4">
                   <div className="flex items-start gap-3">
                     <span className="grid h-7 w-7 shrink-0 place-items-center border border-ink/18 bg-paper text-xs font-semibold text-ink">{index + 1}</span>
                     <div>
-                      <p className="font-semibold text-ink"><EditableCopy copyKey={titleKey} fallback={title} /></p>
-                      <p className="mt-1 text-sm leading-6 text-ink/62"><EditableCopy copyKey={bodyKey} fallback={body} /></p>
+                      <Link href={feature.href} className="font-semibold text-ink underline decoration-ink/20 underline-offset-4 hover:text-coral hover:decoration-coral">
+                        <EditableCopy copyKey={feature.titleKey} fallback={feature.title} />
+                      </Link>
+                      <p className="mt-1 text-sm leading-6 text-ink/62"><EditableCopy copyKey={feature.bodyKey} fallback={feature.body} /></p>
                     </div>
                   </div>
                 </div>
@@ -79,9 +127,201 @@ export function LandingPage() {
   );
 }
 
-export function LoginPage() {
+type ExperienceSlide = {
+  eyebrow: string;
+  title: string;
+  body: string;
+  href?: string;
+  icon: typeof LayoutDashboard;
+  accent: string;
+  scene: "dashboard" | "profile" | "course" | "matches" | "help";
+};
+
+const experienceSlides: ExperienceSlide[] = [
+  {
+    eyebrow: "Step 1",
+    title: "先看 Dashboard 的整体状态",
+    body: "推荐课程、Profile 完整度、TeamUp 提醒和官方查询入口会集中在学生首页。",
+    icon: LayoutDashboard,
+    accent: "bg-coral",
+    scene: "dashboard"
+  },
+  {
+    eyebrow: "Step 2",
+    title: "用作品证明真实贡献",
+    body: "Proof-of-Work Profile 让同学先看到项目、材料、技能和可验证经历。",
+    href: "/help?article=proof-of-work-profile",
+    icon: ShieldCheck,
+    accent: "bg-forest",
+    scene: "profile"
+  },
+  {
+    eyebrow: "Step 3",
+    title: "进入课程内容讨论与共学",
+    body: "Course Board 聚合课程说明、Open to Team 信号和同课协作入口。",
+    href: "/help?article=course-board-basics",
+    icon: BookOpen,
+    accent: "bg-moss",
+    scene: "course"
+  },
+  {
+    eyebrow: "Step 4",
+    title: "基于履历与真实水平匹配伙伴",
+    body: "Matches 和 TeamUp Interest 帮你从课程、作品和协作目标附近找到人。",
+    href: "/help?article=matches",
+    icon: UsersRound,
+    accent: "bg-rust",
+    scene: "matches"
+  },
+  {
+    eyebrow: "Step 5",
+    title: "遇到问题先看帮助中心和开发者页面",
+    body: "帮助中心解释功能边界；开发者页面记录迭代和维护信息。下一步会进入邮箱注册。",
+    href: "/help",
+    icon: BookOpen,
+    accent: "bg-ink",
+    scene: "help"
+  }
+];
+
+export function ExperiencePage() {
   const router = useRouter();
-  const [mode, setMode] = useState<"login" | "register" | "reset">("login");
+  const [index, setIndex] = useState(0);
+  const slide = experienceSlides[index];
+  const Icon = slide.icon;
+  const isLast = index === experienceSlides.length - 1;
+
+  function next() {
+    if (isLast) {
+      router.push("/login?mode=register");
+      return;
+    }
+    setIndex((value) => Math.min(value + 1, experienceSlides.length - 1));
+  }
+
+  return (
+    <main className="mx-auto grid min-h-[calc(100vh-72px)] max-w-7xl content-center gap-6 px-5 py-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-coral">Experience TEAMAKING</p>
+          <h1 className="mt-2 text-4xl font-semibold text-ink md:text-6xl">先快速走一遍平台</h1>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/" className="focus-ring border border-ink/30 px-3 py-2 text-sm font-semibold text-ink">结束引导</Link>
+          <Link href="/login?mode=register" className="focus-ring bg-coral px-3 py-2 text-sm font-semibold text-white">直接注册</Link>
+        </div>
+      </div>
+
+      <section className="grid gap-5 lg:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)] lg:items-stretch">
+        <div className="border border-ink/18 bg-chalk p-5">
+          <p className="text-sm font-semibold uppercase tracking-wide text-ink/52">{slide.eyebrow} / {experienceSlides.length}</p>
+          <div className={`mt-5 grid h-12 w-12 place-items-center ${slide.accent} text-paper`}>
+            <Icon size={22} aria-hidden />
+          </div>
+          <h2 className="mt-5 text-3xl font-semibold leading-tight text-ink">{slide.title}</h2>
+          <p className="mt-4 text-base leading-7 text-ink/68">{slide.body}</p>
+          {slide.href ? (
+            <Link href={slide.href} className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-coral">
+              阅读对应帮助文档
+              <ArrowRight size={16} aria-hidden />
+            </Link>
+          ) : null}
+          <div className="mt-8 flex flex-wrap gap-2">
+            <button type="button" disabled={index === 0} onClick={() => setIndex((value) => Math.max(value - 1, 0))} className="focus-ring inline-flex items-center gap-2 border border-ink/30 px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40">
+              <ChevronLeft size={16} aria-hidden />
+              上一步
+            </button>
+            <button type="button" onClick={next} className="focus-ring inline-flex items-center gap-2 bg-ink px-3 py-2 text-sm font-semibold text-paper">
+              {isLast ? "进入邮箱注册" : "下一步"}
+              <ChevronRight size={16} aria-hidden />
+            </button>
+          </div>
+          <div className="mt-6 flex gap-2" aria-label="体验引导进度">
+            {experienceSlides.map((item, itemIndex) => (
+              <button
+                key={item.title}
+                type="button"
+                onClick={() => setIndex(itemIndex)}
+                className={`h-2 flex-1 border border-ink/20 ${itemIndex === index ? "bg-ink" : "bg-paper"}`}
+                aria-label={`跳到第 ${itemIndex + 1} 步`}
+              />
+            ))}
+          </div>
+        </div>
+        <ExperienceMockup scene={slide.scene} />
+      </section>
+    </main>
+  );
+}
+
+function ExperienceMockup({ scene }: { scene: ExperienceSlide["scene"] }) {
+  const rows = useMemo(() => {
+    if (scene === "profile") return ["作品证明 Profile", "课程项目报告", "GPA / 证书材料", "联系方式可见性"];
+    if (scene === "course") return ["Course Board", "课程说明", "Open to Team", "共学讨论"];
+    if (scene === "matches") return ["Matches", "个人履历线索", "TeamUp Interest", "目标接近"];
+    if (scene === "help") return ["Help Center", "Developer Log", "Contact Developer", "Support Ticket"];
+    return ["Profile completion", "Recommended courses", "TeamUp reminders", "Official references"];
+  }, [scene]);
+
+  return (
+    <div className="min-h-[430px] border-2 border-ink bg-paper p-4 shadow-hard" aria-label="不可交互的 TEAMAKING 功能演示截图">
+      <div className="flex items-center justify-between border-b-2 border-ink pb-3">
+        <div className="flex items-center gap-2">
+          <span className="grid h-8 w-8 place-items-center bg-ink text-paper">T</span>
+          <span className="font-serif text-xl font-semibold">TEAMAKING</span>
+        </div>
+        <span className="border border-ink/20 px-2 py-1 text-xs font-semibold text-ink/54">static preview</span>
+      </div>
+      <div className="mt-4 grid gap-4 md:grid-cols-[0.65fr_1.35fr]">
+        <div className="grid gap-2">
+          {["Dashboard", "Profile", "Courses", "Matches", "Help"].map((item) => (
+            <div key={item} className={`border px-3 py-2 text-sm font-semibold ${item.toLowerCase().includes(scene === "course" ? "courses" : scene) ? "border-coral bg-coral/10 text-coral" : "border-ink/12 bg-chalk text-ink/62"}`}>
+              {item}
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="border border-ink/14 bg-mist/60 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-coral">{rows[0]}</p>
+              <div className="mt-4 h-16 bg-paper" />
+            </div>
+            <div className="border border-ink/14 bg-chalk p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-moss">{rows[1]}</p>
+              <div className="mt-4 grid gap-2">
+                <span className="h-3 bg-ink/18" />
+                <span className="h-3 w-3/4 bg-ink/14" />
+                <span className="h-3 w-1/2 bg-ink/10" />
+              </div>
+            </div>
+          </div>
+          <div className="border border-ink/14 bg-paper p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-semibold text-ink">{rows[2]}</p>
+              <span className="border border-forest/30 bg-forest/10 px-2 py-1 text-xs font-semibold text-forest">preview</span>
+            </div>
+            <div className="mt-4 grid gap-2">
+              {[0, 1, 2].map((item) => (
+                <div key={item} className="grid grid-cols-[56px_1fr_auto] items-center gap-3 border border-ink/10 bg-chalk px-3 py-2">
+                  <span className="h-8 bg-coral/20" />
+                  <span className="grid gap-1">
+                    <span className="h-3 bg-ink/18" />
+                    <span className="h-2 w-2/3 bg-ink/10" />
+                  </span>
+                  <span className="border border-ink/20 px-2 py-1 text-xs text-ink/54">{rows[3]}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMode } = {}) {
+  const router = useRouter();
+  const [mode, setMode] = useState<LoginMode>(() => loginModeFromValue(initialMode));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -94,7 +334,7 @@ export function LoginPage() {
   const emailPlaceholder = useCopyText("login.email.placeholder", "your.name@mail.bnbu.edu.cn");
   const passwordPlaceholder = useCopyText("login.password.placeholder", "输入密码");
 
-  function resetState(nextMode: "login" | "register" | "reset") {
+  function resetState(nextMode: LoginMode) {
     setMode(nextMode);
     setCode("");
     setDevCode("");

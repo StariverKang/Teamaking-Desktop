@@ -65,6 +65,71 @@ describe("course import payload parsing", () => {
 });
 
 describe("BNBU v2 handbook import validation", () => {
+  it("accepts school-wide course catalog payloads without semester or admission rules", () => {
+    const validation = validateBnbuCourseImportPayload({
+      schemaVersion: "teamaking.bnbu_course_import.v2",
+      importMode: "course_catalog",
+      catalogEffectiveYear: 2026,
+      school: { shortName: "BNBU", name: "Beijing Normal-Hong Kong Baptist University" },
+      sourceRefs: [{ id: "catalog-2026", title: "Course Descriptions 2026", url: "https://example.test/catalog.pdf", sourceType: "course_catalog_pdf" }],
+      faculties: [],
+      majors: [],
+      courses: [{ code: "AI1003", title: "Python Programming", credits: 3, sourceRefIds: ["catalog-2026"] }],
+      offerings: [],
+      curriculumRules: []
+    });
+
+    expect(validation.ok).toBe(true);
+    expect(validation.semesterCode).toBeUndefined();
+    expect(validation.errors).not.toContain("semester is required");
+    expect(validation.errors).not.toContain("faculties must contain at least one faculty");
+    expect(validation.warnings).not.toContain("curriculumRules is empty; courses will be searchable only if imported manually later");
+  });
+
+  it("rejects major or term placement inside course catalog imports", () => {
+    const validation = validateBnbuCourseImportPayload({
+      schemaVersion: "teamaking.bnbu_course_import.v2",
+      importMode: "course_catalog",
+      catalogEffectiveYear: 2026,
+      school: { shortName: "BNBU", name: "Beijing Normal-Hong Kong Baptist University" },
+      semester: { code: "2026-Fall", name: "2026 Fall", academicYear: 2026, term: "Fall", isCurrentCandidate: false },
+      sourceRefs: [{ id: "catalog-2026", title: "Course Descriptions 2026", url: "https://example.test/catalog.pdf", sourceType: "course_catalog_pdf" }],
+      faculties: [{ code: "FST", name: "Faculty of Science and Technology" }],
+      majors: [{ code: "AI", name: "Artificial Intelligence Programme", facultyCode: "FST" }],
+      courses: [{ code: "AI1003", title: "Python Programming", credits: 3, sourceRefIds: ["catalog-2026"] }],
+      offerings: [{ courseCode: "AI1003", semesterCode: "2026-Fall", sections: ["Default"], sourceRefIds: ["catalog-2026"] }],
+      curriculumRules: [{
+        id: "catalog-ai1003-ai-y1",
+        courseCode: "AI1003",
+        semesterCode: "2026-Fall",
+        classification: "major_required",
+        studentAction: "default_join",
+        relativeTermCodes: ["Y1S1"],
+        audience: { cohortYears: [2026], majorCodes: ["AI"] },
+        sourceRefIds: ["catalog-2026"]
+      }]
+    });
+
+    expect(validation.ok).toBe(false);
+    expect(validation.errors).toContain("course_catalog must not contain semester metadata; course catalog rows are school-wide and not tied to an academic term");
+    expect(validation.errors).toContain("course_catalog must not contain majors; major-specific placement belongs in programme handbook imports");
+    expect(validation.errors).toContain("course_catalog must not contain offerings; real timetable evidence belongs in a semester offering import");
+    expect(validation.errors).toContain("course_catalog must not contain curriculumRules; admission-year recommendations belong in programme handbook imports");
+  });
+
+  it("requires a catalog effective year for course catalog lifecycle review", () => {
+    const validation = validateBnbuCourseImportPayload({
+      schemaVersion: "teamaking.bnbu_course_import.v2",
+      importMode: "course_catalog",
+      school: { shortName: "BNBU", name: "Beijing Normal-Hong Kong Baptist University" },
+      sourceRefs: [{ id: "catalog", title: "Course Descriptions", url: "https://example.test/catalog.pdf", sourceType: "course_catalog_pdf" }],
+      courses: [{ code: "AI1003", title: "Python Programming", credits: 3, sourceRefIds: ["catalog"] }]
+    });
+
+    expect(validation.ok).toBe(false);
+    expect(validation.errors).toContain("course_catalog requires catalogEffectiveYear for catalog lifecycle review");
+  });
+
   it("allows cohort curriculum payloads with no concrete offerings", () => {
     const validation = validateBnbuCourseImportPayload(baseV2Payload());
     expect(validation.ok).toBe(true);

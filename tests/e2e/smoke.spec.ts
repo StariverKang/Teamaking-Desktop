@@ -2,8 +2,18 @@ import { expect, test } from "@playwright/test";
 
 test("public entry, contact, help and support surfaces render", async ({ page }) => {
   await page.goto("/");
+  await expect(page.getByRole("link", { name: "用学校邮箱开始" })).toHaveAttribute("href", "/login?mode=register");
+  await expect(page.getByRole("link", { name: "了解TEAMAKING" })).toHaveAttribute("href", "/help?article=what-is-teamaking");
   await expect(page.getByRole("link", { name: "联系开发者" })).toHaveAttribute("href", "/contact-developer");
+  await expect(page.getByRole("link", { name: "进入演示验收" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "先看看 Course Boards" })).toHaveCount(0);
+
+  await page.goto("/experience");
+  await expect(page.getByRole("heading", { name: "先快速走一遍平台" })).toBeVisible();
+  await expect(page.getByLabel("不可交互的 TEAMAKING 功能演示截图")).toBeVisible();
+  await page.getByRole("link", { name: "直接注册" }).click();
+  await expect(page).toHaveURL(/\/login\?mode=register$/);
+  await expect(page.getByRole("heading", { name: "学校邮箱注册" })).toBeVisible();
 
   await page.goto("/contact-developer");
   await expect(page.getByRole("heading", { name: "联系开发者", level: 1 })).toBeVisible();
@@ -20,7 +30,13 @@ test("public entry, contact, help and support surfaces render", async ({ page })
   expect(((await helpResponse.json()).documents ?? []).length).toBeGreaterThan(0);
 
   await page.goto("/login");
-  await expect(page.getByRole("heading", { name: /已注册用户登录|学校邮箱注册|找回密码/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "学校邮箱注册" })).toBeVisible();
+
+  await page.goto("/login?mode=login");
+  await expect(page.getByRole("heading", { name: "已注册用户登录" })).toBeVisible();
+
+  await page.goto("/login?mode=reset");
+  await expect(page.getByRole("heading", { name: "找回密码" })).toBeVisible();
 
   await page.goto("/support");
   await expect(page.getByRole("heading", { name: "Support Ticket" })).toBeVisible();

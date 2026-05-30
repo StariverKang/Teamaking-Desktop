@@ -14,7 +14,11 @@ describe("crawler result status labels", () => {
 
   it("labels timeout, process, finalization, and import failures", () => {
     expect(crawlerResultStatus({ status: "timed_out", errorMessage: "任务长时间没有更新" })).toMatchObject({ label: "Time out", tone: "warning" });
-    expect(crawlerResultStatus({ status: "process_error", exitCode: 1 })).toMatchObject({ label: "进程错误", tone: "error" });
+    expect(crawlerResultStatus({ status: "process_error", exitCode: 1, logs: ["Node.js v24.14.1\n", "Error: Could not infer admission year from URL\n"] })).toMatchObject({
+      label: "进程错误",
+      detail: "Error: Could not infer admission year from URL",
+      tone: "error"
+    });
     expect(crawlerResultStatus({ status: "finalization_failed" })).toMatchObject({ label: "整理失败", tone: "error" });
     expect(crawlerResultStatus({ status: "failed", imports: [{ status: "failed" }] })).toMatchObject({ label: "导入失败", tone: "error" });
   });

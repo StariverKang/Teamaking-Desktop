@@ -40,7 +40,8 @@ export function inferredEntryYearFromEmail(email: string) {
 export function gradeFromEntryYear(entryYear?: number | null, now = new Date()) {
   if (!entryYear || !Number.isFinite(entryYear)) return null;
   const academicYear = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
-  const level = Math.max(1, Math.min(4, academicYear - entryYear + 1));
+  const level = Math.max(1, academicYear - entryYear + 1);
+  if (level > 4) return "Graduated";
   return `Year ${level}`;
 }
 
@@ -48,8 +49,9 @@ export function academicLockForUser(user: any) {
   const inferredEntryYear = inferredEntryYearFromEmail(user.email);
   const hasAdminOverride = Boolean(user.profile?.academicOverrideAt);
   const entryYear = hasAdminOverride ? user.profile?.entryYear ?? inferredEntryYear : inferredEntryYear ?? user.profile?.entryYear;
-  const entryTerm = hasAdminOverride ? user.profile?.entryTerm ?? "Fall" : "Fall";
-  const grade = hasAdminOverride ? user.profile?.grade ?? gradeFromEntryYear(entryYear) : gradeFromEntryYear(entryYear) ?? user.profile?.grade ?? null;
+  const entryTerm = "Fall";
+  const computedGrade = gradeFromEntryYear(entryYear);
+  const grade = computedGrade === "Graduated" ? "Graduated" : hasAdminOverride ? user.profile?.grade ?? computedGrade : computedGrade ?? user.profile?.grade ?? null;
   return {
     locked: Boolean(inferredEntryYear) && !hasAdminOverride,
     source: hasAdminOverride ? "admin_override" : inferredEntryYear ? "email_second_digit" : "profile_fallback",
