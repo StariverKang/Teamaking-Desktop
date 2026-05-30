@@ -1261,3 +1261,29 @@
   - `npm run lint` 通过。
   - `npm run build` 通过，生产路由包含 `/admin/ai-crawler`。
   - 本地生产服务器 smoke：`/crawler` 能显示 AI assist 选项，`/admin/ai-crawler` 能挂载并显示 crawler AI 日志区域；未启动真实爬虫任务。
+
+### Admin Editable Interface Copy
+
+- 背景：
+  - 用户要求管理员不仅能控制后台，还能以管理员身份进入用户端页面，直接编辑标题、小标题、功能说明、使用引导、输入框提示等短界面字段。
+  - 用户进一步明确：这不是大段用户文本或文档正文 CMS；Help Center、Developer Log、Contact Developer 的文档编辑继续使用既有 `/admin/content`。
+- 产品边界：
+  - Interface Copy 只覆盖框架级短字段：页面 eyebrow/title/description、section heading、card 标题/说明、tab/button label、字段 label/help text、placeholder、empty state、onboarding tour 文案、support widget 提示和官方参考区固定包装文案。
+  - 用户生成内容、课程数据、官方 URL、帖子、Profile 正文、工单正文、admin workbench 自身文案和公开内容文档正文不进入这套系统。
+- 改动：
+  - 新增 `lib/site-copy.ts` typed registry，集中定义 key、route、group、kind、默认 `zh/en` 文案、最大长度、fallback 和 diff helper。
+  - 使用现有 `SiteConfig` 存储，不新增 Prisma migration：草稿为 `site_ui_copy_draft`，发布版本为 `site_ui_copy_published`。
+  - 新增公开 `GET /api/site-copy`，只返回 published-over-default 值；新增管理员接口 `GET /api/admin/site-copy`、`PATCH /api/admin/site-copy/draft`、`POST /api/admin/site-copy/publish`、`POST /api/admin/site-copy/discard`。
+  - 新增 `components/site-copy-runtime.tsx`，在 root layout 注入 copy runtime；普通用户只读发布值，管理员编辑模式读取 draft-over-published-over-default。
+  - 学生/公开路由上为管理员显示浮动“编辑界面文案”工具条；可点选被标记字段打开侧边编辑器，保存草稿后需要发布才影响普通用户。
+  - 新增 `/admin/site-copy` 页面和 admin nav `Interface Copy`，支持搜索字段、只看改动、逐字段草稿编辑、发布和丢弃。
+  - 第一批接入 `/`、`/login`、`/demo-access`、`/onboarding`、`/dashboard`、`/courses`、课程详情、Course Board、TeamUp/social、Profile 编辑/公开页、Contact Info、Support、Announcements 和 onboarding tour。
+  - 官方参考卡片只接入固定包装文案和稳定 label；URL、programme、handbook、MIS 等数据片段继续由课程/import/reference 服务控制。
+  - 修复两个验收时发现的交互边缘：`CopyTarget` 非编辑模式保留布局 class；onboarding tour 不再把 `/admin/site-copy` 等后台页面重定向回学生端步骤。
+- 验证：
+  - 新增 `tests/unit/site-copy.test.ts` 覆盖 registry defaults、locale fallback、draft/published merge、normalize 和 changed keys。
+  - 新增 `tests/unit/site-copy-api.test.ts` 覆盖公开接口不泄露草稿、草稿保存、非法 key 拒绝、发布清草稿和 audit logging。
+  - 新增 `tests/e2e/site-copy.spec.ts`：管理员在 `/courses` 编辑搜索 placeholder 草稿，确认普通用户看不到草稿，发布后普通用户可见。
+  - 已通过 `npm run prisma:validate`、`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`npm run test:e2e -- --project=chromium tests/e2e/site-copy.spec.ts`。
+  - in-app browser 验收：`/admin/site-copy` 能显示字段列表且不被 onboarding tour 跳走；管理员在 `/courses` 能看到工具条和搜索 placeholder。
+  - 本地 dev DB 仍有既有 schema drift：课程接口查询 `Course.catalogEffectiveYear` 时可能报 `P2022`；这不是 Interface Copy 改动引入，e2e 已 mock 课程数据验证文案链路。

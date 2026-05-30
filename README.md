@@ -47,6 +47,7 @@ Agent 开发原则：
 - File upload：本地验收写入 `public/uploads`，生产可用 Cloudflare R2；数据库记录 `fileUrl/storageKey/objectKey/mime/extension/scanStatus/metadata`
 - I18n：系统框架支持简体中文 / English；首次访问按 IP 国家/地区写入语言 cookie，用户可手动切换，用户可编辑内容不自动翻译
 - Content & Announcements：管理员在 `/admin/content` 统一维护联系开发者、开发者日志、帮助中心和全站公告；帮助中心/开发者日志支持文件夹树和文档树；`/help`、`/developer-log`、`/contact-developer` 对未登录用户公开，并在首屏使用服务端公开内容 payload，公告仍会在用户未阅读前弹窗提醒
+- Site UI Copy：管理员可在 `/admin/site-copy` 或用户端浮动工具条维护短界面文案；草稿存入 `site_ui_copy_draft`，发布后写入 `site_ui_copy_published`，普通用户只读取已发布版本
 - Admin Maintenance：管理员可在 `/admin/maintenance` 软清空当前课程组队状态；好友关系、课程参与历史、Teamaking Post 和 TeamUp Interest 记录会保留，用于后续推荐和审计追溯
 
 ## 本地启动
@@ -228,6 +229,7 @@ npm run build
 12. 其他用户可以在 Teamaking Post 详情页点击 Team Up；发送 TeamUp Interest 后，也会算作参与该 Post 所属 Course Board。
 13. TeamUp Interest 状态可以按正向流程 `sent → viewed → mutual` 变化，也可以进入 `withdrawn`、`refused`、`closed`、`deleted` 或 `reported`。
 14. 用户可以在 `/friends` 查看 mutual follow 好友，在课程详情页评价真实课程，在 `/help`、`/developer-log`、`/contact-developer` 查看管理员维护的内容文档。
+15. 管理员可以从用户端页面进入“编辑界面文案”模式，点选标题、说明、按钮、placeholder、empty state 和 onboarding tour 字样等短字段；保存后只是草稿，发布后普通用户才会看到。
 
 ## 重要产品边界
 
@@ -274,12 +276,15 @@ app/
   help/ developer-log/ contact-developer/
                                   # 管理员维护的 Markdown 内容中心
   admin/                        # 管理后台
+  admin/site-copy/              # 短界面文案管理页
 components/
   app-shell.tsx                 # 导航、页面布局、通用状态组件
+  site-copy-runtime.tsx         # 用户端可点选字段、管理员浮动工具条和 copy runtime
   cards.tsx                     # CourseCard、ProfileCard、TeamakingPostCard 等
   client-pages.tsx              # 兼容空壳；新页面不要从这里导入
   pages/                        # 按 auth/student/profile/course-board/social/admin/content/crawler 拆分的页面模块
 lib/
+  site-copy.ts                  # typed site copy registry、默认值、fallback 和 diff helpers
   prisma.ts                     # Prisma Client 单例
   session.ts                    # HttpOnly cookie session
   contact.ts                    # 联系方式可见性逻辑
@@ -351,6 +356,7 @@ prisma/
 - `POST /api/follow-requests/:id/withdraw`
 - `GET /api/friends`
 - `GET /api/notifications/summary`
+- `GET /api/site-copy`
 - `GET /api/content?kind=help|developer_log|developer_contact`
 - `GET /api/matches`
 - `POST /api/support-tickets`
@@ -383,6 +389,10 @@ prisma/
 - `POST /api/admin/content`
 - `PATCH /api/admin/content/:id`
 - `DELETE /api/admin/content/:id`
+- `GET /api/admin/site-copy`
+- `PATCH /api/admin/site-copy/draft`
+- `POST /api/admin/site-copy/publish`
+- `POST /api/admin/site-copy/discard`
 - `GET /api/admin/course-submissions`
 - `POST /api/admin/course-submissions/:id/approve`
 - `POST /api/admin/course-submissions/:id/reject`
@@ -424,6 +434,14 @@ prisma/
 `/help`、`/developer-log`、`/contact-developer` 是未登录可见页面。页面首屏通过 `getPublicContentPayload()` 服务端读取已发布的 `ContentDocument`，客户端再用 `/api/content?kind=help|developer_log|developer_contact` 刷新，数据库暂不可用或没有发布内容时会显示可读 fallback，而不是要求登录或空白报错。
 
 帮助中心和开发者日志使用文件夹树 + 文档阅读器；联系开发者是独立公开内容卡片。公开 API 只返回 `published` 文档。当前本地帮助中心草稿源在 `storage/help-center-drafts/`，`01-*` 到 `06-*` 用于公开帮助文档，`00-manifest.md` 和 `99-archive` 保持草稿/归档用途。
+
+### 界面短文案
+
+Interface Copy 只维护框架级短字段，不是长文 CMS。可编辑范围包括页面 eyebrow/title/description、section heading、card 标题和说明、tab/button label、字段 label、help text、placeholder、empty state、onboarding tour 标题/正文/按钮、support widget 提示和官方参考区的固定包装文案。用户生成内容、课程数据、官方链接、帖子、Profile 正文、工单正文和 `/admin/content` 的文档正文不走这套系统。
+
+默认文案集中定义在 `lib/site-copy.ts`。公开用户端通过 `GET /api/site-copy` 只读取已发布值；管理员通过 `/admin/site-copy` 或用户端“编辑界面文案”浮动工具条读取草稿合并视图。草稿存入 `SiteConfig.key=site_ui_copy_draft`，发布后写入 `SiteConfig.key=site_ui_copy_published` 并清空草稿，不需要 Prisma schema migration。每次保存、发布、丢弃都会写入 `AdminAuditLog`。
+
+管理员在学生/公开页面打开编辑模式后，可直接点选被标记的字段打开侧边编辑器；普通用户永远只看到 published-over-default。文案支持 `zh` 和 `en`，缺某个语言时回退默认值。`onboarding_guide` 的 route、target selector 和 placement 仍由原配置控制，只有可见 title/body/button 字符串走 Interface Copy。
 
 ### Course Board
 
@@ -630,6 +648,7 @@ DATABASE_URL="Neon direct connection string" npx prisma migrate deploy
 - 管理后台 `Users`、`Boards`、`Support Tickets`、`Metrics` 页面能读取数据库。
 - 管理后台编辑用户状态、Course Board 或工单后，数据能刷新显示。
 - 管理后台 `Content & Announcements` 可以按 tab 管理联系开发者、开发者日志、帮助中心和全站公告；帮助中心/开发者日志支持在树上分别新建分类文件夹和文档；主站任意页面顶部能看到公告条和弹窗，`/announcements` 能查看历史。
+- 管理后台 `Interface Copy` 可以搜索短界面文案、保存草稿、发布和丢弃；管理员在 `/courses` 等学生端页面可打开“编辑界面文案”工具条，普通用户不应看到草稿，发布后用户端才更新。
 - 无痕窗口或登出状态下，首页“联系开发者” CTA 打开 `/contact-developer`，不跳进真实 Course Board；`/help`、`/developer-log`、`/contact-developer` 和 `/api/content?kind=...` 均能读取已发布公开内容。
 - 点击登出后，刷新、静置或进入 Course Board 不应自动恢复账号；用 `/api/auth/me` 复核应返回未登录状态。
 - 主站语言切换器能在中文/英文间切换；用浏览器无痕窗口模拟非中文地区时默认英文，手动切换后 cookie 会记住选择。

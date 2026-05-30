@@ -6,6 +6,7 @@ import { X } from "lucide-react";
 
 import { api, useApi } from "@/lib/client/api";
 import { defaultOnboardingGuide, OnboardingGuide, OnboardingGuideStep, onboardingGuideFromConfig } from "@/lib/onboarding-guide";
+import { EditableCopy, useCopyText } from "@/components/site-copy-runtime";
 
 const tourStorageKey = "teamaking.onboardingTour.v1";
 const tourEventName = "teamaking:onboarding-tour-start";
@@ -133,6 +134,12 @@ export function OnboardingTour() {
   const [locallyDismissed, setLocallyDismissed] = useState(false);
   const stepIndex = clamp(tourState?.stepIndex ?? 0, 0, Math.max(0, guide.steps.length - 1));
   const step = guide.steps[stepIndex];
+  const stepTitle = useCopyText(step ? `onboarding.tour.${step.id}.title` : undefined, step?.title ?? "");
+  const stepBody = useCopyText(step ? `onboarding.tour.${step.id}.body` : undefined, step?.body ?? "");
+  const skipLabel = useCopyText("onboarding.tour.action.skip", "跳过");
+  const previousLabel = useCopyText("onboarding.tour.action.previous", "上一步");
+  const nextLabel = useCopyText("onboarding.tour.action.next", "下一步");
+  const doneLabel = useCopyText("onboarding.tour.action.done", "完成");
 
   const setAndStoreTourState = useCallback((state: TourState) => {
     writeStoredTourState(state);
@@ -166,14 +173,14 @@ export function OnboardingTour() {
   }, [data?.user, dismissed, guide, locallyDismissed, pathname, setAndStoreTourState, tourState]);
 
   useEffect(() => {
-    if (!tourState?.active || !step) return;
+    if (!canLoad || !tourState?.active || !step) return;
     if (pathname !== step.route) {
       router.push(step.route);
     }
-  }, [pathname, router, step, tourState?.active]);
+  }, [canLoad, pathname, router, step, tourState?.active]);
 
   useEffect(() => {
-    if (!tourState?.active || !step || pathname !== step.route) {
+    if (!canLoad || !tourState?.active || !step || pathname !== step.route) {
       setFrame(null);
       return;
     }
@@ -212,9 +219,9 @@ export function OnboardingTour() {
       window.removeEventListener("resize", measureWithoutScroll);
       window.removeEventListener("scroll", measureWithoutScroll, true);
     };
-  }, [pathname, step, tourState?.active]);
+  }, [canLoad, pathname, step, tourState?.active]);
 
-  if (!tourState?.active || !step || pathname !== step.route || !frame) return null;
+  if (!canLoad || !tourState?.active || !step || pathname !== step.route || !frame) return null;
 
   const isFirst = stepIndex <= 0;
   const isLast = stepIndex >= guide.steps.length - 1;
@@ -249,12 +256,12 @@ export function OnboardingTour() {
             <X size={14} aria-hidden />
           </button>
         </div>
-        <h2 className="mt-2 text-lg font-semibold text-ink">{step.title}</h2>
-        <p className="mt-2 text-sm leading-6 text-ink/70">{step.body}</p>
+        <h2 className="mt-2 text-lg font-semibold text-ink"><EditableCopy copyKey={`onboarding.tour.${step.id}.title`} fallback={stepTitle} /></h2>
+        <p className="mt-2 text-sm leading-6 text-ink/70"><EditableCopy copyKey={`onboarding.tour.${step.id}.body`} fallback={stepBody} /></p>
         {frame.missing ? <p className="mt-2 text-xs leading-5 text-rust">目标控件暂时不可见，你仍然可以继续下一步。</p> : null}
         <div className="mt-4 flex flex-wrap gap-2">
           <button type="button" onClick={dismissTour} className="border border-ink/30 px-3 py-2 text-sm font-semibold">
-            跳过
+            <EditableCopy copyKey="onboarding.tour.action.skip" fallback={skipLabel} />
           </button>
           <button
             type="button"
@@ -262,15 +269,15 @@ export function OnboardingTour() {
             onClick={() => goTo(stepIndex - 1)}
             className="border border-ink/30 px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
           >
-            上一步
+            <EditableCopy copyKey="onboarding.tour.action.previous" fallback={previousLabel} />
           </button>
           {isLast ? (
             <button type="button" onClick={dismissTour} className="bg-coral px-3 py-2 text-sm font-semibold text-paper">
-              完成
+              <EditableCopy copyKey="onboarding.tour.action.done" fallback={doneLabel} />
             </button>
           ) : (
             <button type="button" onClick={() => goTo(stepIndex + 1)} className="bg-ink px-3 py-2 text-sm font-semibold text-paper">
-              下一步
+              <EditableCopy copyKey="onboarding.tour.action.next" fallback={nextLabel} />
             </button>
           )}
         </div>

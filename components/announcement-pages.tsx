@@ -101,7 +101,7 @@ export function AnnouncementsPage() {
   }, []);
 
   return (
-    <PageShell title="Announcements" eyebrow="System" description="查看管理员发布给所有用户的公告历史。">
+    <PageShell title="Announcements" eyebrow="System" description="查看管理员发布给所有用户的公告历史。" titleCopyKey="announcements.page.title" descriptionCopyKey="announcements.page.description">
       {loading ? <LoadingState /> : null}
       {error ? <div className="border border-rust/40 bg-rust/5 px-3 py-2 text-sm font-medium text-rust">{error}</div> : null}
       <div className="grid gap-4">

@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Check, FileText, Plus, UserRound } from "lucide-react";
 import { Card, EmptyState, LoadingState, PageShell, SkillBadge } from "@/components/app-shell";
 import { OnboardingTourRestartButton } from "@/components/onboarding-tour";
+import { CopyTarget, useCopyText } from "@/components/site-copy-runtime";
 import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
 import { contactVisibilityOptions, defaultContactVisibility } from "@/lib/contact";
 import { api, uploadProfileFile, useApi } from "@/lib/client/api";
@@ -74,6 +75,8 @@ export function ProfileEditorPage() {
   const profileFaculties = useMemo(() => onboarding?.faculties ?? [], [onboarding?.faculties]);
   const profileMajors = useMemo(() => onboarding?.majors ?? [], [onboarding?.majors]);
   const filteredProfileMajors = useMemo(() => majorsForFaculty(profileMajors, form.facultyId), [profileMajors, form.facultyId]);
+  const nicknamePlaceholder = useCopyText("profileEditor.nickname.placeholder", "例如 Mia / slides person");
+  const headlinePlaceholder = useCopyText("profileEditor.headline.placeholder", "例如 Research and presentation collaborator");
 
   function resetPortfolioForm() {
     setEditingPortfolioId("");
@@ -292,7 +295,7 @@ export function ProfileEditorPage() {
   }
 
   return (
-    <PageShell title="Proof-of-Work Profile" eyebrow="Profile" description="编辑个人展示页：联系方式、头像背景、技能标签、作品证明、GPA 截图、证书和简历解析都在这里维护。">
+    <PageShell title="Proof-of-Work Profile" eyebrow="Profile" description="编辑个人展示页：联系方式、头像背景、技能标签、作品证明、GPA 截图、证书和简历解析都在这里维护。" titleCopyKey="profileEditor.page.title" descriptionCopyKey="profileEditor.page.description">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {data ? (
         <div className="grid gap-5">
@@ -329,14 +332,14 @@ export function ProfileEditorPage() {
                 <OnboardingTourRestartButton className="rounded-sm border border-ink/30 px-3 py-2 text-xs font-semibold text-ink" />
               </div>
               <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <Field label="显示名称">
+                <Field label="显示名称" labelCopyKey="profileEditor.displayName.label">
                   <input className={inputClass} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} />
                 </Field>
-                <Field label="昵称 / 别名">
-                  <input className={inputClass} value={form.nickname} onChange={(event) => setForm({ ...form, nickname: event.target.value })} placeholder="例如 Mia / slides person" />
+                <Field label="昵称 / 别名" labelCopyKey="profileEditor.nickname.label">
+                  <CopyTarget copyKey="profileEditor.nickname.placeholder"><input className={inputClass} value={form.nickname} onChange={(event) => setForm({ ...form, nickname: event.target.value })} placeholder={nicknamePlaceholder} /></CopyTarget>
                 </Field>
-                <Field label="一句话定位">
-                  <input className={inputClass} value={form.headline} onChange={(event) => setForm({ ...form, headline: event.target.value })} placeholder="例如 Research and presentation collaborator" />
+                <Field label="一句话定位" labelCopyKey="profileEditor.headline.label">
+                  <CopyTarget copyKey="profileEditor.headline.placeholder"><input className={inputClass} value={form.headline} onChange={(event) => setForm({ ...form, headline: event.target.value })} placeholder={headlinePlaceholder} /></CopyTarget>
                 </Field>
                 <Field label="头像 URL / 上传后自动填入">
                   <div className="grid gap-2">

@@ -12,31 +12,40 @@ import {
   Send
 } from "lucide-react";
 import { Card, PageShell } from "@/components/app-shell";
+import { CopyTarget, EditableCopy, useCopyText } from "@/components/site-copy-runtime";
 
 import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
 
 import { api } from "@/lib/client/api";
 
 export function LandingPage() {
+  const loginCta = useCopyText("landing.cta.login", "用学校邮箱开始");
+  const demoCta = useCopyText("landing.cta.demo", "进入演示验收");
+  const contactCta = useCopyText("landing.cta.contact", "联系开发者");
+  const features = [
+    ["landing.feature.profile.title", "landing.feature.profile.body", "展示个人成果", "用作品、证书、简历摘要和联系方式，让同学先看到你真实做过什么。"],
+    ["landing.feature.team.title", "landing.feature.team.body", "按目标成绩找组员", "在课程板里说明你希望冲 A / A- / B+，或只求稳过，匹配节奏相近的小组作业伙伴。"],
+    ["landing.feature.course.title", "landing.feature.course.body", "讨论课程内容", "围绕真实课程发帖、评价课程、整理经验，减少只靠群聊找信息的混乱。"]
+  ];
   return (
     <main className="mx-auto max-w-7xl px-5 py-10">
       <section className="grid min-h-[calc(100vh-140px)] items-center gap-8 lg:grid-cols-[1.05fr_0.95fr]">
         <div>
-          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-coral">Proof-of-Work Profile + Course Boards</p>
-          <h1 className="text-5xl font-semibold leading-tight text-ink md:text-7xl">TEAMAKING</h1>
-          <p className="mt-5 text-2xl font-semibold text-moss">Your work speaks before you team up.</p>
-          <p className="mt-3 text-xl text-ink/68">让认真做事的人，先被看见。</p>
+          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-coral"><EditableCopy copyKey="landing.hero.eyebrow" fallback="Proof-of-Work Profile + Course Boards" /></p>
+          <h1 className="text-5xl font-semibold leading-tight text-ink md:text-7xl"><EditableCopy copyKey="landing.hero.title" fallback="TEAMAKING" /></h1>
+          <p className="mt-5 text-2xl font-semibold text-moss"><EditableCopy copyKey="landing.hero.tagline" fallback="Your work speaks before you team up." /></p>
+          <p className="mt-3 text-xl text-ink/68"><EditableCopy copyKey="landing.hero.subtitle" fallback="让认真做事的人，先被看见。" /></p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link href="/login" className="focus-ring inline-flex items-center gap-2 rounded-lg bg-coral px-5 py-3 font-semibold text-white shadow-soft">
               <MailCheck size={18} aria-hidden />
-              用学校邮箱开始
+              {loginCta}
             </Link>
             <Link href="/demo-access" className="focus-ring inline-flex items-center gap-2 rounded-sm bg-ink px-5 py-3 font-semibold text-paper">
-              进入演示验收
+              {demoCta}
               <ArrowRight size={18} aria-hidden />
             </Link>
             <Link href="/contact-developer" className="focus-ring inline-flex items-center gap-2 rounded-sm border border-ink/40 bg-paper px-5 py-3 font-semibold text-ink">
-              联系开发者
+              {contactCta}
               <ArrowRight size={18} aria-hidden />
             </Link>
           </div>
@@ -45,23 +54,19 @@ export function LandingPage() {
           <div className="border border-ink/18 bg-mist/55 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink/16 pb-3">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-coral">What TEAMAKING is for</p>
-                <h2 className="mt-1 font-serif text-2xl font-semibold text-ink">把课程协作信号放到同一个地方</h2>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-coral"><EditableCopy copyKey="landing.panel.eyebrow" fallback="What TEAMAKING is for" /></p>
+                <h2 className="mt-1 font-serif text-2xl font-semibold text-ink"><EditableCopy copyKey="landing.panel.title" fallback="把课程协作信号放到同一个地方" /></h2>
               </div>
               <span className="border border-coral/35 bg-coral/10 px-2.5 py-1 text-xs font-semibold text-coral">course + people + proof</span>
             </div>
             <div className="mt-4 grid gap-3">
-              {[
-                ["展示个人成果", "用作品、证书、简历摘要和联系方式，让同学先看到你真实做过什么。"],
-                ["按目标成绩找组员", "在课程板里说明你希望冲 A / A- / B+，或只求稳过，匹配节奏相近的小组作业伙伴。"],
-                ["讨论课程内容", "围绕真实课程发帖、评价课程、整理经验，减少只靠群聊找信息的混乱。"]
-              ].map(([title, body], index) => (
-                <div key={title} className="border border-ink/16 bg-chalk/75 p-4">
+              {features.map(([titleKey, bodyKey, title, body], index) => (
+                <div key={titleKey} className="border border-ink/16 bg-chalk/75 p-4">
                   <div className="flex items-start gap-3">
                     <span className="grid h-7 w-7 shrink-0 place-items-center border border-ink/18 bg-paper text-xs font-semibold text-ink">{index + 1}</span>
                     <div>
-                      <p className="font-semibold text-ink">{title}</p>
-                      <p className="mt-1 text-sm leading-6 text-ink/62">{body}</p>
+                      <p className="font-semibold text-ink"><EditableCopy copyKey={titleKey} fallback={title} /></p>
+                      <p className="mt-1 text-sm leading-6 text-ink/62"><EditableCopy copyKey={bodyKey} fallback={body} /></p>
                     </div>
                   </div>
                 </div>
@@ -86,6 +91,8 @@ export function LoginPage() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
+  const emailPlaceholder = useCopyText("login.email.placeholder", "your.name@mail.bnbu.edu.cn");
+  const passwordPlaceholder = useCopyText("login.password.placeholder", "输入密码");
 
   function resetState(nextMode: "login" | "register" | "reset") {
     setMode(nextMode);
@@ -167,7 +174,7 @@ export function LoginPage() {
   }
 
   return (
-    <PageShell title="测试环境入口" eyebrow="Authentication" description="测试环境账号会被保存，便于你重复登录、编辑资料、上传作品和继续测试；正式上线前可能统一清理测试数据。" aside="none">
+    <PageShell title="测试环境入口" eyebrow="Authentication" description="测试环境账号会被保存，便于你重复登录、编辑资料、上传作品和继续测试；正式上线前可能统一清理测试数据。" titleCopyKey="login.page.title" descriptionCopyKey="login.page.description" aside="none">
       <div className="mb-5 inline-flex flex-wrap gap-2 border border-ink/20 bg-chalk p-1">
         {[
           ["login", "账号密码登录"],
@@ -201,22 +208,22 @@ export function LoginPage() {
 
           {mode === "login" ? (
             <form onSubmit={passwordLogin} className="grid gap-4">
-              <Field label="学校邮箱">
-                <input className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="your.name@mail.bnbu.edu.cn" />
+              <Field label="学校邮箱" labelCopyKey="login.email.label">
+                <CopyTarget copyKey="login.email.placeholder"><input className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} placeholder={emailPlaceholder} /></CopyTarget>
               </Field>
-              <Field label="密码">
-                <input className={inputClass} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="输入密码" />
+              <Field label="密码" labelCopyKey="login.password.label">
+                <CopyTarget copyKey="login.password.placeholder"><input className={inputClass} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={passwordPlaceholder} /></CopyTarget>
               </Field>
               <button type="submit" disabled={isLoggingIn} className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-ink px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
                 <KeyRound size={16} aria-hidden />
-                {isLoggingIn ? "登录中..." : "登录"}
+                {isLoggingIn ? "登录中..." : <EditableCopy copyKey="login.submit" fallback="登录" />}
               </button>
             </form>
           ) : (
             <div className="grid gap-6">
               <form onSubmit={sendCode} className="grid gap-4">
-                <Field label="学校邮箱">
-                  <input className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="your.name@mail.bnbu.edu.cn" />
+                <Field label="学校邮箱" labelCopyKey="login.email.label">
+                  <CopyTarget copyKey="login.email.placeholder"><input className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} placeholder={emailPlaceholder} /></CopyTarget>
                 </Field>
                 <button type="submit" disabled={isSendingCode} className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-ink px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
                   <Send size={16} aria-hidden />
@@ -323,7 +330,7 @@ export function DemoAccessPage() {
   }
 
   return (
-    <PageShell title="演示验收入口" eyebrow="Demo Access" description="这个入口只用于本地和验收环境，绕过邮箱验证码，帮助你直接检查业务逻辑与前端展示。" aside="none">
+    <PageShell title="演示验收入口" eyebrow="Demo Access" description="这个入口只用于本地和验收环境，绕过邮箱验证码，帮助你直接检查业务逻辑与前端展示。" titleCopyKey="demo.page.title" descriptionCopyKey="demo.page.description" aside="none">
       <ErrorBox message={error} />
       <div className="grid gap-4 md:grid-cols-3">
         {accounts.map((account) => (

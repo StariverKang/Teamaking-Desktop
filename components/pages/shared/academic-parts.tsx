@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { Link as LinkIcon } from "lucide-react";
 import { Card } from "@/components/app-shell";
 import { ErrorBox, inputClass } from "@/components/pages/page-primitives";
+import { EditableCopy } from "@/components/site-copy-runtime";
 import { api, useApi } from "@/lib/client/api";
 
 export function visibleMatchReasonTags(reasons: string[] = []) {
@@ -47,11 +48,11 @@ export function OfficialAcademicLinks({ links, compact = false }: { links?: any[
     <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-coral">Official references</p>
-          <h2 className="mt-1 font-serif text-xl font-semibold text-ink">官方查询入口</h2>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-coral"><EditableCopy copyKey="officialLinks.eyebrow" fallback="Official references" /></p>
+          <h2 className="mt-1 font-serif text-xl font-semibold text-ink"><EditableCopy copyKey="officialLinks.title" fallback="官方查询入口" /></h2>
         </div>
         <p className="max-w-xl text-xs leading-5 text-ink/58">
-          TEAMAKING 的 Course Board 是平台内协作入口；专业介绍、官方四年安排和真实选课请以学校网站与 MIS 为准。
+          <EditableCopy copyKey="officialLinks.description" fallback="TEAMAKING 的 Course Board 是平台内协作入口；专业介绍、官方四年安排和真实选课请以学校网站与 MIS 为准。" />
         </p>
       </div>
       <div className="mt-4 grid gap-2 md:grid-cols-3">
@@ -64,7 +65,7 @@ export function OfficialAcademicLinks({ links, compact = false }: { links?: any[
             className="group border border-ink/18 bg-paper/70 p-3 hover:border-ink/42 hover:bg-mist/45"
           >
             <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink">
-              {link.label}
+              <EditableCopy copyKey={link.key ? `officialLinks.${link.key}.label` : undefined} fallback={link.label} />
               <LinkIcon size={14} aria-hidden className="text-coral" />
             </span>
             {link.description ? <span className="mt-2 block text-xs leading-5 text-ink/58">{link.description}</span> : null}

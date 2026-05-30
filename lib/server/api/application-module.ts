@@ -6,6 +6,7 @@ import { ensureSystemIsActive, persistErrorEvent } from "@/lib/server/services/s
 import { handleAdmin, handleDemoAdmin } from "@/lib/server/api/admin-resources-module";
 import { handleAuth, handleDemo, handleOnboarding } from "@/lib/server/api/auth-module";
 import { handleAnnouncements, handleContent, handleSupportTickets } from "@/lib/server/api/content-module";
+import { handleSiteCopy } from "@/lib/server/api/site-copy-module";
 import { handleBoards, handleCourseCommentReplies, handleCourses } from "@/lib/server/api/courses-module";
 import { handleContactInfo, handleProfile, handleUploads } from "@/lib/server/api/profile-module";
 import { handleFollowRequests, handleFriends, handleMatches, handleNotifications, handleTeamakingPosts, handleTeamUpInterests, handleTeamUpRequests } from "@/lib/server/api/social-module";
@@ -20,6 +21,7 @@ const applicationApiModuleRegistry = createApiModuleRegistry([
   { name: "friends", matches: (context) => context.path[0] === "friends", handler: (context) => handleFriends(context.method, context.request) },
   { name: "notifications/summary", matches: (context) => context.path[0] === "notifications" && context.path[1] === "summary", handler: (context) => handleNotifications(context.method) },
   { name: "content", matches: (context) => context.path[0] === "content", handler: (context) => handleContent(context.method, context.request) },
+  { name: "site-copy", matches: (context) => context.path[0] === "site-copy", handler: (context) => handleSiteCopy(context.method) },
   { name: "courses", matches: (context) => context.path[0] === "courses", handler: (context) => handleCourses(context.method, context.path, context.request) },
   { name: "course-comments", matches: (context) => context.path[0] === "course-comments", handler: (context) => handleCourseCommentReplies(context.method, context.path, context.request) },
   { name: "boards", matches: (context) => context.path[0] === "boards", handler: (context) => handleBoards(context.method, context.path, context.request) },

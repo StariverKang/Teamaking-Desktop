@@ -22,6 +22,7 @@ export const adminNav = [
   { href: "/admin/courses", label: "Courses" },
   { href: "/admin/course-imports", label: "Course Imports" },
   { href: "/admin/content", label: "Content & Announcements" },
+  { href: "/admin/site-copy", label: "Interface Copy" },
   { href: "/admin/versions", label: "Versions" },
   { href: "/admin/maintenance", label: "Maintenance" },
   { href: "/admin/course-submissions", label: "Course Submissions" },

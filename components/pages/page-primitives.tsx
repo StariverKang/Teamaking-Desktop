@@ -1,5 +1,7 @@
 "use client";
 
+import { EditableCopy } from "@/components/site-copy-runtime";
+
 export function ErrorBox({ message }: { message?: string }) {
   if (!message) return null;
   return <div className="border border-coral/35 bg-coral/10 px-4 py-3 text-sm text-coral">{message}</div>;
@@ -8,17 +10,21 @@ export function ErrorBox({ message }: { message?: string }) {
 export function Field({
   label,
   children,
-  help
+  help,
+  labelCopyKey,
+  helpCopyKey
 }: {
-  label: string;
+  label: React.ReactNode;
   children: React.ReactNode;
   help?: string;
+  labelCopyKey?: string;
+  helpCopyKey?: string;
 }) {
   return (
     <label className="grid gap-2 text-sm font-semibold text-ink">
-      <span>{label}</span>
+      <span>{typeof label === "string" ? <EditableCopy copyKey={labelCopyKey} fallback={label} /> : label}</span>
       {children}
-      {help ? <span className="text-xs font-normal leading-5 text-ink/56">{help}</span> : null}
+      {help ? <span className="text-xs font-normal leading-5 text-ink/56"><EditableCopy copyKey={helpCopyKey} fallback={help} /></span> : null}
     </label>
   );
 }

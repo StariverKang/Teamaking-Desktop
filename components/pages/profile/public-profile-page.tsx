@@ -63,7 +63,7 @@ export function PublicProfilePage({ userId }: { userId: string }) {
   }
 
   return (
-    <PageShell title={profile?.displayName ?? "用户 Profile"} eyebrow="Proof-of-Work Profile" description="同校已验证用户可以查看对方允许展示的基础资料、联系方式和作品证明。">
+    <PageShell title={profile?.displayName ?? "用户 Profile"} eyebrow="Proof-of-Work Profile" description="同校已验证用户可以查看对方允许展示的基础资料、联系方式和作品证明。" descriptionCopyKey="profilePublic.page.description">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {data?.user ? (
         <div className="grid gap-5">

@@ -13,6 +13,7 @@ import {
 } from "@/components/app-shell";
 import { ProfileCard, TeamakingPostCard, TeamUpRequestCard } from "@/components/cards";
 import { ErrorBox, inputClass } from "@/components/pages/page-primitives";
+import { CopyTarget, useCopyText } from "@/components/site-copy-runtime";
 
 import { api, useApi } from "@/lib/client/api";
 import { visibleMatchReasonTags } from "@/components/pages/shared/academic-parts";
@@ -27,7 +28,7 @@ export function TeamUpRequestsPage() {
   }
 
   return (
-    <PageShell title="TeamUp Menu" eyebrow="TeamUp Interests" description="这里只显示发给你发布的 Teamaking Posts 的 TeamUp Interest 提醒；查看详情会把 sent 自动推进为 viewed。">
+    <PageShell title="TeamUp Menu" eyebrow="TeamUp Interests" description="这里只显示发给你发布的 Teamaking Posts 的 TeamUp Interest 提醒；查看详情会把 sent 自动推进为 viewed。" titleCopyKey="teamup.page.title" descriptionCopyKey="teamup.page.description">
       <div className="grid gap-6">
         <section>
           <h2 className="mb-3 text-xl font-semibold text-ink">Received TeamUp Interests</h2>
@@ -66,7 +67,7 @@ export function InboxPage() {
   }
 
   return (
-    <PageShell title="Inbox" eyebrow="Follow Requests" description="Inbox 只处理用户之间的关注/好友申请，不显示 TeamUp Interest。">
+    <PageShell title="Inbox" eyebrow="Follow Requests" description="Inbox 只处理用户之间的关注/好友申请，不显示 TeamUp Interest。" titleCopyKey="inbox.page.title">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       <div className="grid gap-4">
         {(data?.requests ?? []).map((request: any) => (
@@ -95,13 +96,14 @@ export function FriendsPage() {
   const [query, setQuery] = useState("");
   const { data, error, loading } = useApi(`/api/friends?query=${encodeURIComponent(query)}`, [query]);
   const friends = data?.friends ?? [];
+  const searchPlaceholder = useCopyText("friends.search.placeholder", "搜索姓名、邮箱、专业、年级");
 
   return (
-    <PageShell title="Friends" eyebrow="Mutual Follow" description="双方关注申请 accepted 后，会在这里成为好友；可搜索姓名、邮箱、专业或年级。">
+    <PageShell title="Friends" eyebrow="Mutual Follow" description="双方关注申请 accepted 后，会在这里成为好友；可搜索姓名、邮箱、专业或年级。" titleCopyKey="friends.page.title">
       <Card>
         <div className="flex items-center gap-2">
           <Search size={16} aria-hidden className="text-ink/45" />
-          <input className={inputClass} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索姓名、邮箱、专业、年级" />
+          <CopyTarget copyKey="friends.search.placeholder" className="flex-1"><input className={inputClass} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchPlaceholder} /></CopyTarget>
         </div>
       </Card>
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
@@ -122,7 +124,7 @@ export function MatchesPage() {
   const usersPagination = data?.usersPagination ?? { page: usersPage, pageSize: usersPageSize, total: 0, totalPages: 1 };
 
   return (
-    <PageShell title="Matches" eyebrow="Discovery" description="优先推荐同一课程记录、二度/三度好友网络；同专业和同校开放展示只作为补充排序，不再显示为标签。">
+    <PageShell title="Matches" eyebrow="Discovery" description="优先推荐同一课程记录、二度/三度好友网络；同专业和同校开放展示只作为补充排序，不再显示为标签。" titleCopyKey="matches.page.title" descriptionCopyKey="matches.page.description">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       <div className="grid gap-6">
         <section data-onboarding-target="teamup-entry">

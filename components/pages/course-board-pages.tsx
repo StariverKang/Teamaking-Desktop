@@ -18,6 +18,7 @@ import {
   TeamUpRequestCard
 } from "@/components/cards";
 import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
+import { CopyTarget, EditableCopy, useCopyText } from "@/components/site-copy-runtime";
 import { contributionTypes, strengths } from "@/lib/constants";
 
 import { api, useApi } from "@/lib/client/api";
@@ -40,6 +41,7 @@ export function CoursesPage() {
   );
   const officialLinks = recommended?.officialLinks ?? myCourses?.officialLinks ?? [];
   const searchPagination = search?.pagination ?? { page: searchPage, pageSize: searchPageSize, total: 0, totalPages: 1 };
+  const courseSearchPlaceholder = useCopyText("courses.search.placeholder", "搜索课程代码或课程名称，例如 COM3003；free elective 可直接打开课程板");
 
   async function openCourseBoard(course: any) {
     const result = await api(`/api/courses/${course.id}/join`, { method: "POST" });
@@ -48,7 +50,7 @@ export function CoursesPage() {
   }
 
   return (
-    <PageShell title="Course Boards" eyebrow="Courses" description="浏览课程板；只有在某课程下发布 Post 或发送 TeamUp 后，才算参与这个 Course Board。">
+    <PageShell title="Course Boards" eyebrow="Courses" description="浏览课程板；只有在某课程下发布 Post 或发送 TeamUp 后，才算参与这个 Course Board。" titleCopyKey="courses.page.title" eyebrowCopyKey="courses.page.eyebrow" descriptionCopyKey="courses.page.description">
       {!isAuthed ? (
         <div className="grid gap-5">
           <Card>
@@ -89,41 +91,43 @@ export function CoursesPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink/15 pb-3">
             <div className="flex flex-wrap gap-2">
               {[
-                ["recommended", "Recommended"],
-                ["mine", "我的课程"],
-                ["search", "Search / Free elective"]
-              ].map(([key, label]) => (
+                ["recommended", "Recommended", "courses.tab.recommended"],
+                ["mine", "我的课程", "courses.tab.mine"],
+                ["search", "Search / Free elective", "courses.tab.search"]
+              ].map(([key, label, copyKey]) => (
                 <button
                   key={key}
                   type="button"
                   onClick={() => setTab(key as typeof tab)}
                   className={`border px-3 py-2 text-sm font-semibold ${tab === key ? "border-ink bg-ink text-paper" : "border-ink/25 bg-paper text-ink"}`}
                 >
-                  {label}
+                  <EditableCopy copyKey={copyKey} fallback={label} />
                 </button>
               ))}
             </div>
             <p className="text-xs leading-5 text-ink/55">
-              只有发布 Teamaking Post 或发送 TeamUp Interest 后，课程板才会进入“我的课程”；只浏览不会加入。
+              <EditableCopy copyKey="courses.search.note" fallback="只有发布 Teamaking Post 或发送 TeamUp Interest 后，课程板才会进入“我的课程”；只浏览不会加入。" />
             </p>
           </div>
           <div className="mt-4 flex items-center gap-3">
             <Search size={18} aria-hidden />
-            <input
-              className={inputClass}
-              value={q}
-              onChange={(event) => {
-                setQ(event.target.value);
-                setSearchPage(1);
-                if (event.target.value.trim()) setTab("search");
-              }}
-              placeholder="搜索课程代码或课程名称，例如 COM3003；free elective 可直接打开课程板"
-            />
+            <CopyTarget copyKey="courses.search.placeholder" className="flex-1">
+              <input
+                className={inputClass}
+                value={q}
+                onChange={(event) => {
+                  setQ(event.target.value);
+                  setSearchPage(1);
+                  if (event.target.value.trim()) setTab("search");
+                }}
+                placeholder={courseSearchPlaceholder}
+              />
+            </CopyTarget>
           </div>
           {tab === "search" && q.trim() ? (
             <div className="mt-4 border-t border-ink/15 pt-3">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-ink/50">Recommended by match score</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-ink/50"><EditableCopy copyKey="courses.search.resultLabel" fallback="Recommended by match score" /></p>
                 <p className="text-xs text-ink/52">
                   {searchPagination.total} results · page {searchPagination.page} / {searchPagination.totalPages}
                 </p>
@@ -150,7 +154,7 @@ export function CoursesPage() {
                   );
                 })}
                 {!searchLoading && (search?.courses ?? []).length === 0 ? (
-                  <EmptyState title="没有找到匹配课程" body="可以换一个课程代码、英文关键词，或通过右下角工单提交缺失课程。" />
+                  <EmptyState title="没有找到匹配课程" body="可以换一个课程代码、英文关键词，或通过右下角工单提交缺失课程。" titleCopyKey="courses.empty.search.title" bodyCopyKey="courses.empty.search.body" />
                 ) : null}
               </div>
               {searchPagination.totalPages > 1 ? (
@@ -186,7 +190,7 @@ export function CoursesPage() {
         {tab === "recommended" ? (
         <section>
           <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-            <h2 className="font-serif text-2xl font-semibold text-ink">Recommended courses</h2>
+            <h2 className="font-serif text-2xl font-semibold text-ink"><EditableCopy copyKey="courses.recommended.title" fallback="Recommended courses" /></h2>
             {recommended?.academicContext?.relativeTermCode ? (
               <p className="text-xs font-semibold uppercase tracking-wide text-ink/52">
                 {recommended.academicContext.semester?.name} · {recommended.academicContext.relativeTermCode}
@@ -210,7 +214,7 @@ export function CoursesPage() {
         ) : null}
         {tab === "mine" ? (
         <section>
-          <h2 className="mb-3 font-serif text-2xl font-semibold text-ink">我的课程</h2>
+          <h2 className="mb-3 font-serif text-2xl font-semibold text-ink"><EditableCopy copyKey="courses.mine.title" fallback="我的课程" /></h2>
           <div className="grid gap-3">
             {(myCourses?.memberships ?? []).map((membership: any) => {
               const board = membership.board;
@@ -237,18 +241,18 @@ export function CoursesPage() {
                 </div>
               );
             })}
-            {(myCourses?.memberships ?? []).length === 0 ? <EmptyState title="还没有参与中的课程板" body="打开课程板后，发布 Teamaking Post 或对某条 Post 发送 TeamUp，才会出现在这里。" /> : null}
+            {(myCourses?.memberships ?? []).length === 0 ? <EmptyState title="还没有参与中的课程板" body="打开课程板后，发布 Teamaking Post 或对某条 Post 发送 TeamUp，才会出现在这里。" titleCopyKey="courses.empty.mine.title" bodyCopyKey="courses.empty.mine.body" /> : null}
           </div>
         </section>
         ) : null}
         <Card>
-          <h2 className="font-serif text-xl font-semibold text-ink">缺失课程 / bug / 报错</h2>
+          <h2 className="font-serif text-xl font-semibold text-ink"><EditableCopy copyKey="courses.missing.title" fallback="缺失课程 / bug / 报错" /></h2>
           <p className="mt-2 text-sm leading-6 text-ink/64">
-            缺失课程不再走复杂审核机制。请直接提交工单，管理员会私下确认并处理。
+            <EditableCopy copyKey="courses.missing.body" fallback="缺失课程不再走复杂审核机制。请直接提交工单，管理员会私下确认并处理。" />
           </p>
           <Link href="/support" className="focus-ring mt-4 inline-flex w-fit items-center gap-2 border border-ink/40 px-4 py-2 font-semibold hover:bg-mist/60">
             <Plus size={16} aria-hidden />
-            提交工单
+            <EditableCopy copyKey="courses.missing.submit" fallback="提交工单" />
           </Link>
         </Card>
       </div>
@@ -273,7 +277,7 @@ export function CourseDetailPage({ courseId }: { courseId: string }) {
   }
 
   return (
-    <PageShell title={course ? `${course.code} ${course.title}` : "Course Detail"} eyebrow="Course" description="课程详情、开课学期和对应 Course Board。">
+    <PageShell title={course ? `${course.code} ${course.title}` : "Course Detail"} eyebrow="Course" description="课程详情、开课学期和对应 Course Board。" descriptionCopyKey="courseDetail.page.description">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {course ? (
         <div className="grid gap-5">
@@ -336,6 +340,8 @@ export function BoardPage({ boardId }: { boardId: string }) {
   const course = board?.courseOffering?.course;
   const sections = boardData?.sections ?? [];
   const visiblePeople = (people?.people ?? []).filter((item: any) => sectionFilter === "all" || item.sectionCode === sectionFilter);
+  const sectionPlaceholder = useCopyText("board.section.placeholder", "1001");
+  const outcomePlaceholder = useCopyText("board.post.outcome.placeholder", "A polished report with strong argumentation and clean slides.");
 
   useEffect(() => {
     if (course && !postForm.title) {
@@ -369,7 +375,7 @@ export function BoardPage({ boardId }: { boardId: string }) {
   }
 
   return (
-    <PageShell title={board?.title ?? "Course Board"} eyebrow="Course Board" description="Open to Team 是协作信号；发布 Post 或发送 TeamUp 后才会进入 Course People。">
+    <PageShell title={board?.title ?? "Course Board"} eyebrow="Course Board" description="Open to Team 是协作信号；发布 Post 或发送 TeamUp 后才会进入 Course People。" descriptionCopyKey="board.page.description">
       {authLoading || loading ? <LoadingState /> : <ErrorBox message={error} />}
       {!isAuthed ? (
         <div className="grid gap-5">
@@ -453,7 +459,7 @@ export function BoardPage({ boardId }: { boardId: string }) {
                 </div>
               ) : null}
               <div className="grid gap-2 md:grid-cols-[180px_auto]">
-                <input className={inputClass} value={sectionCode} maxLength={4} onChange={(event) => setSectionCode(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="1001" />
+                <CopyTarget copyKey="board.section.placeholder"><input className={inputClass} value={sectionCode} maxLength={4} onChange={(event) => setSectionCode(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder={sectionPlaceholder} /></CopyTarget>
                 {boardData.isJoined ? (
                   <button className="w-fit rounded-sm border border-ink/40 px-4 py-2 text-sm font-semibold">
                     Update section
@@ -480,7 +486,7 @@ export function BoardPage({ boardId }: { boardId: string }) {
               </p>
             ) : null}
             <form onSubmit={createPost} className="mt-4 grid gap-4">
-              <Field label="标题">
+              <Field label="标题" labelCopyKey="board.post.title.label">
                 <input className={inputClass} value={postForm.title} onChange={(event) => setPostForm({ ...postForm, title: event.target.value })} />
               </Field>
               <Field label="Strengths">
@@ -489,8 +495,8 @@ export function BoardPage({ boardId }: { boardId: string }) {
               <Field label="Contribution types">
                 <ToggleGroup values={contributionTypes} selected={postForm.contributionTypes} onChange={(values) => setPostForm({ ...postForm, contributionTypes: values })} />
               </Field>
-              <Field label="Expected outcome">
-                <textarea className={inputClass} rows={3} value={postForm.expectedOutcome} onChange={(event) => setPostForm({ ...postForm, expectedOutcome: event.target.value })} placeholder="A polished report with strong argumentation and clean slides." />
+              <Field label="Expected outcome" labelCopyKey="board.post.outcome.label">
+                <CopyTarget copyKey="board.post.outcome.placeholder"><textarea className={inputClass} rows={3} value={postForm.expectedOutcome} onChange={(event) => setPostForm({ ...postForm, expectedOutcome: event.target.value })} placeholder={outcomePlaceholder} /></CopyTarget>
               </Field>
               <Field label="Visibility">
                 <select className={inputClass} value={postForm.visibility} onChange={(event) => setPostForm({ ...postForm, visibility: event.target.value })}>

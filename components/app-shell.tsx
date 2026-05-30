@@ -8,6 +8,7 @@ import { BookOpen, LayoutDashboard, LogOut, MailCheck, Menu, Settings, Sparkles,
 import { api } from "@/lib/client/api";
 import { adminNav, studentNav } from "@/lib/ui-data";
 import { LanguageSwitcher } from "@/components/language-runtime";
+import { EditableCopy } from "@/components/site-copy-runtime";
 import clsx from "clsx";
 
 export function Navbar() {
@@ -173,6 +174,9 @@ export function PageShell({
   title,
   eyebrow,
   description,
+  titleCopyKey,
+  eyebrowCopyKey,
+  descriptionCopyKey,
   children,
   aside = "student",
   workspace = false
@@ -180,6 +184,9 @@ export function PageShell({
   title: string;
   eyebrow?: string;
   description?: string;
+  titleCopyKey?: string;
+  eyebrowCopyKey?: string;
+  descriptionCopyKey?: string;
   children: React.ReactNode;
   aside?: "student" | "admin" | "none";
   workspace?: boolean;
@@ -211,12 +218,14 @@ export function PageShell({
             workspaceMode && "lg:sticky lg:top-0 lg:z-20 lg:mb-4 lg:bg-paper/95 lg:pb-3 lg:pt-1 lg:backdrop-blur"
           )}
         >
-          {eyebrow ? <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-coral">{eyebrow}</p> : null}
+          {eyebrow ? <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-coral"><EditableCopy copyKey={eyebrowCopyKey} fallback={eyebrow} /></p> : null}
           <h1 className={clsx("font-serif text-3xl font-semibold leading-tight text-ink", workspaceMode ? "md:text-3xl" : "md:text-5xl")}>
-            <CourseLikeTitle title={title} />
+            {titleCopyKey ? <EditableCopy copyKey={titleCopyKey} fallback={title} /> : <CourseLikeTitle title={title} />}
           </h1>
           {description ? (
-            <p className={clsx("mt-3 max-w-3xl leading-7 text-ink/68", workspaceMode ? "text-sm" : "text-base")}>{description}</p>
+            <p className={clsx("mt-3 max-w-3xl leading-7 text-ink/68", workspaceMode ? "text-sm" : "text-base")}>
+              <EditableCopy copyKey={descriptionCopyKey} fallback={description} />
+            </p>
           ) : null}
         </div>
         {children}
@@ -262,14 +271,14 @@ export function Card({ children, className, ...props }: HTMLAttributes<HTMLDivEl
   return <div className={clsx("min-w-0 border border-ink/70 bg-chalk/92 p-4 shadow-soft md:p-5", className)} {...props}>{children}</div>;
 }
 
-export function EmptyState({ title, body }: { title: string; body: string }) {
+export function EmptyState({ title, body, titleCopyKey, bodyCopyKey }: { title: string; body: string; titleCopyKey?: string; bodyCopyKey?: string }) {
   return (
     <Card className="text-center">
       <div className="mx-auto mb-3 grid h-9 w-9 place-items-center border border-ink/20 bg-mist text-moss">
         <UsersRound size={18} aria-hidden />
       </div>
-      <h3 className="font-semibold text-ink">{title}</h3>
-      <p className="mt-2 text-sm leading-6 text-ink/62">{body}</p>
+      <h3 className="font-semibold text-ink"><EditableCopy copyKey={titleCopyKey} fallback={title} /></h3>
+      <p className="mt-2 text-sm leading-6 text-ink/62"><EditableCopy copyKey={bodyCopyKey} fallback={body} /></p>
     </Card>
   );
 }

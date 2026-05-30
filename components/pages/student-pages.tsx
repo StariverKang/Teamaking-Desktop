@@ -24,6 +24,7 @@ import {
 } from "@/components/app-shell";
 import { CourseCard, TeamakingPostCard } from "@/components/cards";
 import { OnboardingTourRestartButton, requestOnboardingTourStart } from "@/components/onboarding-tour";
+import { CopyTarget, EditableCopy, useCopyText } from "@/components/site-copy-runtime";
 import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
 
 import { contactVisibilityOptions, defaultContactVisibility } from "@/lib/contact";
@@ -66,12 +67,12 @@ export function OnboardingPage() {
   }
 
   return (
-    <PageShell title="完成基础引导" eyebrow="Onboarding" description="这里不会验证官方选课，只用来帮助系统推荐课程板，并让同学理解你的协作背景。">
+    <PageShell title="完成基础引导" eyebrow="Onboarding" description="这里不会验证官方选课，只用来帮助系统推荐课程板，并让同学理解你的协作背景。" titleCopyKey="onboarding.page.title" descriptionCopyKey="onboarding.page.description">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {data ? (
         <div className="grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
           <Card>
-            <h2 className="text-xl font-semibold text-ink">TEAMAKING 使用方式</h2>
+            <h2 className="text-xl font-semibold text-ink"><EditableCopy copyKey="onboarding.use.title" fallback="TEAMAKING 使用方式" /></h2>
             <div className="mt-4 grid gap-3 text-sm leading-6 text-ink/68">
               <p>1. 完成 Proof-of-Work Profile，让别人先看到你的实际贡献。</p>
               <p>2. 浏览 Course Board，找到对应课程下的协作信号。</p>
@@ -84,23 +85,23 @@ export function OnboardingPage() {
           </Card>
           <Card data-onboarding-target="academic-form">
             <form onSubmit={submit} className="grid gap-4">
-              <Field label="显示名称">
+              <Field label="显示名称" labelCopyKey="onboarding.field.displayName">
                 <input className={inputClass} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} />
               </Field>
-              <Field label="年级 / Academic Year">
+              <Field label="年级 / Academic Year" labelCopyKey="onboarding.field.grade">
                 <input className={inputClass} value={form.grade} readOnly={Boolean(academicLock?.locked)} onChange={(event) => setForm({ ...form, grade: event.target.value })} />
               </Field>
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="入学年份 / Entry Year" help={academicLock?.locked ? "由邮箱第二位数字推断，特殊情况联系管理员覆盖。" : undefined}>
+                <Field label="入学年份 / Entry Year" labelCopyKey="onboarding.field.entryYear" help={academicLock?.locked ? "由邮箱第二位数字推断，特殊情况联系管理员覆盖。" : undefined}>
                   <input className={inputClass} type="number" value={form.entryYear} readOnly={Boolean(academicLock?.locked)} onChange={(event) => setForm({ ...form, entryYear: Number(event.target.value) })} />
                 </Field>
-                <Field label="入学学期 / Entry Term">
+                <Field label="入学学期 / Entry Term" labelCopyKey="onboarding.field.entryTerm">
                   <select className={inputClass} value={form.entryTerm} disabled={Boolean(academicLock?.locked)} onChange={(event) => setForm({ ...form, entryTerm: event.target.value })}>
                     {entryTermOptions.map((term) => <option key={term}>{term}</option>)}
                   </select>
                 </Field>
               </div>
-              <Field label="Faculty / College">
+              <Field label="Faculty / College" labelCopyKey="onboarding.field.faculty">
                 <select
                   className={inputClass}
                   value={form.facultyId}
@@ -113,7 +114,7 @@ export function OnboardingPage() {
                   ))}
                 </select>
               </Field>
-              <Field label="Major">
+              <Field label="Major" labelCopyKey="onboarding.field.major">
                 <select className={inputClass} value={form.majorId} onChange={(event) => setForm({ ...form, majorId: event.target.value })} disabled={majors.length === 0}>
                   {majors.length === 0 ? <option value="">请先选择 Faculty</option> : null}
                   {majors.map((major: any) => (
@@ -125,7 +126,7 @@ export function OnboardingPage() {
               </Field>
               <button type="submit" className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-coral px-4 py-2 font-semibold text-white">
                 <Check size={16} aria-hidden />
-                保存并进入 Dashboard
+                <EditableCopy copyKey="onboarding.submit" fallback="保存并进入 Dashboard" />
               </button>
             </form>
           </Card>
@@ -145,7 +146,7 @@ export function DashboardPage() {
   const historyMemberships = activeMemberships.filter((membership: any) => !membership.board?.courseOffering?.semester?.isCurrent);
 
   return (
-    <PageShell title="Dashboard" eyebrow="Student App" description="这里集中显示推荐课程、近期 Open to Team 信号、资料完整度和 Team Up 请求。">
+    <PageShell title="Dashboard" eyebrow="Student App" description="这里集中显示推荐课程、近期 Open to Team 信号、资料完整度和 Team Up 请求。" titleCopyKey="dashboard.page.title" descriptionCopyKey="dashboard.page.description">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {!loading && !me?.user ? (
         <EmptyState title="还没有登录" body="请先使用学校邮箱完成验证登录，再进入 TEAMAKING 的学生端。" />
@@ -154,20 +155,20 @@ export function DashboardPage() {
         <div className="grid gap-5">
           <div className="grid gap-5 md:grid-cols-3">
             <Card data-onboarding-target="dashboard-profile-health">
-              <p className="text-sm text-ink/58">Profile completion</p>
+              <p className="text-sm text-ink/58"><EditableCopy copyKey="dashboard.profile.title" fallback="Profile completion" /></p>
               <p className="mt-2 text-3xl font-semibold text-ink">{me.user.onboardingCompleted ? "80%" : "35%"}</p>
-              <p className="mt-2 text-sm text-ink/62">完善 portfolio 和联系方式后，协作信号会更可信。</p>
+              <p className="mt-2 text-sm text-ink/62"><EditableCopy copyKey="dashboard.profile.body" fallback="完善 portfolio 和联系方式后，协作信号会更可信。" /></p>
               <OnboardingTourRestartButton className="mt-3 rounded-sm border border-ink/30 px-3 py-2 text-xs font-semibold text-ink" />
             </Card>
             <Card>
-              <p className="text-sm text-ink/58">TeamUp Interest reminders</p>
+              <p className="text-sm text-ink/58"><EditableCopy copyKey="dashboard.teamup.title" fallback="TeamUp Interest reminders" /></p>
               <p className="mt-2 text-3xl font-semibold text-ink">{interests?.interests?.length ?? 0}</p>
               <Link href="/team-up-requests" className="mt-3 inline-flex text-sm font-semibold text-coral">
                 查看请求
               </Link>
             </Card>
             <Card>
-              <p className="text-sm text-ink/58">Quick links</p>
+              <p className="text-sm text-ink/58"><EditableCopy copyKey="dashboard.quickLinks.title" fallback="Quick links" /></p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Link className="rounded-lg border border-ink/12 px-3 py-2 text-sm font-semibold" href="/courses">
                   浏览课程板
@@ -180,7 +181,7 @@ export function DashboardPage() {
           </div>
           <OfficialAcademicLinks links={recommended?.officialLinks} />
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-ink">My current Course Boards</h2>
+            <h2 className="mb-3 text-xl font-semibold text-ink"><EditableCopy copyKey="dashboard.currentBoards.title" fallback="My current Course Boards" /></h2>
             <div className="grid gap-3 md:grid-cols-2">
               {currentMemberships.map((membership: any) => {
                 const board = membership.board;
@@ -197,7 +198,7 @@ export function DashboardPage() {
             </div>
           </section>
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-ink">Recommended courses</h2>
+            <h2 className="mb-3 text-xl font-semibold text-ink"><EditableCopy copyKey="dashboard.recommended.title" fallback="Recommended courses" /></h2>
             <PaginatedGrid items={recommended?.courses ?? []} render={(course) => <CourseCard key={course.id} course={course} />} />
           </section>
           {historyMemberships.length ? (
@@ -213,7 +214,7 @@ export function DashboardPage() {
             </section>
           ) : null}
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-ink">Recent Open to Team posts</h2>
+            <h2 className="mb-3 text-xl font-semibold text-ink"><EditableCopy copyKey="dashboard.recentPosts.title" fallback="Recent Open to Team posts" /></h2>
             <PaginatedGrid items={matches?.posts ?? []} render={(post) => <TeamakingPostCard key={post.id} post={post} />} />
           </section>
         </div>
@@ -253,7 +254,7 @@ export function ContactInfoPage() {
   }
 
   return (
-    <PageShell title="Contact Info" eyebrow="Visibility Settings" description="联系方式可以按可见范围展示。学校邮箱只读，用来证明身份真实性。">
+    <PageShell title="Contact Info" eyebrow="Visibility Settings" description="联系方式可以按可见范围展示。学校邮箱只读，用来证明身份真实性。" titleCopyKey="contactInfo.page.title" descriptionCopyKey="contactInfo.page.description">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       {data ? (
         <Card data-onboarding-target="contact-visibility">
@@ -316,6 +317,7 @@ export function SupportPage() {
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const { data: mine, loading: mineLoading } = useApi(me?.user ? "/api/support-tickets/mine" : null, [me?.user?.id, refreshKey]);
+  const supportDescriptionPlaceholder = useCopyText("support.description.placeholder", "请描述问题或需求");
 
   useEffect(() => {
     if (me?.user?.email) setForm((current) => ({ ...current, email: me.user.email }));
@@ -337,7 +339,7 @@ export function SupportPage() {
   }
 
   return (
-    <PageShell title="Support Ticket" eyebrow="Admin contact" description="缺失课程、bug、报错、后台需求都走工单。这个入口替代原来的课程提交审核机制。" aside="none">
+    <PageShell title="Support Ticket" eyebrow="Admin contact" description="缺失课程、bug、报错、后台需求都走工单。这个入口替代原来的课程提交审核机制。" titleCopyKey="support.page.title" descriptionCopyKey="support.page.description" aside="none">
       <div className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
         <Card>
           <h2 className="text-xl font-semibold text-ink">可以提交什么</h2>
@@ -350,7 +352,7 @@ export function SupportPage() {
         </Card>
         <Card data-onboarding-target="support-ticket">
           <form onSubmit={submit} className="grid gap-4">
-            <Field label="联系邮箱">
+            <Field label="联系邮箱" labelCopyKey="support.email.label">
               <input className={inputClass} value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="可选，但建议填写" />
             </Field>
             <Field label="工单类型">
@@ -367,7 +369,7 @@ export function SupportPage() {
               <input className={inputClass} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
             </Field>
             <Field label="详细说明">
-              <textarea className={inputClass} rows={6} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
+              <CopyTarget copyKey="support.description.placeholder"><textarea className={inputClass} rows={6} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder={supportDescriptionPlaceholder} /></CopyTarget>
             </Field>
             <Field label="相关页面 URL（可选）">
               <input className={inputClass} value={form.relatedUrl} onChange={(event) => setForm({ ...form, relatedUrl: event.target.value })} placeholder="/courses 或错误页面地址" />
@@ -419,6 +421,7 @@ export function SupportWidget() {
     title: "",
     description: ""
   });
+  const widgetDescriptionPlaceholder = useCopyText("support.widget.placeholder", "请描述问题或需求");
 
   useEffect(() => {
     if (me?.user?.email) setForm((current) => ({ ...current, email: me.user.email }));
@@ -459,7 +462,7 @@ export function SupportWidget() {
               <option value="other">其他</option>
             </select>
             <input className={inputClass} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="标题" />
-            <textarea className={inputClass} rows={4} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="请描述问题或需求" />
+            <CopyTarget copyKey="support.widget.placeholder"><textarea className={inputClass} rows={4} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder={widgetDescriptionPlaceholder} /></CopyTarget>
             <button className="bg-ink px-3 py-2 text-sm font-semibold text-paper">提交工单</button>
           </form>
           <ErrorBox message={error} />

@@ -19,6 +19,7 @@ import { handleAdminConfigsResource } from "@/lib/server/api/admin-resources/con
 import { handleAdminLogsResource } from "@/lib/server/api/admin-resources/logs-resource";
 import { handleAdminAiResumeResource } from "@/lib/server/api/admin-resources/ai-resume-resource";
 import { handleAdminAiCrawlerResource } from "@/lib/server/api/admin-resources/ai-crawler-resource";
+import { handleAdminSiteCopyResource } from "@/lib/server/api/admin-resources/site-copy-resource";
 
 export async function handleDemoAdmin(context: ReturnType<typeof createApiContext>) {
   if (context.path[0] !== "admin") return null;
@@ -61,6 +62,7 @@ const adminResourceHandlers = [
   handleAdminSocialModerationResource,
   handleAdminMetricsResource,
   handleAdminConfigsResource,
+  handleAdminSiteCopyResource,
   handleAdminAiResumeResource,
   handleAdminAiCrawlerResource,
   handleAdminLogsResource
