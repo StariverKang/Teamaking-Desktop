@@ -14,6 +14,19 @@ import { userInclude, academicLockForUser, publicUser } from "@/lib/server/servi
 import { operationLog, safeStringEqual } from "@/lib/server/services/system-service";
 import { upsertVerifiedUser, supportedSchoolDomainForEmail, recordAuthEvent, createVerification, consumeVerification, passwordHashFor, bootstrapAdminConfig, upsertBootstrapAdmin, assertAccountCanLogin, restrictedAccountRedirect, assertLoginFailureBudget } from "@/lib/server/services/auth-service";
 import { defaultOnboardingGuide, onboardingGuideFromConfig } from "@/lib/onboarding-guide";
+import { createMobileSession, revokeMobileSession, rotateMobileSession, type MobileSessionMetadata } from "@/lib/server/services/mobile-auth-service";
+
+function mobileSessionMetadata(request: NextRequest, body: Record<string, unknown>): MobileSessionMetadata {
+  return {
+    deviceName: optionalString(body.deviceName),
+    devicePlatform: optionalString(body.devicePlatform),
+    userAgent: request.headers.get("user-agent")
+  };
+}
+
+function mobilePath(path: string[]) {
+  return path[0] === "mobile" && path[1] === "auth" ? path.slice(2) : path;
+}
 
 export async function handleAuth(method: string, path: string[], request: NextRequest) {
   if (method === "POST" && (path[1] === "admin-login" || path[1] === "developer-login")) {
@@ -195,6 +208,147 @@ export async function handleAuth(method: string, path: string[], request: NextRe
   }
 
   throw new ApiError(404, "找不到认证接口。");
+}
+
+export async function handleMobileAuth(method: string, path: string[], request: NextRequest) {
+  const route = mobilePath(path);
+
+  if (method === "POST" && route[0] === "password-login") {
+    const body = await readBody(request);
+    const email = assertString(body.email, "email").toLowerCase();
+    const password = assertString(body.password, "password");
+    const appVersionId = await getActiveAppVersionId();
+    await assertLoginFailureBudget(email);
+    const user = await prisma.user.findUnique({ where: { appVersionId_email: { appVersionId, email } }, include: userInclude });
+
+    if (!user || !verifyPassword(password, user.passwordHash)) {
+      await recordAuthEvent({ email, action: "password_login", purpose: "login", success: false, metadata: { route: "mobile" } });
+      throw new ApiError(401, "邮箱或密码不正确。", ERROR_CODES.AUTH_LOGIN_INVALID_CREDENTIALS, { email });
+    }
+
+    assertAccountCanLogin(user);
+    await recordAuthEvent({ email, action: "password_login", purpose: "login", success: true, metadata: { route: "mobile" } });
+    return ok({
+      user: publicUser(user),
+      redirectPath: restrictedAccountRedirect(user),
+      tokens: await createMobileSession(user.id, mobileSessionMetadata(request, body))
+    });
+  }
+
+  if (method === "POST" && route[0] === "admin-login") {
+    const body = await readBody(request);
+    const email = assertString(body.email, "email").toLowerCase();
+    const password = assertString(body.password, "password");
+    const appVersionId = await getActiveAppVersionId();
+    await assertLoginFailureBudget(email);
+    let user = await prisma.user.findUnique({ where: { appVersionId_email: { appVersionId, email } }, include: userInclude });
+
+    if (!user || !isAdminRole(user.role) || !verifyPassword(password, user.passwordHash)) {
+      const bootstrapConfig = bootstrapAdminConfig();
+      if (bootstrapConfig && email === bootstrapConfig.email && safeStringEqual(password, bootstrapConfig.password)) {
+        user = await upsertBootstrapAdmin(bootstrapConfig);
+      } else {
+        await recordAuthEvent({ email, action: "password_login", purpose: "login", success: false, metadata: { route: "mobile-admin" } });
+        throw new ApiError(401, "管理员账号或密码不正确。", ERROR_CODES.AUTH_ADMIN_LOGIN_INVALID, { email });
+      }
+    }
+
+    assertAccountCanLogin(user);
+    await recordAuthEvent({ email, action: "password_login", purpose: "login", success: true, metadata: { route: "mobile-admin" } });
+    return ok({
+      user: publicUser(user),
+      redirectPath: "/admin",
+      tokens: await createMobileSession(user.id, mobileSessionMetadata(request, body))
+    });
+  }
+
+  if (method === "POST" && route[0] === "register" && route[1] === "complete") {
+    const body = await readBody(request);
+    const email = assertString(body.email, "email").toLowerCase();
+    const appVersionId = await getActiveAppVersionId();
+    const code = assertString(body.code, "code");
+    const password = assertString(body.password, "password");
+    const schoolDomain = await supportedSchoolDomainForEmail(email);
+
+    if (!schoolDomain) {
+      throw new ApiError(400, "当前学校邮箱域名还没有被 TEAMAKING 支持。");
+    }
+
+    const existingUser = await prisma.user.findUnique({
+      where: { appVersionId_email: { appVersionId, email } },
+      select: { id: true, passwordHash: true }
+    });
+
+    if (existingUser?.passwordHash) {
+      throw new ApiError(409, "这个邮箱已经注册，请直接登录。");
+    }
+
+    await consumeVerification(email, code, "register");
+    const user = await upsertVerifiedUser({
+      email,
+      schoolId: schoolDomain.schoolId,
+      passwordHash: passwordHashFor(password)
+    });
+
+    return ok({
+      user: publicUser(user),
+      redirectPath: user.onboardingCompleted ? "/dashboard" : "/onboarding",
+      tokens: await createMobileSession(user.id, mobileSessionMetadata(request, body))
+    });
+  }
+
+  if (method === "POST" && route[0] === "password-reset" && route[1] === "complete") {
+    const body = await readBody(request);
+    const email = assertString(body.email, "email").toLowerCase();
+    const appVersionId = await getActiveAppVersionId();
+    const code = assertString(body.code, "code");
+    const password = assertString(body.password, "password");
+    const before = await prisma.user.findUnique({ where: { appVersionId_email: { appVersionId, email } }, include: userInclude });
+
+    if (!before || !before.passwordHash) {
+      throw new ApiError(404, "找不到已注册账号，请先注册。");
+    }
+
+    await consumeVerification(email, code, "reset_password");
+    const user = await prisma.user.update({
+      where: { appVersionId_email: { appVersionId, email } },
+      data: { passwordHash: passwordHashFor(password) },
+      include: userInclude
+    });
+    assertAccountCanLogin(user);
+
+    return ok({
+      user: publicUser(user),
+      redirectPath: user.onboardingCompleted ? "/dashboard" : "/onboarding",
+      tokens: await createMobileSession(user.id, mobileSessionMetadata(request, body))
+    });
+  }
+
+  if (method === "POST" && route[0] === "refresh") {
+    const body = await readBody(request);
+    const refreshToken = assertString(body.refreshToken, "refreshToken");
+    const refreshed = await rotateMobileSession(refreshToken, mobileSessionMetadata(request, body));
+    assertAccountCanLogin(refreshed.user);
+    return ok({ user: publicUser(refreshed.user), tokens: refreshed.tokens });
+  }
+
+  if (method === "POST" && route[0] === "logout") {
+    const body = await readBody(request);
+    const refreshToken = optionalString(body.refreshToken);
+    if (refreshToken) await revokeMobileSession(refreshToken);
+    return ok({ message: "移动端已退出登录。" });
+  }
+
+  if (method === "GET" && route[0] === "me") {
+    const user = await getCurrentUser();
+    return ok({ user: user ? publicUser(user, undefined, { includeMemberships: true }) : null });
+  }
+
+  if (route[0] === "register" || route[0] === "password-reset") {
+    return handleAuth(method, ["auth", ...route], request);
+  }
+
+  throw new ApiError(404, "找不到移动端认证接口。");
 }
 
 export async function ensureDemoUser(account: string) {

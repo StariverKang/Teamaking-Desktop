@@ -20,7 +20,8 @@ import {
 import { Card, PageShell } from "@/components/app-shell";
 import { CopyTarget, EditableCopy, useCopyText } from "@/components/site-copy-runtime";
 
-import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
+import { Field, InlineFeedback, inputClass } from "@/components/pages/page-primitives";
+import { useFeedback } from "@/components/feedback-provider";
 
 import { api } from "@/lib/client/api";
 import { loginModeFromValue, type LoginMode } from "@/lib/login-mode";
@@ -321,6 +322,7 @@ function ExperienceMockup({ scene }: { scene: ExperienceSlide["scene"] }) {
 
 export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMode } = {}) {
   const router = useRouter();
+  const { runWithFeedback } = useFeedback();
   const [mode, setMode] = useState<LoginMode>(() => loginModeFromValue(initialMode));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -347,10 +349,10 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
     setError("");
     setMessage("");
     setIsLoggingIn(true);
-    const result = await api("/api/auth/password-login", {
+    const result = await runWithFeedback(() => api("/api/auth/password-login", {
       method: "POST",
       body: JSON.stringify({ email, password })
-    }).catch((err: Error) => {
+    }), { success: "登录成功。" }).catch((err: Error) => {
       setError(err.message);
       return null;
     }).finally(() => {
@@ -368,10 +370,10 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
     setMessage("");
     setIsSendingCode(true);
     const endpoint = mode === "reset" ? "/api/auth/password-reset/send-code" : "/api/auth/register/send-code";
-    const result = await api(endpoint, {
+    const result = await runWithFeedback(() => api(endpoint, {
       method: "POST",
       body: JSON.stringify({ email })
-    }).catch((err: Error) => {
+    }), { success: (response: any) => typeof response.code === "string" ? "验证码已生成。" : response.message ?? "验证码已发送。" }).catch((err: Error) => {
       setError(err.message);
       return null;
     }).finally(() => {
@@ -391,10 +393,10 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
     setError("");
     setIsCompleting(true);
     const endpoint = mode === "reset" ? "/api/auth/password-reset/complete" : "/api/auth/register/complete";
-    const result = await api(endpoint, {
+    const result = await runWithFeedback(() => api(endpoint, {
       method: "POST",
       body: JSON.stringify({ email, code, password })
-    }).catch((err: Error) => {
+    }), { success: (response: any) => response.message ?? (mode === "reset" ? "密码已重设。" : "注册完成。") }).catch((err: Error) => {
       setError(err.message);
       return null;
     }).finally(() => {
@@ -458,6 +460,7 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
                 <KeyRound size={16} aria-hidden />
                 {isLoggingIn ? "登录中..." : <EditableCopy copyKey="login.submit" fallback="登录" />}
               </button>
+              <InlineFeedback message={error} tone="error" />
             </form>
           ) : (
             <div className="grid gap-6">
@@ -469,8 +472,9 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
                   <Send size={16} aria-hidden />
                   {isSendingCode ? "发送中..." : "发送验证码"}
                 </button>
+                <InlineFeedback message={message} tone="success" />
+                <InlineFeedback message={error} tone="error" />
               </form>
-              {message ? <p className="rounded-lg bg-mist px-4 py-3 text-sm font-medium text-moss">{message}</p> : null}
               {devCode ? <p className="text-xs text-ink/58">本地调试提示：验证码已经自动填入下方输入框。</p> : null}
               <form onSubmit={completeWithCode} className="grid gap-4">
                 <Field label="验证码">
@@ -483,6 +487,7 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
                   <Check size={16} aria-hidden />
                   {isCompleting ? "处理中..." : mode === "register" ? "完成注册" : "重设密码并登录"}
                 </button>
+                <InlineFeedback message={error} tone="error" />
               </form>
             </div>
           )}
@@ -495,15 +500,13 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
           <p className="mt-3 text-sm leading-6 text-ink/64">这些数据仍属于测试环境数据，不作为正式上线后的长期生产数据承诺。</p>
         </Card>
       </div>
-      <div className="mt-5">
-        <ErrorBox message={error} />
-      </div>
     </PageShell>
   );
 }
 
 export function AdminLoginPage() {
   const router = useRouter();
+  const { runWithFeedback } = useFeedback();
   const [developerEmail, setDeveloperEmail] = useState("");
   const [developerPassword, setDeveloperPassword] = useState("");
   const [error, setError] = useState("");
@@ -513,10 +516,10 @@ export function AdminLoginPage() {
     event.preventDefault();
     setError("");
     setIsDeveloperLoggingIn(true);
-    const result = await api("/api/auth/admin-login", {
+    const result = await runWithFeedback(() => api("/api/auth/admin-login", {
       method: "POST",
       body: JSON.stringify({ email: developerEmail, password: developerPassword })
-    }).catch((err: Error) => {
+    }), { success: "管理员登录成功。" }).catch((err: Error) => {
       setError(err.message);
       return null;
     }).finally(() => {
@@ -541,10 +544,8 @@ export function AdminLoginPage() {
               <KeyRound size={16} aria-hidden />
               {isDeveloperLoggingIn ? "登录中..." : "进入管理后台"}
             </button>
+            <InlineFeedback message={error} tone="error" />
           </form>
-          <div className="mt-5">
-            <ErrorBox message={error} />
-          </div>
         </Card>
       </div>
     </PageShell>
@@ -553,6 +554,7 @@ export function AdminLoginPage() {
 
 export function DemoAccessPage() {
   const router = useRouter();
+  const { runWithFeedback } = useFeedback();
   const [error, setError] = useState("");
   const accounts = [
     { key: "media", label: "Media Student", body: "普通学生视角：查看 dashboard、课程、课程板和 Team Up 流程。" },
@@ -562,7 +564,10 @@ export function DemoAccessPage() {
 
   async function login(account: string) {
     setError("");
-    const result = await api("/api/demo/login", { method: "POST", body: JSON.stringify({ account }) }).catch((err: Error) => {
+    const result = await runWithFeedback(
+      () => api("/api/demo/login", { method: "POST", body: JSON.stringify({ account }) }),
+      { success: "演示身份已进入。" }
+    ).catch((err: Error) => {
       setError(err.message);
       return null;
     });
@@ -571,7 +576,6 @@ export function DemoAccessPage() {
 
   return (
     <PageShell title="演示验收入口" eyebrow="Demo Access" description="这个入口只用于本地和验收环境，绕过邮箱验证码，帮助你直接检查业务逻辑与前端展示。" titleCopyKey="demo.page.title" descriptionCopyKey="demo.page.description" aside="none">
-      <ErrorBox message={error} />
       <div className="grid gap-4 md:grid-cols-3">
         {accounts.map((account) => (
           <Card key={account.key}>
@@ -582,6 +586,7 @@ export function DemoAccessPage() {
               使用此身份进入
               <ArrowRight size={15} aria-hidden />
             </button>
+            <InlineFeedback message={error} tone="error" />
           </Card>
         ))}
       </div>

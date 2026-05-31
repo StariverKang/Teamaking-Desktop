@@ -49,6 +49,7 @@ Agent 开发原则：
 - Content & Announcements：管理员在 `/admin/content` 统一维护联系开发者、开发者日志、帮助中心和全站公告；帮助中心/开发者日志支持文件夹树和文档树；`/help`、`/developer-log`、`/contact-developer` 对未登录用户公开，并在首屏使用服务端公开内容 payload，公告仍会在用户未阅读前弹窗提醒
 - Public Experience：未登录首页保留“用学校邮箱开始 / 了解TEAMAKING / 联系开发者”三个入口，并在首次公开访问后自动进入 `/experience` 静态功能引导；该引导只展示不可交互的模拟 UI，最后跳回注册优先的登录页
 - Site UI Copy：管理员可在 `/admin/site-copy` 或用户端浮动工具条维护短界面文案；草稿存入 `site_ui_copy_draft`，发布后写入 `site_ui_copy_published`，普通用户只读取已发布版本
+- Interaction Feedback：全站用户主动业务操作应同时提供左下角 toast 和靠近触发入口的页面内反馈；读取失败也会弹出去重后的错误 toast，并继续在对应数据区域保留可诊断错误
 - Admin Maintenance：管理员可在 `/admin/maintenance` 软清空当前课程组队状态；好友关系、课程参与历史、Teamaking Post 和 TeamUp Interest 记录会保留，用于后续推荐和审计追溯
 
 ## 本地启动
@@ -67,6 +68,7 @@ NEXT_PUBLIC_APP_URL="http://localhost:3000"
 ADMIN_HOSTS="admin.teamingapp.org"
 CRAWLER_HOSTS="crawler.teamingapp.org"
 SESSION_COOKIE_DOMAIN=".teamingapp.org"
+MOBILE_AUTH_SECRET="generate-a-long-random-secret"
 TENCENTCLOUD_SECRET_ID=""
 TENCENTCLOUD_SECRET_KEY=""
 TENCENTCLOUD_SES_REGION="ap-hongkong"
@@ -314,6 +316,18 @@ prisma/
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
 - `POST /api/demo/login`
+
+原生客户端认证（APK / DMG）：
+
+- `POST /api/mobile/auth/register/send-code`
+- `POST /api/mobile/auth/register/complete`
+- `POST /api/mobile/auth/password-login`
+- `POST /api/mobile/auth/password-reset/send-code`
+- `POST /api/mobile/auth/password-reset/complete`
+- `POST /api/mobile/auth/admin-login`
+- `POST /api/mobile/auth/refresh`
+- `GET /api/mobile/auth/me`
+- `POST /api/mobile/auth/logout`
 
 学生端：
 
@@ -655,6 +669,8 @@ DATABASE_URL="Neon direct connection string" npx prisma migrate deploy
 - 管理后台 `Content & Announcements` 可以按 tab 管理联系开发者、开发者日志、帮助中心和全站公告；帮助中心/开发者日志支持在树上分别新建分类文件夹和文档；主站任意页面顶部能看到公告条和弹窗，`/announcements` 能查看历史。
 - 管理后台 `Interface Copy` 可以搜索短界面文案、保存草稿、发布和丢弃；管理员在 `/courses` 等学生端页面可打开“编辑界面文案”工具条，普通用户不应看到草稿，发布后用户端才更新。
 - 无痕窗口或登出状态下，首页显示“用学校邮箱开始”“了解TEAMAKING”“联系开发者”，不露出“演示验收”入口；`/experience` 可翻页、不可触发真实业务，最后一步进入 `/login?mode=register`。
+- 用户主动写入或业务操作应显示左下角 toast，并在按钮、表单、卡片或列表行附近保留页面内成功/错误反馈；筛选、分页、tab、展开折叠和轮播翻页等纯前端轻交互不应弹 toast。
+- 带无关 `Authorization` header 的浏览器请求仍应使用 `teamaking_session` cookie；只有 `Bearer tma1.` 原生客户端 token 才进入 APK / DMG 鉴权路径。
 - `/help`、`/developer-log`、`/contact-developer` 和 `/api/content?kind=...` 均能读取已发布公开内容；登录相关帮助文章中的注册、登录、找回密码文字应能跳到对应 `/login?mode=...`。
 - 点击登出后，刷新、静置或进入 Course Board 不应自动恢复账号；用 `/api/auth/me` 复核应返回未登录状态。
 - 主站语言切换器能在中文/英文间切换；用浏览器无痕窗口模拟非中文地区时默认英文，手动切换后 cookie 会记住选择。
@@ -688,6 +704,7 @@ npm run typecheck
 npm run lint
 npm run test
 npm run build
+npm run test:e2e -- tests/e2e/feedback.spec.ts
 npm run test:e2e -- tests/e2e/smoke.spec.ts
 ```
 

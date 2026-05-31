@@ -7,6 +7,7 @@ import { X } from "lucide-react";
 import { api, useApi } from "@/lib/client/api";
 import { defaultOnboardingGuide, OnboardingGuide, OnboardingGuideStep, onboardingGuideFromConfig } from "@/lib/onboarding-guide";
 import { EditableCopy, useCopyText } from "@/components/site-copy-runtime";
+import { useFeedback } from "@/components/feedback-provider";
 
 const tourStorageKey = "teamaking.onboardingTour.v1";
 const tourEventName = "teamaking:onboarding-tour-start";
@@ -99,11 +100,12 @@ export function OnboardingTourRestartButton({
   label?: string;
 }) {
   const router = useRouter();
+  const { runWithFeedback } = useFeedback();
   const [busy, setBusy] = useState(false);
 
   async function restart() {
     setBusy(true);
-    await api("/api/onboarding/tour-reset", { method: "POST" }).catch(() => null);
+    await runWithFeedback(() => api("/api/onboarding/tour-reset", { method: "POST" }), { success: "新手引导已重置。" }).catch(() => null);
     requestOnboardingTourStart(0);
     router.push(firstStepRoute());
     setBusy(false);
@@ -119,6 +121,7 @@ export function OnboardingTourRestartButton({
 export function OnboardingTour() {
   const pathname = usePathname();
   const router = useRouter();
+  const { runWithFeedback } = useFeedback();
   const canLoad =
     Boolean(pathname) &&
     !pathname?.startsWith("/admin") &&
@@ -150,8 +153,8 @@ export function OnboardingTour() {
     setLocallyDismissed(true);
     setAndStoreTourState({ active: false, stepIndex });
     setFrame(null);
-    await api("/api/onboarding/tour-dismiss", { method: "POST" }).catch(() => null);
-  }, [setAndStoreTourState, stepIndex]);
+    await runWithFeedback(() => api("/api/onboarding/tour-dismiss", { method: "POST" }), { success: "新手引导已关闭。" }).catch(() => null);
+  }, [runWithFeedback, setAndStoreTourState, stepIndex]);
 
   useEffect(() => {
     setTourState(readStoredTourState() ?? { active: false, stepIndex: 0 });

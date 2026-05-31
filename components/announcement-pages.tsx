@@ -3,6 +3,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Archive, Check, Send } from "lucide-react";
 import { Card, EmptyState, LoadingState, PageShell, StatusPill } from "@/components/app-shell";
+import { useFeedback } from "@/components/feedback-provider";
+import { InlineFeedback } from "@/components/pages/page-primitives";
 import { localeCookieName, normalizeLocale, type Locale } from "@/lib/i18n";
 
 type Announcement = {
@@ -78,6 +80,7 @@ function AnnouncementArticle({ item, locale }: { item: Announcement; locale: Loc
 }
 
 export function AnnouncementsPage() {
+  const { notifyReadErrorOnce } = useFeedback();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [locale, setLocale] = useState<Locale>("zh");
   const [loading, setLoading] = useState(true);
@@ -90,9 +93,12 @@ export function AnnouncementsPage() {
         setAnnouncements(data.announcements ?? []);
         setError("");
       })
-      .catch((err: Error) => setError(err.message))
+      .catch((err: Error) => {
+        setError(err.message);
+        notifyReadErrorOnce("/api/announcements", err.message);
+      })
       .finally(() => setLoading(false));
-  }, []);
+  }, [notifyReadErrorOnce]);
 
   useEffect(() => {
     const listener = (event: Event) => setLocale((event as CustomEvent<Locale>).detail ?? readLocale());
@@ -113,9 +119,10 @@ export function AnnouncementsPage() {
 }
 
 export function AdminAnnouncementsPage() {
+  const { notifyReadErrorOnce, runWithFeedback } = useFeedback();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
-  const [result, setResult] = useState("");
+  const [result, setResult] = useState<{ message: string; tone: "success" | "error" | "info" } | null>(null);
   const [busyAction, setBusyAction] = useState("");
   const [form, setForm] = useState({
     titleZh: "",
@@ -137,20 +144,26 @@ export function AdminAnnouncementsPage() {
   }
 
   useEffect(() => {
-    load().catch((err: Error) => setResult(err.message));
-  }, []);
+    load().catch((err: Error) => {
+      setResult({ message: err.message, tone: "error" });
+      notifyReadErrorOnce("/api/admin/announcements", err.message);
+    });
+  }, [notifyReadErrorOnce]);
 
   async function createAnnouncement(event: FormEvent) {
     event.preventDefault();
     setBusyAction("create");
-    setResult("");
+    setResult(null);
     try {
-      const data = await api("/api/admin/announcements", { method: "POST", body: JSON.stringify(form) });
-      setResult(data.message ?? "公告已保存。");
+      const data = await runWithFeedback(
+        () => api("/api/admin/announcements", { method: "POST", body: JSON.stringify(form) }),
+        { success: (data: any) => data.message ?? "公告已保存。" }
+      );
+      setResult({ message: data.message ?? "公告已保存。", tone: "success" });
       setForm({ titleZh: "", titleEn: "", bodyZh: "", bodyEn: "", priority: "0", status: "draft" });
       await load();
     } catch (err) {
-      setResult(err instanceof Error ? err.message : "公告保存失败。");
+      setResult({ message: err instanceof Error ? err.message : "公告保存失败。", tone: "error" });
     } finally {
       setBusyAction("");
     }
@@ -158,13 +171,16 @@ export function AdminAnnouncementsPage() {
 
   async function action(id: string, actionName: "publish" | "archive") {
     setBusyAction(`${actionName}-${id}`);
-    setResult("");
+    setResult(null);
     try {
-      const data = await api(`/api/admin/announcements/${id}/${actionName}`, { method: "POST" });
-      setResult(data.message ?? "公告已更新。");
+      const data = await runWithFeedback(
+        () => api(`/api/admin/announcements/${id}/${actionName}`, { method: "POST" }),
+        { success: (data: any) => data.message ?? "公告已更新。" }
+      );
+      setResult({ message: data.message ?? "公告已更新。", tone: "success" });
       await load();
     } catch (err) {
-      setResult(err instanceof Error ? err.message : "公告操作失败。");
+      setResult({ message: err instanceof Error ? err.message : "公告操作失败。", tone: "error" });
     } finally {
       setBusyAction("");
     }
@@ -175,7 +191,6 @@ export function AdminAnnouncementsPage() {
       <div className="grid gap-5">
         <Card>
           <h2 className="text-xl font-semibold text-ink">发布公告</h2>
-          {result ? <div className="mt-4 border border-ink/20 bg-paper px-3 py-2 text-sm font-medium text-forest">{result}</div> : null}
           <form className="mt-4 grid gap-4" onSubmit={createAnnouncement}>
             <div className="grid gap-4 md:grid-cols-2">
               <label className="grid gap-2 text-sm font-semibold text-ink">
@@ -214,6 +229,7 @@ export function AdminAnnouncementsPage() {
               <Send size={15} aria-hidden />
               {busyAction === "create" ? "保存中..." : "保存公告"}
             </button>
+            <InlineFeedback message={result?.message} tone={result?.tone} />
           </form>
         </Card>
 
@@ -221,6 +237,9 @@ export function AdminAnnouncementsPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-xl font-semibold text-ink">公告历史</h2>
             <button type="button" onClick={() => load()} className="rounded-sm border border-ink/30 px-3 py-2 text-sm font-semibold">刷新</button>
+          </div>
+          <div className="mt-3">
+            <InlineFeedback message={result?.message} tone={result?.tone} />
           </div>
           {loading ? <LoadingState /> : null}
           <div className="mt-4 grid gap-3">

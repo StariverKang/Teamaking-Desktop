@@ -5,7 +5,8 @@ import { Check, FileText, Plus, UserRound } from "lucide-react";
 import { Card, EmptyState, LoadingState, PageShell, SkillBadge } from "@/components/app-shell";
 import { OnboardingTourRestartButton } from "@/components/onboarding-tour";
 import { CopyTarget, useCopyText } from "@/components/site-copy-runtime";
-import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
+import { useFeedback } from "@/components/feedback-provider";
+import { ErrorBox, Field, InlineFeedback, inputClass } from "@/components/pages/page-primitives";
 import { contactVisibilityOptions, defaultContactVisibility } from "@/lib/contact";
 import { api, uploadProfileFile, useApi } from "@/lib/client/api";
 import { majorsForFaculty, normalizeAcademicSelection, OfficialAcademicLinks } from "@/components/pages/shared/academic-parts";
@@ -13,9 +14,12 @@ import { acceptedProfileFiles, defaultEntryYear, entryTermOptions, fileFamily, i
 import { resumeNeedsAiAnalysis } from "@/lib/resume-analysis";
 
 export function ProfileEditorPage() {
+  const { notifyError, runWithFeedback } = useFeedback();
   const { data, error, loading } = useApi("/api/profile/me");
   const { data: onboarding } = useApi("/api/onboarding");
   const [saved, setSaved] = useState("");
+  const [savedTone, setSavedTone] = useState<"success" | "error" | "info">("success");
+  const [savedScope, setSavedScope] = useState<"profile" | "resume" | "portfolio" | "items">("profile");
   const [uploading, setUploading] = useState("");
   const [portfolioItems, setPortfolioItems] = useState<any[]>([]);
   const [workOwnershipFilter, setWorkOwnershipFilter] = useState("all");
@@ -77,6 +81,18 @@ export function ProfileEditorPage() {
   const filteredProfileMajors = useMemo(() => majorsForFaculty(profileMajors, form.facultyId), [profileMajors, form.facultyId]);
   const nicknamePlaceholder = useCopyText("profileEditor.nickname.placeholder", "例如 Mia / slides person");
   const headlinePlaceholder = useCopyText("profileEditor.headline.placeholder", "例如 Research and presentation collaborator");
+
+  function showFeedback(message: string, tone: "success" | "error" | "info" = "success", scope: "profile" | "resume" | "portfolio" | "items" = "profile") {
+    setSaved(message);
+    setSavedTone(tone);
+    setSavedScope(scope);
+  }
+
+  function clearFeedback(scope: "profile" | "resume" | "portfolio" | "items" = savedScope) {
+    setSaved("");
+    setSavedTone("success");
+    setSavedScope(scope);
+  }
 
   function resetPortfolioForm() {
     setEditingPortfolioId("");
@@ -149,14 +165,18 @@ export function ProfileEditorPage() {
 
   async function uploadAndApply(file: File | undefined, purpose: string, apply: (upload: any) => void) {
     if (!file) return;
+    const feedbackScope = purpose === "resume" ? "resume" : purpose === "avatar" || purpose === "background" || purpose === "contact_qr" ? "profile" : "portfolio";
     setUploading(purpose);
-    setSaved("");
+    clearFeedback(feedbackScope);
     try {
-      const upload = await uploadProfileFile(file, purpose);
+      const upload = await runWithFeedback(
+        () => uploadProfileFile(file, purpose),
+        { success: "上传成功。" }
+      );
       apply(upload);
-      setSaved("文件已上传，点击保存后会写入 Profile 数据。");
+      showFeedback("上传成功，点击保存后会写入 Profile 数据。", "success", feedbackScope);
     } catch (err) {
-      setSaved(err instanceof Error ? err.message : "上传失败。");
+      showFeedback(err instanceof Error ? err.message : "上传失败。", "error", feedbackScope);
     } finally {
       setUploading("");
     }
@@ -164,23 +184,31 @@ export function ProfileEditorPage() {
 
   async function reparseResume(mode: "manual" | "auto" = "manual") {
     if (!form.resumeUrl) {
-      setSaved("请先上传或填写简历 URL。");
+      const message = "请先上传或填写简历 URL。";
+      if (mode === "manual") notifyError(message);
+      showFeedback(message, "error", "resume");
       return;
     }
     setUploading(mode === "auto" ? "resume-auto-reparse" : "resume-reparse");
-    setSaved(mode === "auto" ? "正在用 AI 自动整理旧简历解析..." : "");
+    if (mode === "auto") showFeedback("正在用 AI 自动整理旧简历解析...", "info", "resume");
+    else clearFeedback("resume");
     try {
-      const result = await api("/api/profile/me/reparse-resume", { method: "POST" });
+      const result = mode === "manual"
+        ? await runWithFeedback(
+          () => api("/api/profile/me/reparse-resume", { method: "POST" }),
+          { success: "简历已重新整理。" }
+        )
+        : await api("/api/profile/me/reparse-resume", { method: "POST" });
       setForm((current) => ({
         ...current,
         resumeParsedData: result.resumeParsedData ?? current.resumeParsedData
       }));
-      setSaved(result.message ?? (mode === "auto" ? "旧简历已自动整理。" : "简历已重新整理。"));
+      showFeedback(result.message ?? (mode === "auto" ? "旧简历已自动整理。" : "简历已重新整理。"), "success", "resume");
     } catch (err) {
       if (mode === "auto") {
         window.sessionStorage.setItem(`teamaking-resume-ai-refresh:${form.resumeUrl}`, String(Date.now()));
       }
-      setSaved(err instanceof Error ? err.message : "简历重新整理失败。");
+      showFeedback(err instanceof Error ? err.message : "简历重新整理失败。", "error", "resume");
     } finally {
       setUploading("");
     }
@@ -199,65 +227,83 @@ export function ProfileEditorPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    setSaved("");
-    await api("/api/profile/me", {
-      method: "PATCH",
-      body: JSON.stringify({
-        displayName: form.displayName,
-        nickname: form.nickname,
-        headline: form.headline,
-        bio: form.bio,
-        grade: form.grade,
-        entryYear: form.entryYear,
-        entryTerm: form.entryTerm,
-        facultyId: form.facultyId,
-        majorId: form.majorId,
-        avatarUrl: form.avatarUrl,
-        backgroundImageUrl: form.backgroundImageUrl,
-        outputTags: tagsFromText(form.outputTagsText),
-        openToBeDiscovered: form.openToBeDiscovered,
-        resumeUrl: form.resumeUrl,
-        resumeFileName: form.resumeFileName,
-        resumeParsedData: form.resumeParsedData,
-        contactInfo: contact,
-        skills: tagsFromText(form.skillsText)
-      })
-    });
-    setSaved("个人资料、联系方式、头像/背景、简历解析信息已保存。");
+    clearFeedback("profile");
+    try {
+      await runWithFeedback(
+        () => api("/api/profile/me", {
+          method: "PATCH",
+          body: JSON.stringify({
+            displayName: form.displayName,
+            nickname: form.nickname,
+            headline: form.headline,
+            bio: form.bio,
+            grade: form.grade,
+            entryYear: form.entryYear,
+            entryTerm: form.entryTerm,
+            facultyId: form.facultyId,
+            majorId: form.majorId,
+            avatarUrl: form.avatarUrl,
+            backgroundImageUrl: form.backgroundImageUrl,
+            outputTags: tagsFromText(form.outputTagsText),
+            openToBeDiscovered: form.openToBeDiscovered,
+            resumeUrl: form.resumeUrl,
+            resumeFileName: form.resumeFileName,
+            resumeParsedData: form.resumeParsedData,
+            contactInfo: contact,
+            skills: tagsFromText(form.skillsText)
+          })
+        }),
+        { success: "保存成功。" }
+      );
+      showFeedback("个人资料、联系方式、头像/背景、简历解析信息已保存。", "success", "profile");
+    } catch (err) {
+      showFeedback(err instanceof Error ? err.message : "保存 Profile 失败。", "error", "profile");
+    }
   }
 
   async function createPortfolioItem(event: FormEvent) {
     event.preventDefault();
-    setSaved("");
+    clearFeedback("portfolio");
     const sameHonorTypeCount = portfolioItems.filter((item) => item.type === portfolioForm.type).length;
     const pinnedCount = portfolioItems.filter((item) => item.isPinned).length;
     if (!editingPortfolioId && isHonorItem(portfolioForm) && sameHonorTypeCount >= 3) {
-      setSaved("语言成绩、GPA、奖项/认证每类最多上传 3 个。");
+      const message = "语言成绩、GPA、奖项/认证每类最多上传 3 个。";
+      notifyError(message);
+      showFeedback(message, "error", "portfolio");
       return;
     }
     if (!editingPortfolioId && portfolioForm.isPinned && pinnedCount >= 3) {
-      setSaved("每个用户最多置顶 3 个过往成果。");
+      const message = "每个用户最多置顶 3 个过往成果。";
+      notifyError(message);
+      showFeedback(message, "error", "portfolio");
       return;
     }
     const endpoint = editingPortfolioId ? `/api/profile/me/portfolio-items/${editingPortfolioId}` : "/api/profile/me/portfolio-items";
-    const result = await api(endpoint, {
-      method: editingPortfolioId ? "PATCH" : "POST",
-      body: JSON.stringify({
-        ...portfolioForm,
-        metadata: {
-          ...(portfolioForm.metadata ?? {}),
-          createdFrom: "profile_editor"
-        }
-      })
-    });
-    setSaved(editingPortfolioId ? "作品/证明材料已更新。" : "作品/证明材料已保存。");
-    resetPortfolioForm();
-    if (result?.portfolioItem) {
-      setPortfolioItems((current) =>
-        editingPortfolioId
-          ? current.map((item) => (item.id === result.portfolioItem.id ? result.portfolioItem : item))
-          : [result.portfolioItem, ...current]
+    try {
+      const result = await runWithFeedback(
+        () => api(endpoint, {
+          method: editingPortfolioId ? "PATCH" : "POST",
+          body: JSON.stringify({
+            ...portfolioForm,
+            metadata: {
+              ...(portfolioForm.metadata ?? {}),
+              createdFrom: "profile_editor"
+            }
+          })
+        }),
+        { success: editingPortfolioId ? "更新成功。" : "保存成功。" }
       );
+      showFeedback(editingPortfolioId ? "作品/证明材料已更新。" : "作品/证明材料已保存。", "success", "portfolio");
+      resetPortfolioForm();
+      if (result?.portfolioItem) {
+        setPortfolioItems((current) =>
+          editingPortfolioId
+            ? current.map((item) => (item.id === result.portfolioItem.id ? result.portfolioItem : item))
+            : [result.portfolioItem, ...current]
+        );
+      }
+    } catch (err) {
+      showFeedback(err instanceof Error ? err.message : "保存作品/证明材料失败。", "error", "portfolio");
     }
   }
 
@@ -285,13 +331,21 @@ export function ProfileEditorPage() {
       parsedText: item.parsedText ?? "",
       metadata: item.metadata ?? {}
     });
-    setSaved("正在编辑已有作品；修改后点击保存。");
+    showFeedback("正在编辑已有作品；修改后点击保存。", "info", "portfolio");
   }
 
   async function deletePortfolioItem(id: string) {
-    await api(`/api/profile/me/portfolio-items/${id}`, { method: "DELETE" });
-    setPortfolioItems((current) => current.filter((item) => item.id !== id));
-    setSaved("作品/证明材料已删除。");
+    clearFeedback("items");
+    try {
+      await runWithFeedback(
+        () => api(`/api/profile/me/portfolio-items/${id}`, { method: "DELETE" }),
+        { success: "删除成功。" }
+      );
+      setPortfolioItems((current) => current.filter((item) => item.id !== id));
+      showFeedback("作品/证明材料已删除。", "success", "items");
+    } catch (err) {
+      showFeedback(err instanceof Error ? err.message : "删除作品/证明材料失败。", "error", "items");
+    }
   }
 
   return (
@@ -482,6 +536,9 @@ export function ProfileEditorPage() {
                 </button>
                 <p className="text-sm leading-6 text-ink/56">已有简历也可以直接重新解析，生成 AI 摘要、精选高光和关键词。</p>
               </div>
+              <div className="mt-3">
+                <InlineFeedback message={savedScope === "resume" ? saved : undefined} tone={savedTone} />
+              </div>
               {renderResumeParsedData(form.resumeParsedData, form.resumeFileName, {
                 editable: true,
                 busy: uploading === "resume-reparse" || uploading === "resume-auto-reparse",
@@ -497,6 +554,7 @@ export function ProfileEditorPage() {
               <Check size={16} aria-hidden />
               保存 Profile 与联系方式
             </button>
+            <InlineFeedback message={savedScope === "profile" ? saved : undefined} tone={savedTone} />
           </form>
 
           <Card>
@@ -579,11 +637,15 @@ export function ProfileEditorPage() {
                 <Plus size={16} aria-hidden />
                 {editingPortfolioId ? "更新作品 / 证明" : "保存作品 / 证明"}
               </button>
+              <InlineFeedback message={savedScope === "portfolio" ? saved : undefined} tone={savedTone} />
             </form>
           </Card>
 
           <Card>
             <h2 className="text-xl font-semibold text-ink">已保存的作品与证明</h2>
+            <div className="mt-3">
+              <InlineFeedback message={savedScope === "items" ? saved : undefined} tone={savedTone} />
+            </div>
             <div className="mt-4 flex flex-wrap gap-2">
               {["all", "individual", "group"].map((value) => (
                 <button key={value} type="button" onClick={() => setWorkOwnershipFilter(value)} className={`border px-3 py-2 text-sm font-semibold ${workOwnershipFilter === value ? "border-ink bg-ink text-paper" : "border-ink/30 bg-paper"}`}>
@@ -619,7 +681,6 @@ export function ProfileEditorPage() {
           </Card>
 
           {uploading ? <p className="text-sm font-medium text-rust">正在上传：{uploading}</p> : null}
-          {saved ? <p className="border border-ink/20 bg-paper px-3 py-2 text-sm font-medium text-forest">{saved}</p> : null}
         </div>
       ) : null}
     </PageShell>

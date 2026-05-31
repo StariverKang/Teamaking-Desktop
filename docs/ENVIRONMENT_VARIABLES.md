@@ -17,12 +17,14 @@ NEXT_PUBLIC_APP_URL="https://teamingapp.org"
 ADMIN_HOSTS="admin.teamingapp.org"
 CRAWLER_HOSTS="crawler.teamingapp.org"
 SESSION_COOKIE_DOMAIN=".teamingapp.org"
+MOBILE_AUTH_SECRET="generate-a-long-random-secret"
 ```
 
 - `NEXT_PUBLIC_APP_URL`：公开主站域名。
 - `ADMIN_HOSTS`：允许访问 `/admin`、`/admin-login`、`/api/admin/*` 和 `/api/auth/admin-login` 的管理员域名。主系统不展示 Admin 入口。
 - `CRAWLER_HOSTS`：允许访问 `/crawler` 和 `/api/crawler/*` 的爬虫子域名。主站和管理员域名之外会返回 404。
 - `SESSION_COOKIE_DOMAIN`：可选。生产建议填 `.teamingapp.org`，让 `admin.teamingapp.org` 和 `crawler.teamingapp.org` 共用同一次管理员登录；本地 localhost 不要设置。
+- `MOBILE_AUTH_SECRET`：APK / DMG 等原生客户端短期 access token 的 HMAC 签名密钥。生产必须填写一段长随机值；修改后会让已签发的原生客户端 access token 失效，但 refresh token 仍可换新 token。
 - 多语言不需要额外环境变量。首次访问时 middleware 会根据 `x-vercel-ip-country` 或 `cf-ipcountry` 设置 `teamaking_locale` cookie；用户可在页面右上角手动切换。
 
 ## 数据库

@@ -12,19 +12,32 @@ import {
   StatusPill
 } from "@/components/app-shell";
 import { ProfileCard, TeamakingPostCard, TeamUpRequestCard } from "@/components/cards";
-import { ErrorBox, inputClass } from "@/components/pages/page-primitives";
+import { useFeedback } from "@/components/feedback-provider";
+import { ErrorBox, InlineFeedback, inputClass } from "@/components/pages/page-primitives";
 import { CopyTarget, useCopyText } from "@/components/site-copy-runtime";
 
 import { api, useApi } from "@/lib/client/api";
 import { visibleMatchReasonTags } from "@/components/pages/shared/academic-parts";
 
 export function TeamUpRequestsPage() {
+  const { runWithFeedback } = useFeedback();
   const [refresh, setRefresh] = useState(0);
+  const [actionFeedback, setActionFeedback] = useState<{ message: string; tone: "success" | "error" | "info" } | null>(null);
   const { data: received } = useApi("/api/team-up-interests/received", [refresh]);
 
   async function actOnInterest(id: string, action: "mutual" | "refuse") {
-    await api(`/api/team-up-interests/${id}/${action}`, { method: "POST" });
-    setRefresh((value) => value + 1);
+    const success = action === "mutual" ? "已标记为 Mutual TeamUp。" : "已拒绝该 TeamUp Interest。";
+    setActionFeedback(null);
+    try {
+      await runWithFeedback(
+        () => api(`/api/team-up-interests/${id}/${action}`, { method: "POST" }),
+        { success }
+      );
+      setActionFeedback({ message: success, tone: "success" });
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setActionFeedback({ message: error instanceof Error ? error.message : "处理 TeamUp Interest 失败，请稍后再试。", tone: "error" });
+    }
   }
 
   return (
@@ -32,6 +45,9 @@ export function TeamUpRequestsPage() {
       <div className="grid gap-6">
         <section>
           <h2 className="mb-3 text-xl font-semibold text-ink">Received TeamUp Interests</h2>
+          <div className="mb-3">
+            <InlineFeedback message={actionFeedback?.message} tone={actionFeedback?.tone} />
+          </div>
           <div className="grid gap-4">
             {(received?.interests ?? []).map((request: any) => (
               <TeamUpRequestCard
@@ -58,18 +74,35 @@ export function TeamUpRequestsPage() {
 }
 
 export function InboxPage() {
+  const { runWithFeedback } = useFeedback();
   const [refresh, setRefresh] = useState(0);
+  const [actionFeedback, setActionFeedback] = useState<{ message: string; tone: "success" | "error" | "info" } | null>(null);
   const { data, error, loading } = useApi("/api/follow-requests/inbox", [refresh]);
 
   async function act(id: string, action: "accept" | "refuse" | "withdraw") {
-    await api(`/api/follow-requests/${id}/${action}`, { method: "POST" });
-    setRefresh((value) => value + 1);
+    const successByAction = {
+      accept: "关注申请已接受。",
+      refuse: "关注申请已拒绝。",
+      withdraw: "关注申请已撤回。"
+    };
+    setActionFeedback(null);
+    try {
+      await runWithFeedback(
+        () => api(`/api/follow-requests/${id}/${action}`, { method: "POST" }),
+        { success: successByAction[action] }
+      );
+      setActionFeedback({ message: successByAction[action], tone: "success" });
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setActionFeedback({ message: error instanceof Error ? error.message : "处理关注申请失败，请稍后再试。", tone: "error" });
+    }
   }
 
   return (
     <PageShell title="Inbox" eyebrow="Follow Requests" description="Inbox 只处理用户之间的关注/好友申请，不显示 TeamUp Interest。" titleCopyKey="inbox.page.title">
       {loading ? <LoadingState /> : <ErrorBox message={error} />}
       <div className="grid gap-4">
+        <InlineFeedback message={actionFeedback?.message} tone={actionFeedback?.tone} />
         {(data?.requests ?? []).map((request: any) => (
           <Card key={request.id}>
             <div className="flex flex-wrap items-start justify-between gap-4">

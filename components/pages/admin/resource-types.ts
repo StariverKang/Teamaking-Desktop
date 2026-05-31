@@ -62,7 +62,7 @@ export type AdminResourceContext = {
   setImportPage: Dispatch<SetStateAction<number>>;
   setImportPreviewTab: Dispatch<SetStateAction<string>>;
   setImportSearch: Dispatch<SetStateAction<string>>;
-  setResult: Dispatch<SetStateAction<{ type: "success" | "error" | "info"; message: string } | null>>;
+  setResult: (next: { type: "success" | "error" | "info"; message: string } | null) => void;
   setRole: Dispatch<SetStateAction<string>>;
   setSelectedId: Dispatch<SetStateAction<string>>;
   setStatus: Dispatch<SetStateAction<string>>;

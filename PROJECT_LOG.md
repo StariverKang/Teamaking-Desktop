@@ -1337,7 +1337,8 @@
   - `npm run prisma:validate` 通过。
   - `npm run typecheck` 通过。
   - `npm run lint` 通过。
-  - `npm run test` 通过（35 files，121 passed，2 skipped）。
+  - `npm run test -- tests/unit/mobile-auth-service.test.ts` 通过（4 passed）。
+  - `npm run test` 通过（36 files，125 passed，2 skipped）。
   - `npm run build` 通过。
   - `npm run test:e2e -- tests/e2e/smoke.spec.ts` 通过（5 passed）。
   - Crawler smoke：`2022 admission limit=all` 通过，输出 4 faculties / 29 majors / 1003 courses / 1346 rules；`2025 admission limit=1` 通过，输出 terms 覆盖 `Y1S1` 到 `Y4S2`。
@@ -1355,3 +1356,54 @@
   - README 明确 `/developer-log` 是站内公开内容模型，工程开发日志仍以 `PROJECT_LOG.md` 为准。
 - 验证：
   - `git diff --check` 通过。
+
+### APK / DMG 原生客户端共享后端契约
+
+- 背景：
+  - APK / DMG 原生客户端需要独立 UI 和独立仓库，但产品功能、API 语义、Prisma schema、crawler/import 规则仍由 TEAMAKING 主程序统一维护。
+  - Web 端继续使用 HttpOnly cookie 登录；原生客户端需要不依赖 WebView 的 token 登录与刷新机制。
+- 改动：
+  - 新增 `MobileSession` Prisma model，用于保存移动 refresh token 哈希、设备信息、过期时间、最后使用时间和撤销时间。
+  - 新增 `/api/mobile/auth/*` 契约：邮箱密码登录、管理员登录、注册完成、重置密码完成、refresh、me、logout；发送验证码继续复用既有注册/重置验证码流程。
+  - API 鉴权入口兼容两种来源：Web 端保留 `teamaking_session` cookie；原生客户端可通过 `Authorization: Bearer <accessToken>` 获取同一个 `requireUser` / `requireAdmin` 上下文。
+  - README 和环境变量文档补充 `MOBILE_AUTH_SECRET`、原生客户端认证端点和 token 说明。
+  - Android 仓库 README/开发日志只记录原生交互、UI、APK 构建和移动端工程进展；涉及产品功能、API、schema 或 crawler 的变更必须先记录在本主仓。
+- 验证：
+  - `npm run prisma:generate` 通过。
+  - `npm run prisma:validate` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过。
+  - `npm run test` 通过（35 files，121 passed，2 skipped）。
+
+### 原生客户端认证与主 Web 程序兼容性收口
+
+- 问题：
+  - `getCurrentUser()` 初版兼容逻辑只要看到任意 `Authorization` header 就优先走原生客户端 bearer token。
+  - 这可能让带了无关 `Authorization` header 的 Web 请求忽略正常 `teamaking_session` cookie，影响主程序登录态。
+- 修复：
+  - 新增 `isMobileAccessAuthorization()`，只有 `Bearer tma1.` 前缀的 TEAMAKING 原生客户端 access token 才进入移动鉴权。
+  - 非 TEAMAKING 的 `Authorization` header 会继续回落到 Web cookie，不影响浏览器主程序。
+  - 新增 `tests/unit/session-auth-source.test.ts` 覆盖 cookie fallback 与 mobile bearer 优先级。
+- 验证：
+  - `npm run test -- tests/unit/session-auth-source.test.ts tests/unit/mobile-auth-service.test.ts` 通过（7 passed）。
+
+### 全局交互反馈与兼容性最终验收
+
+- 背景：
+  - 主程序需要把所有用户主动业务操作统一为左下角 toast + 交互入口附近页面内反馈，读取失败需要 toast 去重并保留页面内 debug 信息。
+  - 同时复查 APK / DMG 原生客户端兼容接口是否影响 Web 主程序登录态与 API 鉴权。
+- 改动：
+  - 新增 `FeedbackProvider`、`useFeedback()`、toast viewport、读取失败去重和 `InlineFeedback` 组件。
+  - 登录/注册/验证码、Profile 上传与保存、Course Board/TeamUp/Follow/评论、support ticket、crawler、admin、site-copy、announcement/content 等主动业务入口接入 `runWithFeedback`，并把原顶部提交反馈迁移到按钮、表单、卡片或列表行附近。
+  - 修复原生客户端兼容风险：只有 `Bearer tma1.` TEAMAKING access token 才走 mobile auth；普通 Web 请求即使带无关 `Authorization` header 也继续使用 `teamaking_session` cookie。
+  - README 补充全局交互反馈、APK / DMG 鉴权兼容和对应验收项。
+- 验证：
+  - `npm run prisma:generate` 通过。
+  - `npm run prisma:validate` 通过。
+  - `git diff --check` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过。
+  - `npm run test` 通过（38 files，131 passed，2 skipped）。
+  - `npm run build` 通过。
+  - `npm run test:e2e -- tests/e2e/feedback.spec.ts` 通过（2 passed）。
+  - `npm run test:e2e -- tests/e2e/smoke.spec.ts` 通过（5 passed）。

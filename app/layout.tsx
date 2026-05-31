@@ -6,6 +6,7 @@ import { OnboardingTour } from "@/components/onboarding-tour";
 import { SupportWidget } from "@/components/pages/student-pages";
 import { LanguageRuntime } from "@/components/language-runtime";
 import { SiteCopyRuntime } from "@/components/site-copy-runtime";
+import { FeedbackProvider } from "@/components/feedback-provider";
 
 export const metadata: Metadata = {
   title: "TEAMAKING",
@@ -17,13 +18,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="zh-CN" suppressHydrationWarning>
       <body>
         <LanguageRuntime>
-          <SiteCopyRuntime>
-            <Navbar />
-            <AnnouncementCenter />
-            <OnboardingTour />
-            {children}
-            <SupportWidget />
-          </SiteCopyRuntime>
+          <FeedbackProvider>
+            <SiteCopyRuntime>
+              <Navbar />
+              <AnnouncementCenter />
+              <OnboardingTour />
+              {children}
+              <SupportWidget />
+            </SiteCopyRuntime>
+          </FeedbackProvider>
         </LanguageRuntime>
       </body>
     </html>

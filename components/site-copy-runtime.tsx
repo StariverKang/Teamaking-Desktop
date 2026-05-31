@@ -12,6 +12,8 @@ import {
 } from "react";
 import { Check, Edit3, ExternalLink, RotateCcw, Send, X } from "lucide-react";
 
+import { useFeedback } from "@/components/feedback-provider";
+import { InlineFeedback } from "@/components/pages/page-primitives";
 import { api, useApi } from "@/lib/client/api";
 import { localeCookieName, normalizeLocale, type Locale } from "@/lib/i18n";
 import {
@@ -241,8 +243,9 @@ function SiteCopyToolbar({
   onCloseEditor: () => void;
 }) {
   const context = useSiteCopy();
+  const { runWithFeedback } = useFeedback();
   const [busy, setBusy] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<{ text: string; tone: "success" | "error" | "info" } | null>(null);
   if (!context?.isAdmin) return null;
   const ctx = context;
   const selectedEntry = selectedKey ? siteCopyEntryMap.get(selectedKey) : null;
@@ -250,33 +253,37 @@ function SiteCopyToolbar({
 
   async function publish() {
     setBusy("publish");
-    setMessage("");
-    const response = await api("/api/admin/site-copy/publish", { method: "POST", body: JSON.stringify({}) })
-      .catch((error: Error) => {
-        setMessage(error.message);
-        return null;
-      })
-      .finally(() => setBusy(""));
-    if (response) {
+    setMessage(null);
+    try {
+      const response = await runWithFeedback(
+        () => api("/api/admin/site-copy/publish", { method: "POST", body: JSON.stringify({}) }),
+        { success: (response: any) => response.message ?? "界面文案已发布。" }
+      );
       ctx.applyAdminPayload(response);
       ctx.refresh();
-      setMessage(response.message ?? "界面文案已发布。");
+      setMessage({ text: response.message ?? "界面文案已发布。", tone: "success" });
+    } catch (error) {
+      setMessage({ text: error instanceof Error ? error.message : "界面文案发布失败。", tone: "error" });
+    } finally {
+      setBusy("");
     }
   }
 
   async function discard() {
     setBusy("discard");
-    setMessage("");
-    const response = await api("/api/admin/site-copy/discard", { method: "POST", body: JSON.stringify({}) })
-      .catch((error: Error) => {
-        setMessage(error.message);
-        return null;
-      })
-      .finally(() => setBusy(""));
-    if (response) {
+    setMessage(null);
+    try {
+      const response = await runWithFeedback(
+        () => api("/api/admin/site-copy/discard", { method: "POST", body: JSON.stringify({}) }),
+        { success: (response: any) => response.message ?? "界面文案草稿已丢弃。" }
+      );
       ctx.applyAdminPayload(response);
       ctx.refresh();
-      setMessage(response.message ?? "界面文案草稿已丢弃。");
+      setMessage({ text: response.message ?? "界面文案草稿已丢弃。", tone: "success" });
+    } catch (error) {
+      setMessage({ text: error instanceof Error ? error.message : "界面文案草稿丢弃失败。", tone: "error" });
+    } finally {
+      setBusy("");
     }
   }
 
@@ -309,7 +316,9 @@ function SiteCopyToolbar({
             </button>
           ) : null}
         </div>
-        {message ? <p className="mt-2 max-w-md text-xs font-semibold text-rust">{message}</p> : null}
+        <div className="mt-2 max-w-md">
+          <InlineFeedback message={message?.text} tone={message?.tone} />
+        </div>
       </div>
       {selectedEntry ? (
         <SiteCopyEditor
@@ -332,34 +341,37 @@ function SiteCopyEditor({
   onClose: () => void;
 }) {
   const context = useSiteCopy();
+  const { runWithFeedback } = useFeedback();
   const [value, setValue] = useState<SiteCopyValue>(initialValue);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<{ text: string; tone: "success" | "error" | "info" } | null>(null);
   const activeEntryKey = useRef(entry.key);
 
   useEffect(() => {
     if (activeEntryKey.current === entry.key) return;
     activeEntryKey.current = entry.key;
     setValue(initialValue);
-    setMessage("");
+    setMessage(null);
   }, [entry.key, initialValue]);
 
   async function saveDraft() {
     if (!context) return;
     setBusy(true);
-    setMessage("");
-    const response = await api("/api/admin/site-copy/draft", {
-      method: "PATCH",
-      body: JSON.stringify({ changes: { [entry.key]: value } })
-    })
-      .catch((error: Error) => {
-        setMessage(error.message);
-        return null;
-      })
-      .finally(() => setBusy(false));
-    if (response) {
+    setMessage(null);
+    try {
+      const response = await runWithFeedback(
+        () => api("/api/admin/site-copy/draft", {
+          method: "PATCH",
+          body: JSON.stringify({ changes: { [entry.key]: value } })
+        }),
+        { success: (response: any) => response.message ?? "草稿已保存。" }
+      );
       context.applyAdminPayload(response);
-      setMessage(response.message ?? "草稿已保存。");
+      setMessage({ text: response.message ?? "草稿已保存。", tone: "success" });
+    } catch (error) {
+      setMessage({ text: error instanceof Error ? error.message : "草稿保存失败。", tone: "error" });
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -397,7 +409,7 @@ function SiteCopyEditor({
           />
         </label>
         <p className="text-xs text-ink/50">最多 {entry.maxLength} 个字符。保存后只是草稿，发布后普通用户才会看到。</p>
-        {message ? <p className="text-sm font-semibold text-rust">{message}</p> : null}
+        <InlineFeedback message={message?.text} tone={message?.tone} />
         <button type="button" onClick={saveDraft} disabled={busy} className="inline-flex w-fit items-center gap-2 bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">
           <Check size={15} aria-hidden />
           {busy ? "保存中..." : "保存草稿"}
