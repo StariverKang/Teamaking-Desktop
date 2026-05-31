@@ -1313,3 +1313,45 @@
   - 真实全专业爬取 `2023,2024,2025` admission handbook 均通过逐专业矩阵检查：2023 共 31 个专业 / 1467 条 rules、2024 共 31 个专业 / 1410 条 rules、2025 共 32 个专业 / 1439 条 rules，`Y1S2/Y2S2/Y3S2` 缺失列表均为空。
 - 后续操作：
   - 已用旧 runner 导入的 admission 数据需要用修复后的 crawler 重新生成、创建 pending、批准导入，并再次激活目标学期；代码修复不会自动改写既有数据库里的错误 rule。
+
+## 2026-05-31
+
+### Admission、Crawler 与未登录体验系统修复
+
+- 背景：
+  - 用户指出 course catalog 不应把课程绑定到固定年级、专业或学期；课程目录本身应是任何未毕业学生可搜索的学校级课程数据。
+  - 2022 admission 曾在线上 crawler 过程中只显示笼统“进程错误”，未来新增 admission 或学期时需要可诊断的失败原因。
+  - BNBU 本科 YxSx 逻辑需要统一为 Fall 入学：`2025 Fall + 2026 Spring = Y1`，`2029 Spring = Y4S2`，从 `2029 Fall` 起显示 `Graduated`。
+  - 未登录首页需要从“演示验收”转向真实产品介绍、帮助中心和注册优先登录路径。
+- 改动：
+  - Course catalog 导入收敛为学校级课程目录：保留描述、catalog effective/valid-through 和 retirement candidates，不再生成 admission-year curriculum rules、default join 或固定年级/学期配置。
+  - Admission relative term 计算集中到 `curriculum-matching`：历史 `entryTerm` 字段保留兼容，但推荐课程、semester activation 和 default join 均按 Fall admission 解释；超过 `Y4S2` 的用户不匹配 programme plan rules，年级显示为 `Graduated`。
+  - Onboarding/Profile 普通学生入口不再提供 Spring entry term；认证模块写入学业锁时统一保存 Fall。
+  - Crawler failure summary 从 stderr、exit code 和日志尾部提炼具体原因，覆盖 PDF.js 缺包/运行时、fetch/TLS、handbook 页未匹配、admission mismatch、single-page 多 cohort、pending import blocker 和 AI strict failure 等场景；Jobs UI 保留日志尾部和下载输出边界。
+  - 未登录首页保留“用学校邮箱开始”“了解TEAMAKING”“联系开发者”三个入口；“了解TEAMAKING”跳 `/help?article=what-is-teamaking`，不再露出 `/demo-access` 验收入口。
+  - 新增公开 `/experience` 静态体验引导，用不可交互的模拟 UI 轮播展示 Dashboard、Profile、Course Board、Matches/TeamUp、Help Center/Developer，最后进入 `/login?mode=register`。
+  - `/login` 默认打开邮箱注册；`mode=login|register|reset` 可显式切换。
+  - 本地 `storage/help-center-drafts/` 中登录相关帮助草稿补充 `/login?mode=register|login|reset` 链接，并导入本地开发库做浏览器验证；这些草稿仍被 `.gitignore` 忽略，正式发布需走后台 Markdown 导入/内容发布。
+  - 帮助中心阅读器固定日期格式，并让 Markdown heading id 复用正文解析结果，修复服务端/客户端 locale 与 heading duplicate 计数导致的 hydration mismatch。
+- 验证：
+  - `npm run prisma:validate` 通过。
+  - `npm run typecheck` 通过。
+  - `npm run lint` 通过。
+  - `npm run test` 通过（35 files，121 passed，2 skipped）。
+  - `npm run build` 通过。
+  - `npm run test:e2e -- tests/e2e/smoke.spec.ts` 通过（5 passed）。
+  - Crawler smoke：`2022 admission limit=all` 通过，输出 4 faculties / 29 majors / 1003 courses / 1346 rules；`2025 admission limit=1` 通过，输出 terms 覆盖 `Y1S1` 到 `Y4S2`。
+  - Browser smoke：未登录首页 CTA、`/experience` 轮播、`/login` 默认注册与 `mode=login/reset`、`/help?article=signup-login` 登录链接均通过。
+  - 本地 dev DB 执行过 `npm run prisma:migrate:deploy`，用于补上 `20260528020000_course_import_lifecycle` migration 后运行 e2e。
+- Commit：
+  - `627ae87 fix: harden admissions and public onboarding`，本地提交，未 push。
+
+### README 与开发日志同步
+
+- 背景：
+  - 完成功能修复和检查后，需要把长期维护规则同步回 README，并把开发过程追加到工程日志，避免只留在聊天记录。
+- 改动：
+  - README 补充注册优先登录、公开体验引导、公开内容页面、course catalog 与 programme handbook 边界、Fall admission / Graduated 规则、crawler 错误诊断、线上测试清单和常用检查命令。
+  - README 明确 `/developer-log` 是站内公开内容模型，工程开发日志仍以 `PROJECT_LOG.md` 为准。
+- 验证：
+  - `git diff --check` 通过。
