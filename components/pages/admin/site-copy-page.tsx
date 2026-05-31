@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { Check, RotateCcw, Save, Send } from "lucide-react";
 
 import { Card, LoadingState, PageShell, StatusPill } from "@/components/app-shell";
-import { ErrorBox, inputClass } from "@/components/pages/page-primitives";
+import { useFeedback } from "@/components/feedback-provider";
+import { ErrorBox, InlineFeedback, inputClass } from "@/components/pages/page-primitives";
 import { api, useApi } from "@/lib/client/api";
 import { type SiteCopyEntry, type SiteCopyValue } from "@/lib/site-copy";
 
@@ -21,12 +22,13 @@ function valueChanged(data: any, entry: SiteCopyEntry, value: SiteCopyValue) {
 }
 
 export function SiteCopyAdminPage() {
+  const { runWithFeedback } = useFeedback();
   const [refresh, setRefresh] = useState(0);
   const [query, setQuery] = useState("");
   const [changedOnly, setChangedOnly] = useState(false);
   const [edits, setEdits] = useState<Record<string, SiteCopyValue>>({});
   const [busy, setBusy] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<{ text: string; tone: "success" | "error" | "info" } | null>(null);
   const { data, error, loading } = useApi("/api/admin/site-copy", [refresh]);
   const entries: SiteCopyEntry[] = useMemo(() => data?.entries ?? [], [data?.entries]);
   const changedKeys = useMemo(() => new Set<string>(data?.changedKeys ?? []), [data?.changedKeys]);
@@ -46,56 +48,62 @@ export function SiteCopyAdminPage() {
   async function saveEntry(entry: SiteCopyEntry) {
     const value = edits[entry.key] ?? valueForEntry(data, entry);
     setBusy(entry.key);
-    setMessage("");
-    const response = await api("/api/admin/site-copy/draft", {
-      method: "PATCH",
-      body: JSON.stringify({ changes: { [entry.key]: value } })
-    })
-      .catch((err: Error) => {
-        setMessage(err.message);
-        return null;
-      })
-      .finally(() => setBusy(""));
-    if (response) {
+    setMessage(null);
+    try {
+      const response = await runWithFeedback(
+        () => api("/api/admin/site-copy/draft", {
+          method: "PATCH",
+          body: JSON.stringify({ changes: { [entry.key]: value } })
+        }),
+        { success: (response: any) => response.message ?? "草稿已保存。" }
+      );
       setEdits((current) => {
         const next = { ...current };
         delete next[entry.key];
         return next;
       });
-      setMessage(response.message ?? "草稿已保存。");
+      setMessage({ text: response.message ?? "草稿已保存。", tone: "success" });
       setRefresh((value) => value + 1);
+    } catch (err) {
+      setMessage({ text: err instanceof Error ? err.message : "草稿保存失败。", tone: "error" });
+    } finally {
+      setBusy("");
     }
   }
 
   async function publish() {
     setBusy("publish");
-    setMessage("");
-    const response = await api("/api/admin/site-copy/publish", { method: "POST", body: JSON.stringify({}) })
-      .catch((err: Error) => {
-        setMessage(err.message);
-        return null;
-      })
-      .finally(() => setBusy(""));
-    if (response) {
+    setMessage(null);
+    try {
+      const response = await runWithFeedback(
+        () => api("/api/admin/site-copy/publish", { method: "POST", body: JSON.stringify({}) }),
+        { success: (response: any) => response.message ?? "界面文案已发布。" }
+      );
       setEdits({});
-      setMessage(response.message ?? "界面文案已发布。");
+      setMessage({ text: response.message ?? "界面文案已发布。", tone: "success" });
       setRefresh((value) => value + 1);
+    } catch (err) {
+      setMessage({ text: err instanceof Error ? err.message : "界面文案发布失败。", tone: "error" });
+    } finally {
+      setBusy("");
     }
   }
 
   async function discard() {
     setBusy("discard");
-    setMessage("");
-    const response = await api("/api/admin/site-copy/discard", { method: "POST", body: JSON.stringify({}) })
-      .catch((err: Error) => {
-        setMessage(err.message);
-        return null;
-      })
-      .finally(() => setBusy(""));
-    if (response) {
+    setMessage(null);
+    try {
+      const response = await runWithFeedback(
+        () => api("/api/admin/site-copy/discard", { method: "POST", body: JSON.stringify({}) }),
+        { success: (response: any) => response.message ?? "界面文案草稿已丢弃。" }
+      );
       setEdits({});
-      setMessage(response.message ?? "界面文案草稿已丢弃。");
+      setMessage({ text: response.message ?? "界面文案草稿已丢弃。", tone: "success" });
       setRefresh((value) => value + 1);
+    } catch (err) {
+      setMessage({ text: err instanceof Error ? err.message : "界面文案草稿丢弃失败。", tone: "error" });
+    } finally {
+      setBusy("");
     }
   }
 
@@ -130,7 +138,9 @@ export function SiteCopyAdminPage() {
             </div>
           </div>
           <input className={`${inputClass} mt-4`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 key、页面、分组、默认文案" />
-          {message ? <p className="mt-3 border border-ink/15 bg-paper px-3 py-2 text-sm font-semibold text-ink/68">{message}</p> : null}
+          <div className="mt-3">
+            <InlineFeedback message={message?.text} tone={message?.tone} />
+          </div>
         </Card>
 
         <div className="grid gap-4">

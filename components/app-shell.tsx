@@ -9,6 +9,7 @@ import { api } from "@/lib/client/api";
 import { adminNav, studentNav } from "@/lib/ui-data";
 import { LanguageSwitcher } from "@/components/language-runtime";
 import { EditableCopy } from "@/components/site-copy-runtime";
+import { useFeedback } from "@/components/feedback-provider";
 import clsx from "clsx";
 
 export function Navbar() {
@@ -134,6 +135,7 @@ function DesktopStatusBar() {
 
 function AuthNav() {
   const pathname = usePathname();
+  const { runWithFeedback } = useFeedback();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -158,7 +160,7 @@ function AuthNav() {
   async function logout() {
     setLoggingOut(true);
     try {
-      await api("/api/auth/logout", { method: "POST" });
+      await runWithFeedback(() => api("/api/auth/logout", { method: "POST" }), { success: "已退出登录。" });
       setUser(null);
       window.location.href = "/";
     } catch {

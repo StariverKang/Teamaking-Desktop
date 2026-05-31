@@ -3,13 +3,15 @@
 import { useState } from "react";
 import { Check, Copy, UserRound } from "lucide-react";
 import { Card, LoadingState, PageShell, SkillBadge } from "@/components/app-shell";
-import { ErrorBox } from "@/components/pages/page-primitives";
+import { useFeedback } from "@/components/feedback-provider";
+import { ErrorBox, InlineFeedback } from "@/components/pages/page-primitives";
 import { api, useApi } from "@/lib/client/api";
 import { PaginatedGrid, PortfolioEvidenceCard, portfolioEvidenceSections, PortfolioEvidenceSection, uniqueTextList } from "@/components/pages/shared/portfolio-parts";
 
 export function PublicProfilePage({ userId }: { userId: string }) {
+  const { notifySuccess, runWithFeedback } = useFeedback();
   const { data, error, loading } = useApi(`/api/profile/${userId}`);
-  const [followMessage, setFollowMessage] = useState("");
+  const [followFeedback, setFollowFeedback] = useState<{ message: string; tone: "success" | "error" | "info" } | null>(null);
   const [copiedContact, setCopiedContact] = useState("");
   const profile = data?.user?.profile;
   const contact = data?.contactInfo ?? data?.user?.contactInfo ?? {};
@@ -34,6 +36,7 @@ export function PublicProfilePage({ userId }: { userId: string }) {
       document.body.removeChild(textarea);
     }
     setCopiedContact(key);
+    notifySuccess("已复制。");
     window.setTimeout(() => setCopiedContact((current) => (current === key ? "" : current)), 1600);
   }
 
@@ -58,8 +61,16 @@ export function PublicProfilePage({ userId }: { userId: string }) {
   }
 
   async function follow() {
-    const result = await api(`/api/profile/${userId}/follow-request`, { method: "POST" });
-    setFollowMessage(result.existing ? "关注申请已存在。" : "关注申请已发送。");
+    setFollowFeedback(null);
+    try {
+      const result = await runWithFeedback(
+        () => api(`/api/profile/${userId}/follow-request`, { method: "POST" }),
+        { success: (result: any) => result?.existing ? "关注申请已存在。" : "关注申请已发送。" }
+      );
+      setFollowFeedback({ message: result.existing ? "关注申请已存在。" : "关注申请已发送。", tone: "success" });
+    } catch (error) {
+      setFollowFeedback({ message: error instanceof Error ? error.message : "关注申请发送失败，请稍后再试。", tone: "error" });
+    }
   }
 
   return (
@@ -96,7 +107,9 @@ export function PublicProfilePage({ userId }: { userId: string }) {
             <button type="button" onClick={follow} className="focus-ring mt-4 rounded-sm bg-rust px-4 py-2 text-sm font-semibold text-paper">
               申请关注
             </button>
-            {followMessage ? <p className="mt-2 text-sm font-medium text-moss">{followMessage}</p> : null}
+            <div className="mt-2">
+              <InlineFeedback message={followFeedback?.message} tone={followFeedback?.tone} />
+            </div>
           </Card>
           <Card>
             <h2 className="text-xl font-semibold text-ink">联系方式</h2>

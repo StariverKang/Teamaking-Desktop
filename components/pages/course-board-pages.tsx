@@ -5,19 +5,10 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
 import { Handshake, Plus, Search } from "lucide-react";
-import {
-  Card,
-  EmptyState,
-  LoadingState,
-  PageShell
-} from "@/components/app-shell";
-import {
-  CourseCard,
-  ProfileCard,
-  TeamakingPostCard,
-  TeamUpRequestCard
-} from "@/components/cards";
-import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
+import { Card, EmptyState, LoadingState, PageShell } from "@/components/app-shell";
+import { CourseCard, ProfileCard, TeamakingPostCard, TeamUpRequestCard } from "@/components/cards";
+import { useFeedback } from "@/components/feedback-provider";
+import { ErrorBox, Field, InlineFeedback, inputClass } from "@/components/pages/page-primitives";
 import { CopyTarget, EditableCopy, useCopyText } from "@/components/site-copy-runtime";
 import { contributionTypes, strengths } from "@/lib/constants";
 
@@ -25,11 +16,15 @@ import { api, useApi } from "@/lib/client/api";
 import { ToggleGroup } from "@/components/pages/shared/portfolio-parts";
 import { OfficialAcademicLinks, CourseCommentsSection } from "@/components/pages/shared/academic-parts";
 
+type LocalFeedback = { message: string; tone: "success" | "error" | "info" };
+
 export function CoursesPage() {
   const router = useRouter();
+  const { runWithFeedback } = useFeedback();
   const [q, setQ] = useState("");
   const [tab, setTab] = useState<"recommended" | "mine" | "search">("recommended");
   const [searchPage, setSearchPage] = useState(1);
+  const [courseActionFeedback, setCourseActionFeedback] = useState<LocalFeedback | null>(null);
   const searchPageSize = 10;
   const { data: me, loading: authLoading } = useApi("/api/auth/me");
   const isAuthed = Boolean(me?.user);
@@ -44,9 +39,15 @@ export function CoursesPage() {
   const courseSearchPlaceholder = useCopyText("courses.search.placeholder", "搜索课程代码或课程名称，例如 COM3003；free elective 可直接打开课程板");
 
   async function openCourseBoard(course: any) {
-    const result = await api(`/api/courses/${course.id}/join`, { method: "POST" });
-    const boardId = result?.board?.id ?? course.offerings?.[0]?.boards?.[0]?.id;
-    if (boardId) router.push(`/boards/${boardId}`);
+    setCourseActionFeedback(null);
+    try {
+      const result = await runWithFeedback(() => api(`/api/courses/${course.id}/join`, { method: "POST" }), { success: "已打开课程板。" });
+      const boardId = result?.board?.id ?? course.offerings?.[0]?.boards?.[0]?.id;
+      if (boardId) router.push(`/boards/${boardId}`);
+      else setCourseActionFeedback({ message: result?.message ?? "已打开课程板。", tone: "success" });
+    } catch (error) {
+      setCourseActionFeedback({ message: error instanceof Error ? error.message : "打开课程板失败，请稍后再试。", tone: "error" });
+    }
   }
 
   return (
@@ -123,6 +124,9 @@ export function CoursesPage() {
                 placeholder={courseSearchPlaceholder}
               />
             </CopyTarget>
+          </div>
+          <div className="mt-3">
+            <InlineFeedback message={courseActionFeedback?.message} tone={courseActionFeedback?.tone} />
           </div>
           {tab === "search" && q.trim() ? (
             <div className="mt-4 border-t border-ink/15 pt-3">
@@ -263,17 +267,22 @@ export function CoursesPage() {
 
 export function CourseDetailPage({ courseId }: { courseId: string }) {
   const router = useRouter();
+  const { runWithFeedback } = useFeedback();
   const { data, error, loading } = useApi(`/api/courses/${courseId}`);
   const course = data?.course;
-  const [joinMessage, setJoinMessage] = useState("");
+  const [joinFeedback, setJoinFeedback] = useState<LocalFeedback | null>(null);
 
   async function openCourseBoardFromCourse() {
     if (!course) return;
-    setJoinMessage("");
-    const result = await api(`/api/courses/${course.id}/join`, { method: "POST" });
-    const boardId = result?.board?.id;
-    if (boardId) router.push(`/boards/${boardId}`);
-    else setJoinMessage(result?.message ?? "已打开课程板。");
+    setJoinFeedback(null);
+    try {
+      const result = await runWithFeedback(() => api(`/api/courses/${course.id}/join`, { method: "POST" }), { success: "已打开课程板。" });
+      const boardId = result?.board?.id;
+      if (boardId) router.push(`/boards/${boardId}`);
+      else setJoinFeedback({ message: result?.message ?? "已打开课程板。", tone: "success" });
+    } catch (error) {
+      setJoinFeedback({ message: error instanceof Error ? error.message : "打开课程板失败，请稍后再试。", tone: "error" });
+    }
   }
 
   return (
@@ -292,7 +301,9 @@ export function CourseDetailPage({ courseId }: { courseId: string }) {
               </button>
               <p className="text-xs leading-5 text-ink/56">只浏览或打开不会加入；发布 Post 或发送 TeamUp 后才会进入 Course People。</p>
             </div>
-            {joinMessage ? <p className="mt-3 text-sm font-medium text-forest">{joinMessage}</p> : null}
+            <div className="mt-3">
+              <InlineFeedback message={joinFeedback?.message} tone={joinFeedback?.tone} />
+            </div>
           </Card>
           <CourseCommentsSection courseId={course.id} />
           <div className="grid gap-4 md:grid-cols-2">
@@ -317,6 +328,7 @@ export function CourseDetailPage({ courseId }: { courseId: string }) {
 }
 
 export function BoardPage({ boardId }: { boardId: string }) {
+  const { runWithFeedback } = useFeedback();
   const [tab, setTab] = useState<"posts" | "people">("posts");
   const [refresh, setRefresh] = useState(0);
   const { data: me, loading: authLoading } = useApi("/api/auth/me");
@@ -324,7 +336,7 @@ export function BoardPage({ boardId }: { boardId: string }) {
   const { data: boardData, error, loading } = useApi(isAuthed ? `/api/boards/${boardId}` : null, [refresh, isAuthed]);
   const { data: posts } = useApi(isAuthed ? `/api/boards/${boardId}/open-to-team` : null, [refresh, isAuthed]);
   const { data: people } = useApi(isAuthed ? `/api/boards/${boardId}/people` : null, [refresh, isAuthed]);
-  const [boardMessage, setBoardMessage] = useState("");
+  const [boardFeedback, setBoardFeedback] = useState<LocalFeedback | null>(null);
   const [sectionCode, setSectionCode] = useState("1001");
   const [sectionFilter, setSectionFilter] = useState("all");
   const [postForm, setPostForm] = useState({
@@ -354,24 +366,38 @@ export function BoardPage({ boardId }: { boardId: string }) {
   }, [boardData?.myMembership?.sectionCode]);
 
   async function leaveBoard() {
-    setBoardMessage("");
-    const result = await api(`/api/boards/${boardId}/leave`, { method: "DELETE" });
-    setBoardMessage(result?.message ?? "已离开这个 Course Board。");
-    setRefresh((value) => value + 1);
+    setBoardFeedback(null);
+    try {
+      const result = await runWithFeedback(() => api(`/api/boards/${boardId}/leave`, { method: "DELETE" }), { success: (result: any) => result?.message ?? "已离开这个 Course Board。" });
+      setBoardFeedback({ message: result?.message ?? "已离开这个 Course Board。", tone: "success" });
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setBoardFeedback({ message: error instanceof Error ? error.message : "离开课程板失败，请稍后再试。", tone: "error" });
+    }
   }
 
   async function changeSection(event: FormEvent) {
     event.preventDefault();
-    const result = await api(`/api/boards/${boardId}/membership-section`, { method: "PATCH", body: JSON.stringify({ sectionCode }) });
-    setBoardMessage(result?.message ?? "已更新 section。");
-    setRefresh((value) => value + 1);
+    setBoardFeedback(null);
+    try {
+      const result = await runWithFeedback(() => api(`/api/boards/${boardId}/membership-section`, { method: "PATCH", body: JSON.stringify({ sectionCode }) }), { success: (result: any) => result?.message ?? "已更新 section。" });
+      setBoardFeedback({ message: result?.message ?? "已更新 section。", tone: "success" });
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setBoardFeedback({ message: error instanceof Error ? error.message : "更新 section 失败，请稍后再试。", tone: "error" });
+    }
   }
 
   async function createPost(event: FormEvent) {
     event.preventDefault();
-    const result = await api(`/api/boards/${boardId}/teamaking-posts`, { method: "POST", body: JSON.stringify({ ...postForm, sectionCode }) });
-    setBoardMessage(result?.message ?? "Teamaking Post 已发布；你已参与这个 Course Board。");
-    setRefresh((value) => value + 1);
+    setBoardFeedback(null);
+    try {
+      const result = await runWithFeedback(() => api(`/api/boards/${boardId}/teamaking-posts`, { method: "POST", body: JSON.stringify({ ...postForm, sectionCode }) }), { success: (result: any) => result?.message ?? "Teamaking Post 已发布。" });
+      setBoardFeedback({ message: result?.message ?? "Teamaking Post 已发布；你已参与这个 Course Board。", tone: "success" });
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setBoardFeedback({ message: error instanceof Error ? error.message : "Teamaking Post 发布失败，请稍后再试。", tone: "error" });
+    }
   }
 
   return (
@@ -469,10 +495,10 @@ export function BoardPage({ boardId }: { boardId: string }) {
                 )}
               </div>
             </form>
-            {boardMessage ? (
+            {boardFeedback ? (
               <div className="mt-4 border border-ink/20 bg-paper px-3 py-2 text-sm text-ink/68">
-                <span>{boardMessage}</span>
-                {boardMessage.includes("course_config_error") ? (
+                <InlineFeedback message={boardFeedback.message} tone={boardFeedback.tone} />
+                {boardFeedback.message.includes("course_config_error") ? (
                   <Link href="/support" className="ml-2 font-semibold text-coral">提交配置错误工单</Link>
                 ) : null}
               </div>
@@ -508,6 +534,7 @@ export function BoardPage({ boardId }: { boardId: string }) {
                 <Plus size={16} aria-hidden />
                 Create Teamaking Post
               </button>
+              <InlineFeedback message={boardFeedback?.message} tone={boardFeedback?.tone} />
             </form>
           </Card>
           <div className="flex gap-2">
@@ -551,25 +578,41 @@ export function BoardPage({ boardId }: { boardId: string }) {
 }
 
 export function TeamakingPostPage({ postId }: { postId: string }) {
+  const { runWithFeedback } = useFeedback();
   const [refresh, setRefresh] = useState(0);
   const { data: me } = useApi("/api/auth/me");
   const { data, error, loading } = useApi(`/api/teamaking-posts/${postId}`, [refresh]);
   const [form, setForm] = useState({ message: "", senderContribution: "" });
-  const [message, setMessage] = useState("");
+  const [messageFeedback, setMessageFeedback] = useState<LocalFeedback | null>(null);
   const post = data?.post;
   const isOwnPost = Boolean(me?.user?.id && post?.userId === me.user.id);
   const { data: interests } = useApi(isOwnPost ? `/api/teamaking-posts/${postId}/interests` : null, [refresh, isOwnPost, postId]);
 
   async function teamUp(event: FormEvent) {
     event.preventDefault();
-    const result = await api(`/api/teamaking-posts/${postId}/team-up`, { method: "POST", body: JSON.stringify(form) });
-    setMessage(result.existing ? "你已经发送过 TeamUp Interest；这个课程板会继续显示在当前课程板中。" : "TeamUp Interest 已发送；你现在会进入这个课程板的 Course People。");
-    setRefresh((value) => value + 1);
+    setMessageFeedback(null);
+    try {
+      const result = await runWithFeedback(() => api(`/api/teamaking-posts/${postId}/team-up`, { method: "POST", body: JSON.stringify(form) }), { success: (result: any) => result?.existing ? "你已经发送过 TeamUp Interest。" : "TeamUp Interest 已发送。" });
+      setMessageFeedback({
+        message: result.existing ? "你已经发送过 TeamUp Interest；这个课程板会继续显示在当前课程板中。" : "TeamUp Interest 已发送；你现在会进入这个课程板的 Course People。",
+        tone: "success"
+      });
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setMessageFeedback({ message: error instanceof Error ? error.message : "发送 TeamUp Interest 失败，请稍后再试。", tone: "error" });
+    }
   }
 
   async function actOnInterest(id: string, action: "mutual" | "refuse" | "withdraw") {
-    await api(`/api/team-up-interests/${id}/${action}`, { method: "POST" });
-    setRefresh((value) => value + 1);
+    const successByAction = { mutual: "已标记为 Mutual TeamUp。", refuse: "已拒绝该 TeamUp Interest。", withdraw: "TeamUp Interest 已撤回。" };
+    setMessageFeedback(null);
+    try {
+      await runWithFeedback(() => api(`/api/team-up-interests/${id}/${action}`, { method: "POST" }), { success: successByAction[action] });
+      setMessageFeedback({ message: successByAction[action], tone: "success" });
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setMessageFeedback({ message: error instanceof Error ? error.message : "处理 TeamUp Interest 失败，请稍后再试。", tone: "error" });
+    }
   }
 
   return (
@@ -595,14 +638,17 @@ export function TeamakingPostPage({ postId }: { postId: string }) {
                   <Handshake size={16} aria-hidden />
                   Send Team Up
                 </button>
+                <InlineFeedback message={messageFeedback?.message} tone={messageFeedback?.tone} />
               </form>
             )}
-            {message ? <p className="mt-3 text-sm font-medium text-moss">{message}</p> : null}
           </Card>
           {isOwnPost ? (
             <div className="lg:col-span-2">
               <Card>
                 <h2 className="text-xl font-semibold text-ink">TeamUp Interests for this Post</h2>
+                <div className="mt-3">
+                  <InlineFeedback message={messageFeedback?.message} tone={messageFeedback?.tone} />
+                </div>
                 <div className="mt-4 grid gap-4">
                   {(interests?.interests ?? []).length > 0 ? (
                     (interests?.interests ?? []).map((interest: any) => (

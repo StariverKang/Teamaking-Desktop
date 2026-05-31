@@ -1,9 +1,10 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/http";
 import { ERROR_CODES } from "@/lib/error-codes";
 import { DEMO_SESSION_PREFIX, demoUserForAccount, isDemoAccessEnabled } from "@/lib/demo-data";
+import { isMobileAccessAuthorization, userFromMobileAuthorization } from "@/lib/server/services/mobile-auth-service";
 
 export const SESSION_COOKIE = "teamaking_session";
 
@@ -52,6 +53,12 @@ export function clearSessionCookie(response: NextResponse) {
 }
 
 export async function getCurrentUser() {
+  const headerStore = await headers();
+  const authorization = headerStore.get("authorization");
+  if (isMobileAccessAuthorization(authorization)) {
+    return userFromMobileAuthorization(authorization);
+  }
+
   const cookieStore = await cookies();
   const userId = cookieStore.get(SESSION_COOKIE)?.value;
   if (!userId) return null;

@@ -3,7 +3,8 @@
 import Link from "next/link";import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, LoadingState, PageShell, StatusPill } from "@/components/app-shell";
 
-import { ErrorBox, inputClass } from "@/components/pages/page-primitives";
+import { useFeedback } from "@/components/feedback-provider";
+import { ErrorBox, InlineFeedback, inputClass } from "@/components/pages/page-primitives";
 
 import { api, useApi } from "@/lib/client/api";
 import { contentImageUrls } from "@/components/pages/shared/content-parts";
@@ -29,6 +30,7 @@ export function AdminResourcePage({
   defaultActionPath?: string;
   initialContentTab?: "developer_contact" | "developer_log" | "help" | "announcements";
 }) {
+  const { notifyError, notifyInfo, notifySuccess } = useFeedback();
   const [refresh, setRefresh] = useState(0);
   const resource = endpoint.includes("support-tickets")
     ? "support-tickets"
@@ -62,7 +64,7 @@ export function AdminResourcePage({
   const [adminNote, setAdminNote] = useState("");
   const [approvalDecisions, setApprovalDecisions] = useState<Record<string, any>>({});
   const [textFields, setTextFields] = useState<Record<string, string>>({});
-  const [result, setResult] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
+  const [result, setResultState] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
   const [busyAction, setBusyAction] = useState("");
   const [actionData, setActionData] = useState<any>(null);
   const [importPreviewTab, setImportPreviewTab] = useState("coverage");
@@ -78,6 +80,14 @@ export function AdminResourcePage({
   const [contentCreating, setContentCreating] = useState(false);
   const [contentAnnouncementId, setContentAnnouncementId] = useState("");
   const [contentAnnouncementCreating, setContentAnnouncementCreating] = useState(false);
+
+  function setResult(next: { type: "success" | "error" | "info"; message: string } | null) {
+    setResultState(next);
+    if (!next?.message) return;
+    if (next.type === "success") notifySuccess(next.message);
+    else if (next.type === "error") notifyError(next.message);
+    else notifyInfo(next.message);
+  }
 
   useEffect(() => {
     if (resource === "content" || resource === "courses") return;
@@ -509,17 +519,9 @@ export function AdminResourcePage({
         <Card>
           <h2 className="text-xl font-semibold text-ink">无代码管理操作</h2>
           <p className="mt-2 text-sm leading-6 text-ink/62">使用表单、下拉框和按钮完成管理，不需要手写接口路径或 JSON。</p>
-          {result ? (
-            <div className={`mt-4 border px-3 py-2 text-sm font-medium ${
-              result.type === "error"
-                ? "border-rust/40 bg-rust/5 text-rust"
-                : result.type === "info"
-                  ? "border-gold/40 bg-gold/10 text-ink"
-                  : "border-forest/30 bg-forest/10 text-forest"
-            }`}>
-              {result.message}
-            </div>
-          ) : null}
+          <div className="mt-4">
+            <InlineFeedback message={result?.message} tone={result?.type} />
+          </div>
           <div className="mt-4">{renderAdminForm()}</div>
         </Card>
       </div>

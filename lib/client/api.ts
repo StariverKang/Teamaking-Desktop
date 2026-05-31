@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useFeedback } from "@/components/feedback-provider";
 
 export async function api(path: string, options: RequestInit = {}) {
   let response: Response;
@@ -46,6 +47,7 @@ export async function uploadProfileFile(file: File, purpose: string) {
 }
 
 export function useApi(path: string | null, deps: unknown[] = []) {
+  const { notifyReadErrorOnce } = useFeedback();
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -68,7 +70,10 @@ export function useApi(path: string | null, deps: unknown[] = []) {
         }
       })
       .catch((err: Error) => {
-        if (alive) setError(err.message);
+        if (alive) {
+          setError(err.message);
+          notifyReadErrorOnce(path, err.message);
+        }
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -78,7 +83,7 @@ export function useApi(path: string | null, deps: unknown[] = []) {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, ...deps]);
+  }, [path, notifyReadErrorOnce, ...deps]);
 
   return { data, error, loading };
 }

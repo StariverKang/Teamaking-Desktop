@@ -25,7 +25,8 @@ import {
 import { CourseCard, TeamakingPostCard } from "@/components/cards";
 import { OnboardingTourRestartButton, requestOnboardingTourStart } from "@/components/onboarding-tour";
 import { CopyTarget, EditableCopy, useCopyText } from "@/components/site-copy-runtime";
-import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
+import { ErrorBox, Field, InlineFeedback, inputClass } from "@/components/pages/page-primitives";
+import { useFeedback } from "@/components/feedback-provider";
 
 import { contactVisibilityOptions, defaultContactVisibility } from "@/lib/contact";
 import { api, useApi } from "@/lib/client/api";
@@ -34,7 +35,9 @@ import { defaultEntryYear, entryTermOptions, PaginatedGrid } from "@/components/
 
 export function OnboardingPage() {
   const router = useRouter();
+  const { runWithFeedback } = useFeedback();
   const { data, error, loading } = useApi("/api/onboarding");
+  const [submitError, setSubmitError] = useState("");
   const [form, setForm] = useState({ displayName: "", grade: "Year 2", entryYear: defaultEntryYear, entryTerm: "Fall", facultyId: "", majorId: "" });
   const academicLock = data?.academicLock;
   const majors = useMemo(() => (data?.majors ?? []).filter((major: any) => !form.facultyId || major.facultyId === form.facultyId), [data, form.facultyId]);
@@ -61,7 +64,15 @@ export function OnboardingPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    await api("/api/onboarding", { method: "POST", body: JSON.stringify(form) });
+    setSubmitError("");
+    const result = await runWithFeedback(
+      () => api("/api/onboarding", { method: "POST", body: JSON.stringify(form) }),
+      { success: "基础资料已保存。" }
+    ).catch((err: Error) => {
+      setSubmitError(err.message);
+      return null;
+    });
+    if (!result) return;
     requestOnboardingTourStart(1);
     router.push("/dashboard");
   }
@@ -128,6 +139,7 @@ export function OnboardingPage() {
                 <Check size={16} aria-hidden />
                 <EditableCopy copyKey="onboarding.submit" fallback="保存并进入 Dashboard" />
               </button>
+              <InlineFeedback message={submitError} tone="error" />
             </form>
           </Card>
         </div>
@@ -224,6 +236,7 @@ export function DashboardPage() {
 }
 
 export function ContactInfoPage() {
+  const { runWithFeedback } = useFeedback();
   const { data, error, loading } = useApi("/api/contact-info/me");
   const [saved, setSaved] = useState("");
   const [form, setForm] = useState<any>({
@@ -249,8 +262,13 @@ export function ContactInfoPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    await api("/api/contact-info/me", { method: "PATCH", body: JSON.stringify(form) });
-    setSaved("联系方式已保存。schoolEmail 始终来自登录邮箱，不会被前端修改。");
+    setSaved("");
+    await runWithFeedback(
+      () => api("/api/contact-info/me", { method: "PATCH", body: JSON.stringify(form) }),
+      { success: "更新成功。" }
+    )
+      .then(() => setSaved("更新成功。schoolEmail 始终来自登录邮箱，不会被前端修改。"))
+      .catch((err: Error) => setSaved(err.message));
   }
 
   return (
@@ -296,7 +314,7 @@ export function ContactInfoPage() {
               <Check size={16} aria-hidden />
               保存联系方式
             </button>
-            {saved ? <p className="text-sm font-medium text-moss">{saved}</p> : null}
+            <InlineFeedback message={saved} tone={saved.includes("失败") || saved.includes("错误") || saved.includes("请求") ? "error" : "success"} />
           </form>
         </Card>
       ) : null}
@@ -305,6 +323,7 @@ export function ContactInfoPage() {
 }
 
 export function SupportPage() {
+  const { runWithFeedback } = useFeedback();
   const { data: me } = useApi("/api/auth/me");
   const [form, setForm] = useState({
     email: "",
@@ -327,7 +346,10 @@ export function SupportPage() {
     event.preventDefault();
     setMessage("");
     setError("");
-    const result = await api("/api/support-tickets", { method: "POST", body: JSON.stringify(form) }).catch((err: Error) => {
+    const result = await runWithFeedback(
+      () => api("/api/support-tickets", { method: "POST", body: JSON.stringify(form) }),
+      { success: "工单已提交。" }
+    ).catch((err: Error) => {
       setError(err.message);
       return null;
     });
@@ -378,9 +400,9 @@ export function SupportPage() {
               <Send size={16} aria-hidden />
               提交工单
             </button>
+            <InlineFeedback message={error} tone="error" />
+            <InlineFeedback message={message} tone="success" />
           </form>
-          <ErrorBox message={error} />
-          {message ? <p className="mt-3 border border-ink/20 bg-paper px-3 py-2 text-sm font-medium text-forest">{message}</p> : null}
         </Card>
       </div>
       {me?.user ? (
@@ -410,6 +432,7 @@ export function SupportPage() {
 }
 
 export function SupportWidget() {
+  const { runWithFeedback } = useFeedback();
   const pathname = usePathname();
   const { data: me } = useApi("/api/auth/me");
   const [open, setOpen] = useState(false);
@@ -431,7 +454,10 @@ export function SupportWidget() {
     event.preventDefault();
     setMessage("");
     setError("");
-    const result = await api("/api/support-tickets", { method: "POST", body: JSON.stringify(form) }).catch((err: Error) => {
+    const result = await runWithFeedback(
+      () => api("/api/support-tickets", { method: "POST", body: JSON.stringify(form) }),
+      { success: "工单已提交。" }
+    ).catch((err: Error) => {
       setError(err.message);
       return null;
     });
@@ -464,9 +490,9 @@ export function SupportWidget() {
             <input className={inputClass} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="标题" />
             <CopyTarget copyKey="support.widget.placeholder"><textarea className={inputClass} rows={4} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder={widgetDescriptionPlaceholder} /></CopyTarget>
             <button className="bg-ink px-3 py-2 text-sm font-semibold text-paper">提交工单</button>
+            <InlineFeedback message={error} tone="error" />
+            <InlineFeedback message={message} tone="success" />
           </form>
-          <ErrorBox message={error} />
-          {message ? <p className="mt-2 text-sm font-medium text-forest">{message}</p> : null}
         </div>
       ) : null}
       <button type="button" onClick={() => setOpen((value) => !value)} data-testid="support-widget-toggle" className="focus-ring inline-flex h-12 w-12 items-center justify-center rounded-full border-2 border-ink bg-coral text-paper shadow-hard" aria-label="提交支持工单">

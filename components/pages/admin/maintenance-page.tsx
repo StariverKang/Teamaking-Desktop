@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { Card, LoadingState, PageShell } from "@/components/app-shell";
-import { ErrorBox, Field, inputClass } from "@/components/pages/page-primitives";
+import { useFeedback } from "@/components/feedback-provider";
+import { ErrorBox, Field, InlineFeedback, inputClass } from "@/components/pages/page-primitives";
 import { api, useApi } from "@/lib/client/api";
 
 export function AdminMaintenancePage() {
+  const { runWithFeedback } = useFeedback();
   const [refresh, setRefresh] = useState(0);
   const { data, error, loading } = useApi("/api/admin/maintenance", [refresh]);
   const [confirmation, setConfirmation] = useState("");
@@ -18,10 +20,13 @@ export function AdminMaintenancePage() {
     setBusy(true);
     setResult(null);
     try {
-      const response = await api("/api/admin/maintenance/clear-course-teaming-state", {
-        method: "POST",
-        body: JSON.stringify({ confirmation })
-      });
+      const response = await runWithFeedback(
+        () => api("/api/admin/maintenance/clear-course-teaming-state", {
+          method: "POST",
+          body: JSON.stringify({ confirmation })
+        }),
+        { success: (response: any) => response.message ?? "课程组队状态已清空。" }
+      );
       setResult({ type: "success", message: response.message ?? "课程组队状态已清空。" });
       setConfirmation("");
       setRefresh((value) => value + 1);
@@ -65,11 +70,6 @@ export function AdminMaintenancePage() {
               <li>accepted 好友关系完全不变；二度、三度好友网络仍会用于 Relevant Users 推荐。</li>
             </ul>
           </div>
-          {result ? (
-            <div className={`mt-4 border px-3 py-2 text-sm font-semibold ${result.type === "error" ? "border-rust/40 bg-rust/5 text-rust" : "border-forest/30 bg-forest/10 text-forest"}`}>
-              {result.message}
-            </div>
-          ) : null}
           <div className="mt-5 grid gap-3 md:grid-cols-[1fr_auto]">
             <Field label="确认文本">
               <input
@@ -87,6 +87,9 @@ export function AdminMaintenancePage() {
             >
               {busy ? "处理中..." : "清空当前组队状态"}
             </button>
+          </div>
+          <div className="mt-3">
+            <InlineFeedback message={result?.message} tone={result?.type} />
           </div>
         </Card>
       </div>

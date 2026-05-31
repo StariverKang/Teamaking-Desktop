@@ -3,7 +3,8 @@
 import { FormEvent, useState } from "react";
 import { Link as LinkIcon } from "lucide-react";
 import { Card } from "@/components/app-shell";
-import { ErrorBox, inputClass } from "@/components/pages/page-primitives";
+import { useFeedback } from "@/components/feedback-provider";
+import { ErrorBox, InlineFeedback, inputClass } from "@/components/pages/page-primitives";
 import { EditableCopy } from "@/components/site-copy-runtime";
 import { api, useApi } from "@/lib/client/api";
 
@@ -128,30 +129,57 @@ export function CourseCommentItem({ comment, onReply, onDelete }: { comment: any
 }
 
 export function CourseCommentsSection({ courseId }: { courseId: string }) {
+  const { runWithFeedback } = useFeedback();
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [body, setBody] = useState("");
-  const [message, setMessage] = useState("");
+  const [feedback, setFeedback] = useState<{ message: string; tone: "success" | "error" | "info" } | null>(null);
   const { data, error, loading } = useApi(`/api/courses/${courseId}/comments?page=${page}&pageSize=8`, [page, refresh, courseId]);
   const pagination = data?.pagination ?? { page: 1, totalPages: 1, total: 0 };
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    setMessage("");
-    await api(`/api/courses/${courseId}/comments`, { method: "POST", body: JSON.stringify({ body }) });
-    setBody("");
-    setRefresh((value) => value + 1);
-    setMessage("课程评价已发布。");
+    setFeedback(null);
+    try {
+      await runWithFeedback(
+        () => api(`/api/courses/${courseId}/comments`, { method: "POST", body: JSON.stringify({ body }) }),
+        { success: "课程评价已发布。" }
+      );
+      setBody("");
+      setRefresh((value) => value + 1);
+      setFeedback({ message: "课程评价已发布。", tone: "success" });
+    } catch (error) {
+      setFeedback({ message: error instanceof Error ? error.message : "课程评价发布失败，请稍后再试。", tone: "error" });
+    }
   }
 
   async function reply(parentId: string, replyBody: string) {
-    await api(`/api/course-comments/${parentId}/replies`, { method: "POST", body: JSON.stringify({ body: replyBody }) });
-    setRefresh((value) => value + 1);
+    setFeedback(null);
+    try {
+      await runWithFeedback(
+        () => api(`/api/course-comments/${parentId}/replies`, { method: "POST", body: JSON.stringify({ body: replyBody }) }),
+        { success: "回复已发布。" }
+      );
+      setRefresh((value) => value + 1);
+      setFeedback({ message: "回复已发布。", tone: "success" });
+    } catch (error) {
+      setFeedback({ message: error instanceof Error ? error.message : "回复发布失败，请稍后再试。", tone: "error" });
+      throw error;
+    }
   }
 
   async function remove(commentId: string) {
-    await api(`/api/course-comments/${commentId}`, { method: "DELETE" });
-    setRefresh((value) => value + 1);
+    setFeedback(null);
+    try {
+      await runWithFeedback(
+        () => api(`/api/course-comments/${commentId}`, { method: "DELETE" }),
+        { success: "评论已删除。" }
+      );
+      setRefresh((value) => value + 1);
+      setFeedback({ message: "评论已删除。", tone: "success" });
+    } catch (error) {
+      setFeedback({ message: error instanceof Error ? error.message : "评论删除失败，请稍后再试。", tone: "error" });
+    }
   }
 
   return (
@@ -162,7 +190,9 @@ export function CourseCommentsSection({ courseId }: { courseId: string }) {
         <textarea className={inputClass} rows={4} value={body} onChange={(event) => setBody(event.target.value)} placeholder="写下课程体验、任务类型、组队建议或注意事项。" />
         <button className="focus-ring w-fit bg-coral px-4 py-2 text-sm font-semibold text-paper">发布评价</button>
       </form>
-      {message ? <p className="mt-3 border border-forest/20 bg-paper px-3 py-2 text-sm font-medium text-forest">{message}</p> : null}
+      <div className="mt-3">
+        <InlineFeedback message={feedback?.message} tone={feedback?.tone} />
+      </div>
       {loading ? <p className="mt-4 text-sm text-ink/56">正在读取评论...</p> : <ErrorBox message={error} />}
       <div className="mt-4 grid gap-3">
         {(data?.comments ?? []).map((comment: any) => (

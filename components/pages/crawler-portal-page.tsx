@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { Card, LoadingState, PageShell, StatusPill } from "@/components/app-shell";
-import { ErrorBox, Field, formatFileSize, inputClass } from "@/components/pages/page-primitives";
+import { useFeedback } from "@/components/feedback-provider";
+import { ErrorBox, Field, formatFileSize, InlineFeedback, inputClass } from "@/components/pages/page-primitives";
 import { crawlerResultStatus, CrawlerResultTone } from "@/lib/client/crawler-result-status";
 import { api, useApi } from "@/lib/client/api";
 
@@ -17,6 +18,7 @@ const resultToneClass: Record<CrawlerResultTone, string> = {
 };
 
 export function CrawlerPortalPage() {
+  const { runWithFeedback } = useFeedback();
   const [refresh, setRefresh] = useState(0);
   const { data, error, loading } = useApi("/api/crawler/options", [refresh]);
   const { data: jobsData } = useApi("/api/crawler/jobs", [refresh]);
@@ -49,7 +51,10 @@ export function CrawlerPortalPage() {
     setBusy(true);
     setResult(null);
     try {
-      const response = await api("/api/crawler/jobs", { method: "POST", body: JSON.stringify(form) });
+      const response = await runWithFeedback(
+        () => api("/api/crawler/jobs", { method: "POST", body: JSON.stringify(form) }),
+        { success: (response: any) => response.message ?? `已启动任务：${response.job?.id}` }
+      );
       setResult({ type: "success", message: response.message ?? `已启动任务：${response.job?.id}` });
       setRefresh((value) => value + 1);
     } catch (error) {
@@ -86,13 +91,6 @@ export function CrawlerPortalPage() {
         <Card className="xl:max-h-[calc(100vh-12rem)] xl:overflow-y-auto">
           <h2 className="text-xl font-semibold text-ink">Crawl request</h2>
           <p className="mt-2 text-sm leading-6 text-ink/62">推荐直接填写某一年的 admission handbook 页面并一次爬一年。Programme handbook 只生成该届学生的培养方案推荐；Course Descriptions 是学校级课程库，所有 active 课程都可搜索并手动打开课程板；BNBU class schedule 只是时间表，不作为课程存在依据。</p>
-          {result ? (
-            <div className={`mt-4 border px-3 py-2 text-sm font-medium ${
-              result.type === "error" ? "border-rust/40 bg-rust/5 text-rust" : "border-forest/30 bg-forest/10 text-forest"
-            }`}>
-              {result.message}
-            </div>
-          ) : null}
           <form className="mt-4 grid gap-4" onSubmit={startJob}>
             <Field label="Job name" help="给本次任务起一个可读名称；不填时系统会用 admission years 自动生成。">
               <input className={inputClass} placeholder="例如 2025+2024 admission handbook full crawl" value={form.name ?? ""} onChange={(event) => setForm({ ...form, name: event.target.value })} />
@@ -176,6 +174,7 @@ export function CrawlerPortalPage() {
             <button disabled={busy} className="w-fit rounded-sm bg-ink px-4 py-2 text-sm font-semibold text-paper disabled:opacity-50">
               {busy ? "启动中..." : "启动爬虫"}
             </button>
+            <InlineFeedback message={result?.message} tone={result?.type} />
           </form>
         </Card>
 
