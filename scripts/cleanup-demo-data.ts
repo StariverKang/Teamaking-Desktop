@@ -204,7 +204,7 @@ async function executeCleanup(plan: Awaited<ReturnType<typeof buildPlan>>) {
       where: {
         OR: [
           { userId: { in: plan.userIds.length ? plan.userIds : ["__none__"] } },
-          { metadata: { path: ["source"], equals: "seed" } }
+          { metadata: { path: ["source"], equals: "seed" } } as any
         ]
       }
     });

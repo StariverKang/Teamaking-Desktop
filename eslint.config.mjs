@@ -9,6 +9,8 @@ const config = [
       ".next/**",
       "out/**",
       "build/**",
+      "desktop-dist/**",
+      "release/**",
       "next-env.d.ts",
       "storage/**",
       "public/uploads/**",
@@ -23,6 +25,12 @@ const config = [
       "react-hooks/set-state-in-effect": "off",
       "react-hooks/static-components": "off",
       "react-hooks/purity": "off"
+    }
+  },
+  {
+    files: ["desktop/**/*.cjs"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off"
     }
   }
 ];

@@ -1,5 +1,6 @@
 import { ses } from "tencentcloud-sdk-nodejs-ses";
 import { ApiError } from "@/lib/http";
+import { isDesktopRuntime } from "@/lib/server/runtime-paths";
 
 type VerificationEmailInput = {
   email: string;
@@ -114,7 +115,7 @@ function simpleContent(email: string, code: string, schoolName?: string, purpose
 }
 
 export function shouldExposeVerificationCode() {
-  return process.env.EMAIL_DEBUG_CODE_RESPONSE === "true" || (!process.env.TENCENTCLOUD_SECRET_ID && process.env.NODE_ENV !== "production");
+  return isDesktopRuntime() || process.env.EMAIL_DEBUG_CODE_RESPONSE === "true" || (!process.env.TENCENTCLOUD_SECRET_ID && process.env.NODE_ENV !== "production");
 }
 
 export async function sendVerificationEmail({ email, code, schoolName, purpose = "register" }: VerificationEmailInput) {
@@ -125,7 +126,7 @@ export async function sendVerificationEmail({ email, code, schoolName, purpose =
   const copy = emailCopy(purpose);
 
   if (!client) {
-    if (process.env.NODE_ENV === "production") {
+    if (process.env.NODE_ENV === "production" && !isDesktopRuntime()) {
       throw new ApiError(500, "腾讯云邮件服务尚未配置，请稍后再试。");
     }
 

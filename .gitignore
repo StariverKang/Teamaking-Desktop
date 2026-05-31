@@ -3,6 +3,8 @@ node_modules
 .env
 .env.local
 dist
+desktop-dist
+release
 coverage
 test-results
 playwright-report
@@ -13,6 +15,7 @@ scripts/bnbu-crawler/test*.mjs
 tsconfig.tsbuildinfo
 public/uploads
 /storage/
+.desktop-data/
 docs/admin-credentials.local.md
 local_bnbu_course_pipeline/
 !course_imports/

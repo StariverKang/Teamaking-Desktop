@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -113,12 +113,12 @@ model UserProfile {
   entryTerm          String?
   facultyId          String?
   majorId            String?
-  outputTags         Json     @default("[]")
+  outputTags         Json     @default(dbgenerated("'[]'"))
   resumeUrl          String?
   resumeFileName     String?
-  resumeParsedData   Json     @default("{}")
+  resumeParsedData   Json     @default(dbgenerated("'{}'"))
   openToBeDiscovered Boolean  @default(true)
-  visibilitySettings Json     @default("{}")
+  visibilitySettings Json     @default(dbgenerated("'{}'"))
   onboardingTourDismissedAt DateTime?
   academicOverrideReason    String?
   academicOverrideByUserId  String?
@@ -142,7 +142,7 @@ model ContactInfo {
   wechatQrImageUrl   String?
   linkedinUrl        String?
   personalEmail      String?
-  visibilitySettings Json     @default("{}")
+  visibilitySettings Json     @default(dbgenerated("'{}'"))
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -261,10 +261,10 @@ model Course {
   title                String
   description          String   @default("")
   credits              Float?
-  ownerUnit            Json     @default("{}")
-  categoryTags         Json     @default("[]")
-  sourceRefIds         Json     @default("[]")
-  manualOverrideFields Json     @default("[]")
+  ownerUnit            Json     @default(dbgenerated("'{}'"))
+  categoryTags         Json     @default(dbgenerated("'[]'"))
+  sourceRefIds         Json     @default(dbgenerated("'[]'"))
+  manualOverrideFields Json     @default(dbgenerated("'[]'"))
   manualNote           String?
   catalogEffectiveYear Int?
   catalogValidThroughYear Int?
@@ -299,7 +299,7 @@ model CourseOffering {
   semesterId   String
   teacherName  String?
   section      String?
-  sourceRefIds Json     @default("[]")
+  sourceRefIds Json     @default(dbgenerated("'[]'"))
   status       String   @default("active")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -394,19 +394,19 @@ model CourseImportBatch {
   name              String?
   schemaVersion     String
   semesterCode      String?
-  cohortYears       Json      @default("[]")
+  cohortYears       Json      @default(dbgenerated("'[]'"))
   payloadHash       String?
-  summary           Json      @default("{}")
+  summary           Json      @default(dbgenerated("'{}'"))
   sourceLabel       String?
   status            String    @default("pending")
   payload           Json
-  validationSummary Json      @default("{}")
+  validationSummary Json      @default(dbgenerated("'{}'"))
   approvedByUserId  String?
   approvedAt        DateTime?
   rejectedByUserId  String?
   rejectedAt        DateTime?
   adminNote         String?
-  approvalDecisions Json      @default("{}")
+  approvalDecisions Json      @default(dbgenerated("'{}'"))
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -430,12 +430,12 @@ model CourseImportDataset {
   name                String
   schemaVersion       String
   semesterCode        String?
-  cohortYears         Json     @default("[]")
+  cohortYears         Json     @default(dbgenerated("'[]'"))
   sourceLabel         String?
   payloadHash         String
   status              String   @default("draft")
-  summary             Json     @default("{}")
-  validationSummary   Json     @default("{}")
+  summary             Json     @default(dbgenerated("'{}'"))
+  validationSummary   Json     @default(dbgenerated("'{}'"))
   originalFileName    String
   originalStorageKey  String?
   originalSize        Int?
@@ -467,7 +467,7 @@ model CourseImportDatasetSourceRef {
   title      String?
   url        String?
   sourceType String?
-  raw        Json    @default("{}")
+  raw        Json    @default(dbgenerated("'{}'"))
 
   dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
 
@@ -479,7 +479,7 @@ model CourseImportDatasetFaculty {
   datasetId String
   code      String
   name      String
-  raw       Json   @default("{}")
+  raw       Json   @default(dbgenerated("'{}'"))
 
   dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
 
@@ -493,7 +493,7 @@ model CourseImportDatasetMajor {
   name        String
   facultyCode String?
   degreeType  String?
-  raw         Json    @default("{}")
+  raw         Json    @default(dbgenerated("'{}'"))
 
   dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
 
@@ -507,12 +507,12 @@ model CourseImportDatasetCourse {
   title        String
   description  String @default("")
   credits      Float?
-  categoryTags Json   @default("[]")
-  ownerUnit    Json   @default("{}")
-  sourceRefIds Json   @default("[]")
+  categoryTags Json   @default(dbgenerated("'[]'"))
+  ownerUnit    Json   @default(dbgenerated("'{}'"))
+  sourceRefIds Json   @default(dbgenerated("'[]'"))
   effectiveYear Int?
   fingerprint  String?
-  raw          Json   @default("{}")
+  raw          Json   @default(dbgenerated("'{}'"))
 
   dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
 
@@ -529,10 +529,10 @@ model CourseImportDatasetRule {
   courseCode        String
   classification    String
   studentAction     String
-  audience          Json   @default("{}")
-  relativeTermCodes Json   @default("[]")
-  sourceRefIds      Json   @default("[]")
-  raw               Json   @default("{}")
+  audience          Json   @default(dbgenerated("'{}'"))
+  relativeTermCodes Json   @default(dbgenerated("'[]'"))
+  sourceRefIds      Json   @default(dbgenerated("'[]'"))
+  raw               Json   @default(dbgenerated("'{}'"))
 
   dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
 
@@ -547,8 +547,8 @@ model CourseImportDatasetOffering {
   externalId   String
   courseCode   String
   semesterCode String?
-  sections     Json    @default("[]")
-  raw          Json    @default("{}")
+  sections     Json    @default(dbgenerated("'[]'"))
+  raw          Json    @default(dbgenerated("'{}'"))
 
   dataset CourseImportDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
 
@@ -565,13 +565,13 @@ model CourseCurriculumRule {
   classification      String
   classificationLabel String?
   studentAction       String
-  audience            Json     @default("{}")
-  relativeTermCodes   Json     @default("[]")
-  ownerUnit           Json     @default("{}")
-  sourceRefIds        Json     @default("[]")
+  audience            Json     @default(dbgenerated("'{}'"))
+  relativeTermCodes   Json     @default(dbgenerated("'[]'"))
+  ownerUnit           Json     @default(dbgenerated("'{}'"))
+  sourceRefIds        Json     @default(dbgenerated("'[]'"))
   confidence          String   @default("unknown")
   status              String   @default("active")
-  raw                 Json     @default("{}")
+  raw                 Json     @default(dbgenerated("'{}'"))
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -591,9 +591,9 @@ model CourseSyllabusMetadata {
   courseOfferingId     String   @unique
   teamworkRequirement  String   @default("unknown")
   teamworkSummary      String?
-  evidenceSourceRefIds Json     @default("[]")
+  evidenceSourceRefIds Json     @default(dbgenerated("'[]'"))
   confidence           String   @default("unknown")
-  raw                  Json     @default("{}")
+  raw                  Json     @default(dbgenerated("'{}'"))
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -608,10 +608,10 @@ model CrawlerJob {
   name            String
   target          String    @default("programme_handbook")
   status          String    @default("running")
-  input           Json      @default("{}")
+  input           Json      @default(dbgenerated("'{}'"))
   command         String?
-  logs            Json      @default("[]")
-  outputs         Json      @default("[]")
+  logs            Json      @default(dbgenerated("'[]'"))
+  outputs         Json      @default(dbgenerated("'[]'"))
   errorMessage    String?
   exitCode        Int?
   startedAt       DateTime  @default(now())
@@ -673,10 +673,10 @@ model TeamakingPost {
   courseOfferingId  String
   title             String
   status            String    @default("open")
-  strengths         Json      @default("[]")
-  contributionTypes Json      @default("[]")
+  strengths         Json      @default(dbgenerated("'[]'"))
+  contributionTypes Json      @default(dbgenerated("'[]'"))
   expectedOutcome   String
-  portfolioItemIds  Json      @default("[]")
+  portfolioItemIds  Json      @default(dbgenerated("'[]'"))
   showWechatId      Boolean   @default(false)
   showWechatQr      Boolean   @default(false)
   showLinkedin      Boolean   @default(false)
@@ -702,8 +702,8 @@ model TeamUpRequest {
   receiverId              String
   message                 String
   senderContribution      String
-  senderContactSnapshot   Json     @default("{}")
-  receiverContactSnapshot Json     @default("{}")
+  senderContactSnapshot   Json     @default(dbgenerated("'{}'"))
+  receiverContactSnapshot Json     @default(dbgenerated("'{}'"))
   status                  String   @default("sent")
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
@@ -758,7 +758,7 @@ model PortfolioItem {
   outcome                 String?
   reflection              String?
   parsedText              String?
-  metadata                Json     @default("{}")
+  metadata                Json     @default(dbgenerated("'{}'"))
   visibility              String   @default("same_school")
   isPinned                Boolean  @default(false)
   createdAt               DateTime @default(now())
@@ -816,7 +816,7 @@ model ErrorEvent {
   userId       String?
   actorRole    String?
   stackDigest  String?
-  metadata     Json     @default("{}")
+  metadata     Json     @default(dbgenerated("'{}'"))
   createdAt    DateTime @default(now())
 
   appVersion AppVersion @relation(fields: [appVersionId], references: [id])
@@ -835,7 +835,7 @@ model AuthEvent {
   action       String
   purpose      String
   success      Boolean  @default(false)
-  metadata     Json     @default("{}")
+  metadata     Json     @default(dbgenerated("'{}'"))
   createdAt    DateTime @default(now())
 
   appVersion AppVersion @relation(fields: [appVersionId], references: [id])
@@ -888,7 +888,7 @@ model ContentDocument {
   title           String
   summary         String?
   bodyMarkdown    String    @default("")
-  imageUrls       Json      @default("[]")
+  imageUrls       Json      @default(dbgenerated("'[]'"))
   status          String    @default("draft")
   displayOrder    Int       @default(0)
   publishedAt     DateTime?
@@ -928,7 +928,7 @@ model VersionCheckpoint {
   kind              String   @default("operation")
   reason            String?
   triggeredByUserId String?
-  summary           Json     @default("{}")
+  summary           Json     @default(dbgenerated("'{}'"))
   createdAt         DateTime @default(now())
 
   appVersion AppVersion               @relation(fields: [appVersionId], references: [id], onDelete: Cascade)
@@ -943,7 +943,7 @@ model VersionCheckpointChunk {
   checkpointId String
   name         String
   rowCount     Int    @default(0)
-  data         Json   @default("[]")
+  data         Json   @default(dbgenerated("'[]'"))
 
   checkpoint VersionCheckpoint @relation(fields: [checkpointId], references: [id], onDelete: Cascade)
 
@@ -961,8 +961,8 @@ model OperationLog {
   method       String?
   path         String?
   status       String   @default("success")
-  summary      Json     @default("{}")
-  metadata     Json     @default("{}")
+  summary      Json     @default(dbgenerated("'{}'"))
+  metadata     Json     @default(dbgenerated("'{}'"))
   createdAt    DateTime @default(now())
 
   appVersion AppVersion @relation(fields: [appVersionId], references: [id])

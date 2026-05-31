@@ -1,18 +1,25 @@
 {
-  "name": "teamaking",
+  "name": "teamaking-desktop",
   "version": "0.1.0",
+  "description": "Local-first desktop build of TEAMAKING.",
+  "author": "TEAMAKING",
   "private": true,
+  "main": "desktop/main.cjs",
   "scripts": {
     "dev": "next dev",
-    "build": "next build --webpack",
+    "build": "node desktop/next-build.mjs",
     "start": "next start",
-    "postinstall": "prisma generate",
+    "desktop:dev": "node desktop/dev-server.mjs",
+    "desktop:build": "npm run prisma:generate && npm run prisma:migrate && node desktop/seed-desktop.cjs && npm run build && node desktop/prepare-dist.mjs",
+    "dist:mac": "npm run desktop:build && electron-builder --mac dmg",
+    "dist:win": "npm run desktop:build && electron-builder --win nsis",
+    "postinstall": "node desktop/prisma-cli.mjs generate",
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:migrate:deploy": "prisma migrate deploy",
-    "prisma:validate": "prisma validate",
+    "prisma:generate": "node desktop/prisma-cli.mjs generate",
+    "prisma:migrate": "node desktop/generate-sqlite-schema.mjs && node desktop/init-sqlite.cjs",
+    "prisma:migrate:deploy": "node desktop/generate-sqlite-schema.mjs && node desktop/init-sqlite.cjs",
+    "prisma:validate": "node desktop/prisma-cli.mjs validate",
     "seed": "tsx prisma/seed.ts",
     "data:cleanup-demo": "tsx scripts/cleanup-demo-data.ts",
     "admin:list": "tsx scripts/admin-users.ts list",
@@ -23,7 +30,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1053.0",
-    "@prisma/client": "5.22.0",
+    "@prisma/client": "^6.19.3",
     "clsx": "2.1.1",
     "fflate": "^0.8.2",
     "lucide-react": "0.468.0",
@@ -32,6 +39,7 @@
     "openai": "^6.39.0",
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "^5.7.284",
+    "prisma": "^6.19.3",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-markdown": "^10.1.0",
@@ -46,20 +54,70 @@
     "@types/react": "18.3.18",
     "@types/react-dom": "18.3.5",
     "autoprefixer": "10.4.20",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.6",
     "postcss": "^8.5.15",
-    "prisma": "5.22.0",
     "tailwindcss": "3.4.17",
     "tsx": "4.19.2",
     "typescript": "5.7.2",
     "vitest": "^4.1.7"
   },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
-  },
   "overrides": {
     "uuid": "^11.1.1",
     "postcss": "^8.5.15"
+  },
+  "build": {
+    "appId": "org.teamingapp.teamaking.desktop",
+    "productName": "TEAMAKING Desktop",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release",
+      "buildResources": "desktop/build"
+    },
+    "files": [
+      "**/*",
+      "!release/**/*",
+      "!storage/**/*",
+      "!.desktop-data/**/*",
+      "!.git/**/*",
+      "!docs/admin-credentials.local.md"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "desktop/init-sqlite.cjs",
+      "desktop/seed-desktop.cjs",
+      "desktop/sqlite-schema.sql",
+      "desktop-dist/server/**/*",
+      "prisma/**/*",
+      "node_modules/.prisma/**/*",
+      "node_modules/@prisma/**/*",
+      "node_modules/prisma/**/*",
+      "node_modules/pdfjs-dist/**/*",
+      "node_modules/pdf-parse/**/*",
+      "node_modules/@napi-rs/**/*"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.education"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

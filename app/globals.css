@@ -178,6 +178,10 @@ tbody tr:hover {
   border: 2px solid rgba(251, 247, 237, 0.9);
 }
 
+.teamaking-desktop-runtime .desktop-mobile-nav {
+  display: none;
+}
+
 ::selection {
   background: rgba(143, 56, 43, 0.18);
 }

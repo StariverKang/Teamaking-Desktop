@@ -1355,3 +1355,41 @@
   - README 明确 `/developer-log` 是站内公开内容模型，工程开发日志仍以 `PROJECT_LOG.md` 为准。
 - 验证：
   - `git diff --check` 通过。
+
+### TEAMAKING Desktop 独立仓库与本机运行时
+
+- 背景：
+  - 需要制作独立于网站部署的 DMG / EXE，本机离线优先，不连接生产网站数据库，也不复用网站 session。
+  - 课程目录边界继续保留：`course_catalog` 是学校级课程库，admission year / relative term / curriculum rules 仍归 programme handbook 侧处理。
+- 改动：
+  - 新增 Electron 主进程、preload、desktop dev/build scripts、Next standalone 打包准备脚本和 electron-builder macOS DMG / Windows NSIS 配置。
+  - 桌面版切换为 Prisma SQLite；由于 Prisma SQLite JSON 默认值不能直接用 `db push` 落库，新增 `desktop/generate-sqlite-schema.mjs` 和 `desktop/init-sqlite.cjs`，从 schema 生成 SQLite SQL 并在首启初始化本机数据库。
+  - 新增 `TEAMAKING_DATA_DIR` 数据根目录；上传文件、crawler outputs、course import artifacts、SQLite 数据库和备份包都写入本机工作区。
+  - 新增 `/api/desktop/health`、`/api/desktop/settings`、`/api/desktop/files/*`、`/api/desktop/backup/export`、`/api/desktop/backup/import`。
+  - 登录/注册在桌面模式下改为本机账号语义；验证码在本机生成，不依赖腾讯云 SES。
+  - 顶部新增桌面状态栏，展示本机工作区、数据库状态、联网/离线状态，并提供备份导出/导入入口。
+  - 新增 `DESKTOP.md`、`.env.desktop.example` 和 `.github/workflows/desktop-release.yml`。
+- 验证：
+  - `npm run prisma:validate` 通过。
+  - `npm run prisma:migrate && node desktop/seed-desktop.cjs` 通过，SQLite 中 seed 出 3 门本机示例课程。
+  - `npm run typecheck`、`npm run lint`、`npm run test` 通过。
+  - `npm run desktop:build` 通过，生成 Next standalone 桌面运行目录。
+  - 启动 `desktop-dist/server/server.js` 后请求 `/api/desktop/health` 返回 `ok: true`、`database: "ok"`，确认桌面 API 可连接本机 SQLite 工作区。
+  - `npx electron-builder --mac dmg --publish never` 通过，生成 `release/TEAMAKING Desktop-0.1.0-arm64.dmg`。
+- 遗留风险：
+  - 当前 DMG 使用 ad-hoc signing，未做 Apple notarization；公开分发前需要配置 Apple Developer 证书与公证。
+  - Windows EXE 交给 GitHub Actions 的 Windows runner 构建；macOS 本机不作为 NSIS 交叉构建验收环境。
+
+### Desktop 文档共享与独立边界
+
+- 背景：
+  - 用户要求 DMG 项目的 README 和开发日志从现在开始区分两类内容：产品功能部分与 Teamaking 主程序共享，用户端交互/UI 部分独立于 Teamaking 主程序。
+- 规则：
+  - 共享内容：产品能力、业务规则、固定术语、API 语义、课程导入语义、`course_catalog` 与 programme handbook 边界、用户数据概念。
+  - Desktop 独立内容：DMG/EXE、Electron runtime、本机 SQLite、本机账号文案、备份/导入 UI、窗口行为、离线状态、顶部桌面状态栏和其它用户端交互/UI 决策。
+  - README 与开发日志的写法继承 Teamaking 主程序原规则：必须记录背景、改动、验证与遗留风险；schema/API/交互词汇变化同步对应文档；影响下次发布的 warning 进入日志或 issue 文档，不能只留在聊天记录。
+  - 同一项改动同时涉及产品规则和桌面呈现时，开发日志先记录可回流主程序的共享产品规则，再单独记录 Desktop 呈现方式；Desktop 呈现方式不自动成为主程序 UI 要求。
+- 改动：
+  - README 增加“桌面仓库文档维护约定”。
+  - DESKTOP.md 增加 `Documentation Boundary`。
+  - 将“继承 Teamaking 主程序 README / PROJECT_LOG 编写规则”写入 README、DESKTOP.md 和本日志。

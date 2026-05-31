@@ -2,16 +2,17 @@ import { createRequire } from "node:module";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { ApiError } from "@/lib/http";
+import { applicationRoot } from "@/lib/server/runtime-paths";
 
 const require = createRequire(import.meta.url);
 
 export const crawlerScriptCandidatesByTarget: Record<string, string[]> = {
   programme_handbook: [
-    path.join(/*turbopackIgnore: true*/ process.cwd(), "scripts", "bnbu-crawler", "run-handbook-preview.mjs"),
-    path.join(/*turbopackIgnore: true*/ process.cwd(), "local_bnbu_course_pipeline", "run_handbook_preview.mjs")
+    path.join(applicationRoot(), "scripts", "bnbu-crawler", "run-handbook-preview.mjs"),
+    path.join(applicationRoot(), "local_bnbu_course_pipeline", "run_handbook_preview.mjs")
   ],
   course_catalog: [
-    path.join(/*turbopackIgnore: true*/ process.cwd(), "scripts", "bnbu-crawler", "run-course-catalog.mjs")
+    path.join(applicationRoot(), "scripts", "bnbu-crawler", "run-course-catalog.mjs")
   ]
 };
 

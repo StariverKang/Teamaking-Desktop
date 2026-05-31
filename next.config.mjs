@@ -19,6 +19,7 @@ const crawlerTraceIncludes = [
 ];
 
 const nextConfig = {
+  output: "standalone",
   serverExternalPackages: ["@prisma/client", "prisma"],
   outputFileTracingIncludes: {
     "/app/api/[...route]": crawlerTraceIncludes,

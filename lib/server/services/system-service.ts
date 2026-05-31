@@ -109,7 +109,7 @@ export function safeStringEqual(left: string, right: string) {
 }
 
 export async function ensureSystemIsActive(root?: string) {
-  if (!root || ["auth", "admin", "demo", "support-tickets"].includes(root)) return;
+  if (!root || ["auth", "admin", "demo", "desktop", "support-tickets"].includes(root)) return;
 
   const config = await prisma.siteConfig.findUnique({ where: { key: "system_status" } });
   const value = config?.value && typeof config.value === "object" && !Array.isArray(config.value) ? (config.value as Record<string, unknown>) : null;

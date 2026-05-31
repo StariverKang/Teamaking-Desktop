@@ -22,6 +22,7 @@ import { assertCrawlerRuntimeReady, crawlerRuntimeStatus } from "@/lib/server/cr
 import { crawlerErrorSummary } from "@/lib/server/crawler/errors";
 import { CourseImportWorkflow } from "@/lib/server/course-import/workflow";
 import { getCrawlerAiRuntimeConfig, getPublicCrawlerAiConfig } from "@/lib/server/services/crawler-ai-config-service";
+import { applicationRoot } from "@/lib/server/runtime-paths";
 
 type OperationLogInput = {
   actorUserId?: string | null;
@@ -357,7 +358,7 @@ async function startCrawlerJob(deps: CrawlerModuleDeps, body: Record<string, unk
     if (crawlerAiRuntime?.apiKey) childEnv.CRAWLER_AI_API_KEY = crawlerAiRuntime.apiKey;
     if (crawlerAiRuntime?.timeoutMs) childEnv.CRAWLER_AI_TIMEOUT_MS = String(crawlerAiRuntime.timeoutMs);
   }
-  const child = spawn(process.execPath, args, { cwd: /*turbopackIgnore: true*/ process.cwd(), env: childEnv });
+  const child = spawn(process.execPath, args, { cwd: applicationRoot(), env: childEnv });
   child.stdout.on("data", (chunk) => {
     job.logs.push(chunk.toString());
     void persistCrawlerJob(deps.prisma, job);

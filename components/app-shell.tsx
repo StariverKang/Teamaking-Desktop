@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { HTMLAttributes } from "react";
 import { useEffect, useState } from "react";
-import { BookOpen, LayoutDashboard, LogOut, MailCheck, Menu, Settings, Sparkles, UserRound, UsersRound } from "lucide-react";
+import { BookOpen, Database, Download, HardDrive, LayoutDashboard, LogOut, MailCheck, Menu, Settings, Sparkles, Upload, UserRound, UsersRound, Wifi, WifiOff } from "lucide-react";
 import { api } from "@/lib/client/api";
 import { adminNav, studentNav } from "@/lib/ui-data";
 import { LanguageSwitcher } from "@/components/language-runtime";
@@ -13,27 +13,122 @@ import clsx from "clsx";
 
 export function Navbar() {
   return (
-    <header className="sticky top-0 z-30 border-b border-ink/70 bg-paper/90 backdrop-blur">
-      <div className="mx-auto flex max-w-[1440px] items-center justify-between px-3 py-2.5 md:px-5">
-        <Link href="/" className="flex items-center gap-2 text-ink">
-          <span className="grid h-8 w-8 place-items-center border border-ink bg-ink text-paper">
-            <Sparkles size={16} aria-hidden />
+    <>
+      <header className="sticky top-0 z-30 border-b border-ink/70 bg-paper/90 backdrop-blur">
+        <div className="mx-auto flex max-w-[1440px] items-center justify-between px-3 py-2.5 md:px-5">
+          <Link href="/" className="flex items-center gap-2 text-ink">
+            <span className="grid h-8 w-8 place-items-center border border-ink bg-ink text-paper">
+              <Sparkles size={16} aria-hidden />
+            </span>
+            <span className="font-serif text-xl font-semibold tracking-normal">TEAMAKING</span>
+          </Link>
+          <nav className="hidden items-center gap-1 text-sm text-ink/70 lg:flex">
+            <NavItem href="/dashboard" label="Dashboard" />
+            <NavItem href="/courses" label="Courses" />
+            <NavItem href="/matches" label="Matches" />
+            <NavItem href="/announcements" label="Announcements" />
+            <NavItem href="/support" label="Support" />
+          </nav>
+          <div className="flex items-center gap-3">
+            <LanguageSwitcher />
+            <AuthNav />
+          </div>
+        </div>
+      </header>
+      <DesktopStatusBar />
+    </>
+  );
+}
+
+function DesktopStatusBar() {
+  const [status, setStatus] = useState<any>(null);
+  const [online, setOnline] = useState(true);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    api("/api/desktop/health")
+      .then((data) => {
+        if (!alive) return;
+        setStatus(data);
+        document.documentElement.classList.add("teamaking-desktop-runtime");
+      })
+      .catch(() => {
+        if (alive) setStatus(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!status || typeof window === "undefined") return;
+    const update = () => setOnline(window.navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, [status]);
+
+  async function importBackup(file?: File) {
+    if (!file) return;
+    setMessage("正在导入备份...");
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch("/api/desktop/backup/import", { method: "POST", body: formData });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setMessage(data.error ?? "备份导入失败。");
+      return;
+    }
+    setMessage(data.message ?? "备份已导入，请重启桌面端。");
+  }
+
+  if (!status) return null;
+
+  return (
+    <div className="border-b border-ink/16 bg-chalk/92">
+      <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs text-ink/68 md:px-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1 border border-ink/16 bg-paper px-2 py-1 font-semibold text-ink">
+            <HardDrive size={13} aria-hidden />
+            本机工作区
           </span>
-          <span className="font-serif text-xl font-semibold tracking-normal">TEAMAKING</span>
-        </Link>
-        <nav className="hidden items-center gap-1 text-sm text-ink/70 lg:flex">
-          <NavItem href="/dashboard" label="Dashboard" />
-          <NavItem href="/courses" label="Courses" />
-          <NavItem href="/matches" label="Matches" />
-          <NavItem href="/announcements" label="Announcements" />
-          <NavItem href="/support" label="Support" />
-        </nav>
-        <div className="flex items-center gap-3">
-          <LanguageSwitcher />
-          <AuthNav />
+          <span className="inline-flex min-w-0 items-center gap-1 border border-ink/12 px-2 py-1">
+            <Database size={13} aria-hidden />
+            <span className={status.ok ? "text-forest" : "text-rust"}>{status.ok ? "数据库正常" : "数据库异常"}</span>
+          </span>
+          <span className="inline-flex min-w-0 items-center gap-1 border border-ink/12 px-2 py-1">
+            {online ? <Wifi size={13} aria-hidden /> : <WifiOff size={13} aria-hidden />}
+            {online ? "联网" : "离线"}
+          </span>
+          <span className="max-w-[44vw] truncate" title={status.dataDir} data-no-translate>{status.dataDir}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {message ? <span className="hidden max-w-[340px] truncate text-forest md:inline">{message}</span> : null}
+          <Link href="/api/desktop/backup/export" prefetch={false} className="focus-ring inline-flex items-center gap-1 border border-ink/30 px-2 py-1 font-semibold hover:bg-mist/60">
+            <Download size={13} aria-hidden />
+            备份
+          </Link>
+          <label className="focus-ring inline-flex cursor-pointer items-center gap-1 border border-ink/30 px-2 py-1 font-semibold hover:bg-mist/60">
+            <Upload size={13} aria-hidden />
+            导入
+            <input
+              type="file"
+              accept=".zip,application/zip"
+              className="sr-only"
+              onChange={(event) => {
+                void importBackup(event.target.files?.[0]);
+                event.currentTarget.value = "";
+              }}
+            />
+          </label>
         </div>
       </div>
-    </header>
+    </div>
   );
 }
 
@@ -253,7 +348,7 @@ function Sidebar({ items, admin }: { items: { href: string; label: string }[]; a
 
 function MobileNav({ items, admin }: { items: { href: string; label: string }[]; admin?: boolean }) {
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-ink bg-chalk/98 px-2 py-2 shadow-[0_-1px_0_rgba(17,19,15,0.08)] lg:hidden">
+    <nav className="desktop-mobile-nav fixed inset-x-0 bottom-0 z-40 border-t border-ink bg-chalk/98 px-2 py-2 shadow-[0_-1px_0_rgba(17,19,15,0.08)] lg:hidden">
       <div className="sr-only">
         <Menu size={13} aria-hidden />
         {admin ? "Admin" : "Navigate"}

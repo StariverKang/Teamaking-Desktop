@@ -2,11 +2,13 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { ApiError } from "@/lib/http";
+import { applicationRoot, relativeStorageKey, resolveStorageKey, storageKeyRoot, writableDataRoot } from "@/lib/server/runtime-paths";
 
-export const writableStorageRoot = process.env.VERCEL ? path.join("/tmp", "teamaking") : path.join(/*turbopackIgnore: true*/ process.cwd(), "storage");
+export const writableStorageRoot = writableDataRoot();
 export const importArtifactDir = path.join(writableStorageRoot, "course_import_artifacts");
 export const crawlerOutputDir = path.join(writableStorageRoot, "crawler_outputs");
-export const staticBnbuImportDir = path.join(/*turbopackIgnore: true*/ process.cwd(), "course_imports", "bnbu");
+export const staticBnbuImportDir = path.join(writableStorageRoot, "course_imports", "bnbu");
+export const bundledStaticBnbuImportDir = path.join(applicationRoot(), "course_imports", "bnbu");
 
 export type StoredJsonFile = {
   name: string;
@@ -33,7 +35,7 @@ export async function writeImportArtifact(payload: Record<string, unknown>, name
   await mkdir(importArtifactDir, { recursive: true });
   const fileName = `${timestampFilePrefix()}_${safeFilePart(name)}.teamaking.json`;
   const absolutePath = path.join(importArtifactDir, fileName);
-  const storageKey = path.relative(/*turbopackIgnore: true*/ process.cwd(), absolutePath);
+  const storageKey = relativeStorageKey(absolutePath);
   const content = `${JSON.stringify(payload, null, 2)}\n`;
   await writeFile(absolutePath, content, "utf8");
   return { fileName, storageKey, size: Buffer.byteLength(content, "utf8") };
@@ -49,15 +51,13 @@ export function jsonDownloadResponse(payload: unknown, filename: string) {
 }
 
 export function defaultStoredJsonAllowedRoots() {
-  return [importArtifactDir, crawlerOutputDir, staticBnbuImportDir];
+  return [importArtifactDir, crawlerOutputDir, staticBnbuImportDir, bundledStaticBnbuImportDir];
 }
 
 export function resolveStoredJsonPath(storageKey?: string | null, allowedRoots = defaultStoredJsonAllowedRoots()) {
   if (!storageKey) throw new ApiError(404, "找不到可下载文件。");
-  const absolutePath = path.resolve(/*turbopackIgnore: true*/ process.cwd(), storageKey);
-  const resolvedAllowedRoots = allowedRoots.map((item) => path.resolve(item));
-  const allowed = resolvedAllowedRoots.some((root) => absolutePath === root || absolutePath.startsWith(`${root}${path.sep}`));
-  if (!allowed || !absolutePath.endsWith(".json")) throw new ApiError(403, "文件路径不允许下载。");
+  const absolutePath = resolveStorageKey(storageKey, allowedRoots, storageKeyRoot());
+  if (!absolutePath.endsWith(".json")) throw new ApiError(403, "文件路径不允许下载。");
   return absolutePath;
 }
 
@@ -66,7 +66,7 @@ export async function readStoredJson(storageKey?: string | null, allowedRoots = 
 }
 
 function outputJobId(storageKey: string) {
-  const relative = path.relative(path.resolve(crawlerOutputDir), path.resolve(/*turbopackIgnore: true*/ process.cwd(), storageKey));
+  const relative = path.relative(path.resolve(crawlerOutputDir), path.resolve(storageKeyRoot(), storageKey));
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return undefined;
   const [first, ...rest] = relative.split(path.sep);
   return first && rest.length ? first : undefined;
@@ -86,7 +86,7 @@ export async function listCrawlerOutputs(dirs = [crawlerOutputDir, staticBnbuImp
       if (!entry.isFile() || (!entry.name.endsWith(".teamaking.json") && !entry.name.endsWith(".json"))) continue;
       const info = await stat(absolutePath).catch(() => null);
       if (!info?.isFile()) continue;
-      const storageKey = path.relative(/*turbopackIgnore: true*/ process.cwd(), absolutePath);
+      const storageKey = relativeStorageKey(absolutePath);
       const jobId = outputJobId(storageKey);
       files.push({
         name: entry.name,

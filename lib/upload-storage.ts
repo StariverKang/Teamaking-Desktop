@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { applicationRoot, isDesktopRuntime, relativeStorageKey, uploadsRoot } from "@/lib/server/runtime-paths";
 
 type StoreUploadInput = {
   buffer: Buffer;
@@ -35,6 +36,7 @@ function hasR2Config() {
 function storageMode() {
   const configured = (process.env.UPLOAD_STORAGE_MODE ?? "").trim().toLowerCase();
   if (configured) return configured;
+  if (isDesktopRuntime()) return "desktop";
   if (hasR2Config()) return "r2";
   return "local";
 }
@@ -74,8 +76,8 @@ async function storeR2Upload(input: StoreUploadInput): Promise<StoredUpload> {
 async function storeLocalUpload(input: StoreUploadInput): Promise<StoredUpload> {
   const relativeDir = `/uploads/${input.userId}`;
   const objectKey = `${relativeDir}/${input.safeName}`;
-  const targetDir = path.join(process.cwd(), "public", relativeDir);
-  const targetPath = path.join(process.cwd(), "public", objectKey);
+  const targetDir = path.join(applicationRoot(), "public", relativeDir);
+  const targetPath = path.join(applicationRoot(), "public", objectKey);
   await mkdir(targetDir, { recursive: true });
   await writeFile(targetPath, input.buffer);
   return {
@@ -84,6 +86,22 @@ async function storeLocalUpload(input: StoreUploadInput): Promise<StoredUpload> 
     objectKey,
     storageMode: "local",
     storageProvider: "local_public_uploads"
+  };
+}
+
+async function storeDesktopUpload(input: StoreUploadInput): Promise<StoredUpload> {
+  const absoluteDir = path.join(uploadsRoot(), input.userId);
+  const absolutePath = path.join(absoluteDir, input.safeName);
+  await mkdir(absoluteDir, { recursive: true });
+  await writeFile(absolutePath, input.buffer);
+  const objectKey = relativeStorageKey(absolutePath);
+  const encodedKey = Buffer.from(objectKey).toString("base64url");
+  return {
+    fileUrl: `/api/desktop/files/${encodedKey}`,
+    storageKey: objectKey,
+    objectKey,
+    storageMode: "desktop",
+    storageProvider: "local_user_data"
   };
 }
 
@@ -101,6 +119,7 @@ export async function storeProfileUpload(input: StoreUploadInput): Promise<Store
   const mode = storageMode();
   if (mode === "r2") return storeR2Upload(input);
   if (mode === "inline") return storeInlineUpload(input);
+  if (mode === "desktop") return storeDesktopUpload(input);
   if (mode !== "local") throw new Error(`Unsupported upload storage mode: ${mode}`);
   return storeLocalUpload(input);
 }

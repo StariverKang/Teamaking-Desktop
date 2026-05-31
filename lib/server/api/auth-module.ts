@@ -14,6 +14,7 @@ import { userInclude, academicLockForUser, publicUser } from "@/lib/server/servi
 import { operationLog, safeStringEqual } from "@/lib/server/services/system-service";
 import { upsertVerifiedUser, supportedSchoolDomainForEmail, recordAuthEvent, createVerification, consumeVerification, passwordHashFor, bootstrapAdminConfig, upsertBootstrapAdmin, assertAccountCanLogin, restrictedAccountRedirect, assertLoginFailureBudget } from "@/lib/server/services/auth-service";
 import { defaultOnboardingGuide, onboardingGuideFromConfig } from "@/lib/onboarding-guide";
+import { isDesktopRuntime } from "@/lib/server/runtime-paths";
 
 export async function handleAuth(method: string, path: string[], request: NextRequest) {
   if (method === "POST" && (path[1] === "admin-login" || path[1] === "developer-login")) {
@@ -70,7 +71,7 @@ export async function handleAuth(method: string, path: string[], request: NextRe
     const code = await createVerification(email, "register", schoolDomain.school.name);
 
     return ok({
-      message: "注册验证码已发送，请查看你的学校邮箱。",
+      message: isDesktopRuntime() ? "本机验证码已生成。" : "注册验证码已发送，请查看你的学校邮箱。",
       code: shouldExposeVerificationCode() ? code : undefined,
       school: schoolDomain.school
     });
@@ -147,7 +148,7 @@ export async function handleAuth(method: string, path: string[], request: NextRe
 
     const code = await createVerification(email, "reset_password", user.school?.name);
     return ok({
-      message: "密码重置验证码已发送，请查看你的学校邮箱。",
+      message: isDesktopRuntime() ? "本机密码重置验证码已生成。" : "密码重置验证码已发送，请查看你的学校邮箱。",
       code: shouldExposeVerificationCode() ? code : undefined
     });
   }
