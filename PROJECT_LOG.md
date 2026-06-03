@@ -1445,3 +1445,74 @@
   - `npm run build` 通过。
   - `npm run test:e2e -- tests/e2e/feedback.spec.ts` 通过（2 passed）。
   - `npm run test:e2e -- tests/e2e/smoke.spec.ts` 通过（5 passed）。
+
+### TEAMAKING Desktop 用户端发行边界
+
+- 背景：
+  - 用户明确 DMG / EXE 只需要能运行普通用户端软件，不需要把 crawler、管理员后台或维护工作台打进用户发行包。
+  - 产品功能语义仍与 Teamaking 主程序共享；桌面端只调整安装包边界、本机账号文案和用户端入口。
+- 改动：
+  - 新增 `TEAMAKING_DESKTOP_FLAVOR=user` 默认运行边界；桌面用户端屏蔽 `/admin-login`、`/admin/*`、`/crawler`、`/demo-access` 以及 `/api/admin/*`、`/api/crawler/*`、admin login API。
+  - 桌面 seed 不再创建 `local.admin@teamaking.desktop` 或任何 `super_admin`，首启用户通过本机账号注册进入普通用户流程。
+  - `desktop/sqlite-schema.sql` 同步 `MobileSession`；新增 `desktop/sqlite-migrations/`，旧 SQLite 数据库启动时会补跑缺失迁移，不再只在空库时初始化。
+  - electron-builder 打包范围从全仓库改为用户端白名单：Electron main/preload、desktop runtime、Next standalone、Prisma client/engine 和 SQLite schema/migrations。
+  - 移除 `build.electronDist` 的本机 Electron 绑定，并把 `dist:win` 固定为 Windows x64 NSIS，避免 macOS 构建时误用 darwin Electron 目录。
+  - README、DESKTOP 文档补充用户端发行边界：crawler 和 course import 继续作为开发/维护数据工具，不是普通用户安装包功能。
+- 验证：
+  - `git diff --check`、`npm run prisma:validate`、`npm run typecheck`、`npm run lint`、`npm run test` 通过。
+  - 空 `TEAMAKING_DATA_DIR` 初始化后 seed 出 3 门本机示例课程和 3 个 Course Board，管理员账号数为 0，`MobileSession` 表存在。
+  - Next standalone user flavor 验收：`/api/desktop/health`、`/login`、`/dashboard` 返回 200；`/admin`、`/admin-login`、`/crawler`、`/demo-access`、`/api/admin/users`、`/api/crawler/jobs`、`/api/auth/admin-login`、`/api/mobile/auth/admin-login` 返回 404。
+  - 本机账号 API smoke 通过：本机验证码注册、完成注册、账号密码登录均返回 200，创建用户角色为 `verified_user`。
+  - `npm run dist:mac` 通过；打包后的 `.app` 使用空工作区可启动本机 Next server，打包后再次确认 `/login` 200、后台/crawler 页面与 API 404。生成 `release/TEAMAKING Desktop-0.1.0-arm64.dmg`。
+  - `npx electron-builder --win nsis --x64 --publish never` 通过；本机使用 Electron 镜像完成 Windows Electron / NSIS 依赖下载，生成 `release/TEAMAKING Desktop Setup 0.1.0.exe`。
+- 遗留风险：
+  - 用户端包仍复用 Next app router 编译产物；后台/crawler 通过运行时边界和打包白名单不可见、不可访问，但若未来要进一步减小体积，可拆单独用户端 app tree。
+  - Windows EXE 已能本地产出，但仍需在 Windows 机器上实际安装并跑首启/登录/课程板/资料/备份 smoke。
+  - 正式公开分发仍需要 Apple notarization 和 Windows code signing。
+
+### TEAMAKING Desktop 在线用户端壳目标
+
+- 背景：
+  - 用户重新定义 DMG / EXE 目标：桌面软件除了能从本地直接打开之外，普通用户看到和使用的一切都必须与网站访问一致。
+  - 这包括双语言切换、各级功能关系、显示逻辑、交互逻辑、同账号数据共享，以及主程序最新部署后的内容自动一致。
+- 改动：
+  - Electron 主进程不再启动本地 Next standalone server，不再初始化 SQLite，不再 seed 本机课程或账号。
+  - 桌面壳默认加载 `https://teamingapp.org`，可用 `TEAMAKING_WEB_URL` 和 `TEAMAKING_DESKTOP_ALLOWED_ORIGIN` 指向 staging 或本地站点。
+  - 打包白名单收缩为 Electron main/preload、离线重试页和 package metadata；不再打入 Next standalone、Prisma engine、SQLite schema/migrations、crawler、seed、备份导入导出运行时。
+  - 本仓库 UI 源码移除旧的桌面状态栏和本机账号登录文案，避免继续出现“本机工作区 / 数据库正常 / 备份 / 导入”等旧目标语义。
+  - README、DESKTOP 文档改为线上网站壳说明：产品能力、账号、数据、双语和页面逻辑由主网站提供；桌面仓库只维护安装包、窗口、导航边界、外链处理和离线重试。
+- 验证：
+  - `npm run desktop:build` 通过，确认桌面构建只校验 `TEAMAKING_WEB_URL`，不构建本地 Next。
+  - `npm run typecheck`、`npm run lint`、`npm run test` 通过（38 files，131 passed，2 skipped）。
+  - `npm run dist:mac` 通过，生成 `release/TEAMAKING Desktop-0.1.0-arm64.dmg`；`npm run dist:win` 通过，生成 `release/TEAMAKING Desktop Setup 0.1.0.exe`。
+  - 安装包内容检查通过：macOS 和 Windows 的 `app.asar` 只包含 `desktop/main.cjs`、`desktop/preload.cjs`、`desktop/offline.html` 和 `package.json`，没有 Next standalone、SQLite、Prisma engine、crawler scripts、seed 或 `node_modules`。
+  - Electron smoke 通过：未打包 Electron 和打包后的 macOS app 都加载 `https://teamingapp.org/`，页面标题为 `TEAMAKING`；模拟不可达 URL 时进入本地 `offline.html` 重试页。
+  - 待在 Windows 实机安装 EXE 后确认正式网站登录、Dashboard、课程、匹配、公告、支持、Profile、Course Board、TeamUp、Friends 和双语言切换与浏览器一致。
+- 遗留风险：
+  - Electron cookie 不与 Safari / Chrome 共享，因此桌面版首次打开仍需要重新登录一次；登录后使用的是同一个线上账号和同一份生产数据。
+  - 断网时只显示本地重试页，不提供离线产品功能。
+  - 正式公开分发仍需要 Apple notarization 和 Windows code signing。
+
+### TEAMAKING Desktop 系统级消息提醒
+
+- 背景：
+  - 桌面版作为正式网站在线壳，需要在应用开启时把主程序已有邮件提醒类通知反馈到 macOS / Windows 系统通知层。
+  - 产品通知类型、文案、已读状态和邮件偏好继续与 Teamaking 主程序共享；桌面仓库只维护 Electron 通知桥、轮询、点击跳转和平台行为。
+- 改动：
+  - Electron main 进程新增 `teamaking:desktop-notification` IPC，校验 sender origin 与通知目标路径后使用系统 `Notification` 弹出提醒。
+  - preload 在允许的线上 origin 下轮询 `/api/notifications`，只发送 `desktopEligible` / `emailPreferenceEnabled` 未关闭的 6 类主程序通知：TeamUp 收到、TeamUp 反馈、Follow 收到、Follow 接受、Post 被查看、Profile 被查看。
+  - 通知去重保存在 Electron 进程内；同一应用会话不重复弹同一条未读，重新打开应用时当前未读会再次弹出，直到用户在网站内处理或标记已读。
+  - 点击系统通知会聚焦 TEAMAKING Desktop 并打开同源 `actionHref`；外部 URL、admin 和 crawler 目标仍被主进程阻断。
+  - Windows 设置稳定 `app.setAppUserModelId("org.teamingapp.teamaking.desktop")`，便于系统通知归属到 TEAMAKING Desktop。
+- 验证：
+  - `git diff --check` 通过。
+  - `node --check desktop/main.cjs && node --check desktop/preload.cjs` 通过。
+  - `npm run desktop:build` 通过，确认仍只构建线上网站壳。
+  - `npm run lint` 通过。
+  - `npm run test` 通过（38 files，131 passed，2 skipped）。
+  - `npm run dist:mac` 通过，生成 `release/TEAMAKING Desktop-0.1.0-arm64.dmg`。
+  - `npm run dist:win` 通过，生成 `release/TEAMAKING Desktop Setup 0.1.0.exe`。
+  - macOS 与 Windows 的 `app.asar` 内容检查通过，仍只包含 `desktop/main.cjs`、`desktop/preload.cjs`、`desktop/offline.html` 和 `package.json`。
+- 验证待做：
+  - 主程序部署包含 `GET /api/notifications` 的 `desktopEligible` 字段后，在 DMG / EXE 中登录正式账号，验证启动时历史未读、应用开启后新未读、点击跳转和 Settings 邮件开关过滤。
+  - Windows 实机安装 EXE 后补跑系统通知 smoke；当前 macOS 本机已完成构建与包内容检查。

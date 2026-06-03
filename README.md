@@ -1,13 +1,17 @@
 # TEAMAKING MVP
 
-> Desktop fork note: this repository is the local-first TEAMAKING Desktop build. Use `DESKTOP.md` for DMG/EXE development, local SQLite data, backup/import behavior, and GitHub Actions release packaging. The original website repository remains available as `web-origin`.
+> Desktop fork note: this repository builds the TEAMAKING Desktop DMG/EXE as an Electron shell for the live website at `https://teamingapp.org`. Product behavior, accounts, data, bilingual copy, and page logic are served by the deployed website. Use `DESKTOP.md` for installer, window, offline retry, and release-packaging rules. The original website repository remains available as `web-origin`.
 
 ## 桌面仓库文档维护约定
 
-- 产品功能、业务边界、数据语义和固定交互名词与 Teamaking 主程序共享；例如 Proof-of-Work Profile、Course Boards、Teamaking Post、TeamUp Interest、Friends、Course Reviews，以及 `course_catalog` / programme handbook 的职责边界。
-- 用户端交互、桌面 UI、窗口壳层、状态栏、安装包、备份/导入、本机账号和离线体验独立于 Teamaking 主程序维护；这些内容以 `DESKTOP.md` 和本仓库 `PROJECT_LOG.md` 为准，不反向要求主程序采用同样 UI。
+- 产品功能、业务边界、数据语义、双语文案、页面关系和固定交互名词与 Teamaking 主程序共享；例如 Proof-of-Work Profile、Course Boards、Teamaking Post、TeamUp Interest、Friends、Course Reviews，以及 `course_catalog` / programme handbook 的职责边界。
+- 桌面仓库只独立维护安装包、Electron 窗口行为、允许跳转的 origin、外链处理、离线重试页、签名/公证和平台安装说明；这些内容以 `DESKTOP.md` 和本仓库 `PROJECT_LOG.md` 为准。
 - README 和 `PROJECT_LOG.md` 的写法继承 Teamaking 主程序原规则：记录背景、改动、验证、遗留风险；schema/API/交互词汇变化要同步到对应文档；非阻塞 build/deploy/packaging warning 若影响下次发布，必须进入日志或 issue 文档，不能只留在聊天记录。
-- 如果 README 或开发日志同时涉及“产品能力”和“桌面交互”，先把共享的产品规则写成可回流主程序的中性描述，再把桌面端呈现方式写在 Desktop 专属段落。
+- 如果 README 或开发日志同时涉及“产品能力”和“桌面交互”，先把共享的产品规则写成可回流主程序的中性描述，再把桌面壳呈现方式写在 Desktop 专属段落。
+
+桌面发行包默认加载 `https://teamingapp.org`：普通用户看到的 Dashboard、Courses / Course Board、Profile、TeamUp、Friends、Announcements、Help、Support、上传预览、双语言切换和同账号数据都由线上网站提供；桌面壳本身不维护本机账号、本地数据库、备份/导入或离线产品 UI。
+
+应用开启期间，桌面壳会把线上网站已有的邮件提醒类未读通知转译为 macOS / Windows 系统通知。通知类型、文案、已读状态和邮件偏好仍由 Teamaking 主程序提供；桌面仓库只负责 Electron 系统通知、点击聚焦窗口和同源跳转校验。
 
 TEAMAKING 是一个面向大学课程协作的 teammate discovery 平台。它不是队长招募系统，也不创建正式 Team；MVP 的核心是：
 

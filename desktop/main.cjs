@@ -1,157 +1,171 @@
-const { app, BrowserWindow, shell } = require("electron");
-const { spawn } = require("node:child_process");
-const fs = require("node:fs");
-const net = require("node:net");
+const { app, BrowserWindow, Notification, ipcMain, shell } = require("electron");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+
+const DEFAULT_WEB_URL = "https://teamingapp.org";
+const APP_USER_MODEL_ID = "org.teamingapp.teamaking.desktop";
+const DESKTOP_NOTIFICATION_CHANNEL = "teamaking:desktop-notification";
+const blockedUserShellPaths = ["/admin", "/admin-login", "/crawler"];
 
 let mainWindow = null;
-let serverProcess = null;
+let notificationBridgeRegistered = false;
+const seenNotificationIds = new Set();
 
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() => resolve(address.port));
-    });
-  });
+if (process.platform === "win32") {
+  app.setAppUserModelId(APP_USER_MODEL_ID);
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function unpackedAppPath() {
-  const appPath = app.getAppPath();
-  return app.isPackaged ? appPath.replace(/app\.asar$/, "app.asar.unpacked") : appPath;
-}
-
-function normalizeSqliteUrl(filePath) {
-  const normalized = filePath.replace(/\\/g, "/");
-  return `file:${normalized}`;
-}
-
-function desktopDataDir() {
-  return process.env.TEAMAKING_DATA_DIR || path.join(app.getPath("userData"), "Teamaking");
-}
-
-function baseEnv(port) {
-  const dataDir = desktopDataDir();
-  fs.mkdirSync(dataDir, { recursive: true });
-  const appRoot = app.isPackaged
-    ? path.join(unpackedAppPath(), "desktop-dist", "server")
-    : app.getAppPath();
-  const databasePath = path.join(dataDir, "teamaking.db");
-  return {
-    ...process.env,
-    NODE_ENV: "production",
-    TEAMAKING_RUNTIME: "desktop",
-    AUTH_MODE: "local",
-    TEAMAKING_DATA_DIR: dataDir,
-    TEAMAKING_APP_ROOT: appRoot,
-    DATABASE_URL: process.env.DATABASE_URL || normalizeSqliteUrl(databasePath),
-    NEXT_PUBLIC_APP_URL: `http://127.0.0.1:${port}`,
-    HOSTNAME: "127.0.0.1",
-    PORT: String(port),
-    UPLOAD_STORAGE_MODE: "desktop",
-    ENABLE_DEMO_ACCESS: "true",
-    SESSION_COOKIE_DOMAIN: "",
-    ADMIN_BOOTSTRAP_EMAIL: process.env.ADMIN_BOOTSTRAP_EMAIL || "local.admin@teamaking.desktop",
-    ADMIN_BOOTSTRAP_PASSWORD: process.env.ADMIN_BOOTSTRAP_PASSWORD || "teamaking-local-admin",
-    ADMIN_BOOTSTRAP_ROLE: process.env.ADMIN_BOOTSTRAP_ROLE || "super_admin",
-    ADMIN_BOOTSTRAP_DISPLAY_NAME: process.env.ADMIN_BOOTSTRAP_DISPLAY_NAME || "TEAMAKING Local Admin"
-  };
-}
-
-function electronAsNodeEnv(env) {
-  return {
-    ...env,
-    ELECTRON_RUN_AS_NODE: "1"
-  };
-}
-
-function spawnNodeScript(scriptPath, args, env, options = {}) {
-  return spawn(process.execPath, [scriptPath, ...args], {
-    cwd: env.TEAMAKING_APP_ROOT,
-    env: electronAsNodeEnv(env),
-    stdio: options.stdio || "pipe"
-  });
-}
-
-function runNodeScript(scriptPath, args, env) {
-  return new Promise((resolve, reject) => {
-    const child = spawnNodeScript(scriptPath, args, env);
-    let stderr = "";
-    child.stdout.on("data", (chunk) => console.info(chunk.toString().trimEnd()));
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-      console.error(chunk.toString().trimEnd());
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(stderr || `${scriptPath} exited with code ${code}`));
-    });
-  });
-}
-
-async function ensureDatabase(env) {
-  const root = app.isPackaged ? unpackedAppPath() : app.getAppPath();
-  const initScript = path.join(root, "desktop", "init-sqlite.cjs");
-  if (!fs.existsSync(initScript)) {
-    console.warn("SQLite init script is missing; skipping desktop database initialization.");
-    return;
+function configuredWebUrl() {
+  const raw = process.env.TEAMAKING_WEB_URL || DEFAULT_WEB_URL;
+  const url = new URL(raw);
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error(`TEAMAKING_WEB_URL must be an http(s) URL: ${raw}`);
   }
-  await runNodeScript(initScript, [], {
-    ...env,
-    TEAMAKING_APP_ROOT: root
-  });
-  const seedScript = path.join(root, "desktop", "seed-desktop.cjs");
-  if (fs.existsSync(seedScript)) {
-    await runNodeScript(seedScript, [], {
-      ...env,
-      TEAMAKING_APP_ROOT: root
-    });
-  }
-}
-
-async function waitForServer(url) {
-  const deadline = Date.now() + 30000;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url);
-      if (response.ok || response.status < 500) return;
-    } catch {
-      // Keep waiting while the local Next server boots.
-    }
-    await sleep(450);
-  }
-  throw new Error(`TEAMAKING local server did not become ready: ${url}`);
-}
-
-async function startServer(env) {
-  if (process.env.TEAMAKING_DESKTOP_DEV_URL) {
-    await waitForServer(`${process.env.TEAMAKING_DESKTOP_DEV_URL}/api/desktop/health`);
-    return process.env.TEAMAKING_DESKTOP_DEV_URL;
-  }
-
-  const serverPath = path.join(env.TEAMAKING_APP_ROOT, "server.js");
-  if (!fs.existsSync(serverPath)) {
-    throw new Error(`Missing Next standalone server: ${serverPath}`);
-  }
-  serverProcess = spawnNodeScript(serverPath, [], env, { stdio: "pipe" });
-  serverProcess.stdout.on("data", (chunk) => console.info(`[next] ${chunk.toString().trimEnd()}`));
-  serverProcess.stderr.on("data", (chunk) => console.error(`[next] ${chunk.toString().trimEnd()}`));
-  serverProcess.on("exit", (code) => {
-    if (code !== 0 && code !== null) console.error(`TEAMAKING server exited with code ${code}`);
-  });
-  const url = `http://127.0.0.1:${env.PORT}`;
-  await waitForServer(`${url}/api/desktop/health`);
+  url.hash = "";
   return url;
 }
 
-function createWindow(url) {
+function configuredAllowedOrigin(webUrl) {
+  const raw = process.env.TEAMAKING_DESKTOP_ALLOWED_ORIGIN;
+  if (!raw) return webUrl.origin;
+  const url = new URL(raw);
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error(`TEAMAKING_DESKTOP_ALLOWED_ORIGIN must be an http(s) URL: ${raw}`);
+  }
+  return url.origin;
+}
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function isSameOrigin(value, allowedOrigin) {
+  try {
+    return new URL(value).origin === allowedOrigin;
+  } catch {
+    return false;
+  }
+}
+
+function isBlockedUserShellPath(value, allowedOrigin) {
+  try {
+    const url = new URL(value);
+    if (url.origin !== allowedOrigin) return false;
+    return blockedUserShellPaths.some((blockedPath) => {
+      return url.pathname === blockedPath || url.pathname.startsWith(`${blockedPath}/`);
+    });
+  } catch {
+    return false;
+  }
+}
+
+function textValue(value, fallback = "") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function limitedText(value, fallback, maxLength) {
+  const text = textValue(value, fallback);
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
+}
+
+function senderUrl(event) {
+  return event.senderFrame?.url || event.sender.getURL();
+}
+
+function notificationTargetUrl(actionHref, allowedOrigin) {
+  try {
+    const url = new URL(textValue(actionHref, "/"), allowedOrigin);
+    if (url.origin !== allowedOrigin) return null;
+    if (isBlockedUserShellPath(url.toString(), allowedOrigin)) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function focusAndLoad(targetUrl) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+  void mainWindow.loadURL(targetUrl).catch((error) => {
+    loadOfflinePage(targetUrl, error instanceof Error ? error.message : "The website could not be loaded.");
+  });
+}
+
+function showDesktopNotification(payload, allowedOrigin) {
+  if (!payload || typeof payload !== "object") return;
+  const id = textValue(payload.id);
+  if (!id || seenNotificationIds.has(id)) return;
+
+  const targetUrl = notificationTargetUrl(payload.actionHref, allowedOrigin) || `${allowedOrigin}/`;
+  seenNotificationIds.add(id);
+
+  if (!Notification.isSupported()) return;
+
+  const notification = new Notification({
+    title: limitedText(payload.title, "TEAMAKING", 120),
+    body: limitedText(payload.body, "You have a new TEAMAKING reminder.", 240),
+    silent: false
+  });
+
+  notification.on("click", () => {
+    focusAndLoad(targetUrl);
+  });
+  notification.show();
+}
+
+function registerDesktopNotificationBridge(allowedOrigin) {
+  if (notificationBridgeRegistered) return;
+  notificationBridgeRegistered = true;
+  ipcMain.on(DESKTOP_NOTIFICATION_CHANNEL, (event, payload) => {
+    if (!isSameOrigin(senderUrl(event), allowedOrigin)) return;
+    showDesktopNotification(payload, allowedOrigin);
+  });
+}
+
+function desktopMessageUrl({ mode, target, title, description }) {
+  const url = pathToFileURL(path.join(__dirname, "offline.html"));
+  url.searchParams.set("mode", mode);
+  url.searchParams.set("target", target);
+  url.searchParams.set("title", title);
+  url.searchParams.set("description", description);
+  return url.toString();
+}
+
+function loadOfflinePage(target, description = "TEAMAKING Desktop needs an internet connection to load the website.") {
+  if (!mainWindow) return;
+  void mainWindow.loadURL(desktopMessageUrl({
+    mode: "offline",
+    target,
+    title: "TEAMAKING is offline",
+    description
+  }));
+}
+
+function loadBlockedPage(target) {
+  if (!mainWindow) return;
+  void mainWindow.loadURL(desktopMessageUrl({
+    mode: "blocked",
+    target,
+    title: "This desktop app opens the user site only",
+    description: "Admin and crawler workspaces are not available inside the TEAMAKING Desktop user app."
+  }));
+}
+
+function createWindow() {
+  const webUrl = configuredWebUrl();
+  const allowedOrigin = configuredAllowedOrigin(webUrl);
+  const initialUrl = isBlockedUserShellPath(webUrl.toString(), allowedOrigin)
+    ? `${allowedOrigin}/`
+    : webUrl.toString();
+
+  registerDesktopNotificationBridge(allowedOrigin);
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -167,43 +181,51 @@ function createWindow(url) {
     }
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url: nextUrl }) => {
-    shell.openExternal(nextUrl);
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isBlockedUserShellPath(url, allowedOrigin)) {
+      loadBlockedPage(url);
+      return { action: "deny" };
+    }
+    if (isSameOrigin(url, allowedOrigin)) {
+      void mainWindow.loadURL(url);
+      return { action: "deny" };
+    }
+    if (isHttpUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
+
   mainWindow.webContents.on("will-navigate", (event, nextUrl) => {
-    const currentOrigin = new URL(url).origin;
-    const nextOrigin = new URL(nextUrl).origin;
-    if (nextOrigin !== currentOrigin) {
+    if (!isHttpUrl(nextUrl)) return;
+    if (isBlockedUserShellPath(nextUrl, allowedOrigin)) {
       event.preventDefault();
-      shell.openExternal(nextUrl);
+      loadBlockedPage(nextUrl);
+      return;
+    }
+    if (!isSameOrigin(nextUrl, allowedOrigin)) {
+      event.preventDefault();
+      void shell.openExternal(nextUrl);
     }
   });
-  mainWindow.loadURL(url);
+
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return;
+    if (validatedUrl && !isHttpUrl(validatedUrl)) return;
+    loadOfflinePage(validatedUrl || initialUrl, errorDescription);
+  });
+
+  void mainWindow.loadURL(initialUrl).catch((error) => {
+    loadOfflinePage(initialUrl, error instanceof Error ? error.message : "The website could not be loaded.");
+  });
 }
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
-  if (serverProcess && !serverProcess.killed) serverProcess.kill();
-});
-
-app.whenReady().then(async () => {
-  const port = await findFreePort();
-  const env = baseEnv(port);
-  process.env.TEAMAKING_RUNTIME = env.TEAMAKING_RUNTIME;
-  process.env.AUTH_MODE = env.AUTH_MODE;
-  process.env.TEAMAKING_DATA_DIR = env.TEAMAKING_DATA_DIR;
-  process.env.DATABASE_URL = env.DATABASE_URL;
-
-  await ensureDatabase(env);
-  const url = await startServer(env);
-  createWindow(url);
-
+app.whenReady().then(() => {
+  createWindow();
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow(url);
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 }).catch((error) => {
   console.error(error);

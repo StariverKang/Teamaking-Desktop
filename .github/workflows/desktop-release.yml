@@ -38,7 +38,6 @@ jobs:
 
       - name: Validate
         run: |
-          npm run prisma:validate
           npm run typecheck
           npm run lint
           npm run test

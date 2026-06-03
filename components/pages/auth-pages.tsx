@@ -63,13 +63,7 @@ export function LandingPage() {
     const timer = window.setTimeout(async () => {
       if (window.location.pathname !== "/") return;
       try {
-        const desktop = await api("/api/desktop/health").catch(() => null);
         const data = await api("/api/auth/me");
-        if (desktop?.runtime === "desktop") {
-          window.sessionStorage.setItem(publicExperienceStorageKey, "1");
-          router.push(data?.user ? "/dashboard" : "/login?mode=login");
-          return;
-        }
         if (data?.user) return;
       } catch {
         // Treat auth failures as an anonymous public visit.
@@ -330,7 +324,6 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
   const router = useRouter();
   const { runWithFeedback } = useFeedback();
   const [mode, setMode] = useState<LoginMode>(() => loginModeFromValue(initialMode));
-  const [desktopMode, setDesktopMode] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -342,19 +335,6 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
   const [isCompleting, setIsCompleting] = useState(false);
   const emailPlaceholder = useCopyText("login.email.placeholder", "your.name@mail.bnbu.edu.cn");
   const passwordPlaceholder = useCopyText("login.password.placeholder", "输入密码");
-  const shownEmailPlaceholder = desktopMode ? "you@local.teamaking" : emailPlaceholder;
-
-  useEffect(() => {
-    let alive = true;
-    api("/api/desktop/settings")
-      .then((data) => {
-        if (alive) setDesktopMode(data?.runtime === "desktop");
-      })
-      .catch(() => null);
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   function resetState(nextMode: LoginMode) {
     setMode(nextMode);
@@ -437,17 +417,17 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
 
   return (
     <PageShell
-      title={desktopMode ? "TEAMAKING Desktop 本机入口" : "测试环境入口"}
+      title="测试环境入口"
       eyebrow="Authentication"
-      description={desktopMode ? "本机账号只保存在这台电脑的 TEAMAKING Desktop 工作区里，不连接网站生产数据库。" : "测试环境账号会被保存，便于你重复登录、编辑资料、上传作品和继续测试；正式上线前可能统一清理测试数据。"}
-      titleCopyKey={desktopMode ? undefined : "login.page.title"}
-      descriptionCopyKey={desktopMode ? undefined : "login.page.description"}
+      description="测试环境账号会被保存，便于你重复登录、编辑资料、上传作品和继续测试；正式上线前可能统一清理测试数据。"
+      titleCopyKey="login.page.title"
+      descriptionCopyKey="login.page.description"
       aside="none"
     >
       <div className="mb-5 inline-flex flex-wrap gap-2 border border-ink/20 bg-chalk p-1">
         {[
           ["login", "账号密码登录"],
-          ["register", desktopMode ? "本机账号注册" : "邮箱注册"],
+          ["register", "邮箱注册"],
           ["reset", "找回密码"]
         ].map(([key, label]) => (
           <button
@@ -465,20 +445,20 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
         <Card>
           <div className="mb-5">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-coral">{mode === "login" ? "Login" : mode === "register" ? "Register" : "Password Reset"}</p>
-            <h2 className="mt-2 text-2xl font-semibold text-ink">{mode === "login" ? "已注册用户登录" : mode === "register" ? desktopMode ? "创建本机账号" : "学校邮箱注册" : "找回密码"}</h2>
+            <h2 className="mt-2 text-2xl font-semibold text-ink">{mode === "login" ? "已注册用户登录" : mode === "register" ? "学校邮箱注册" : "找回密码"}</h2>
             <p className="mt-2 text-sm leading-6 text-ink/64">
               {mode === "login"
-                ? desktopMode ? "使用保存在这台电脑上的账号和密码登录。" : "已注册用户使用学校邮箱和密码登录。"
+                ? "已注册用户使用学校邮箱和密码登录。"
                 : mode === "register"
-                  ? desktopMode ? "本机注册会生成本地验证码，不依赖邮件服务或网站账号同步。" : "未注册用户先接收学校邮箱验证码，再设置密码完成注册。"
-                  : desktopMode ? "忘记密码时，使用本机验证码设置新密码。" : "忘记密码时，用学校邮箱接收验证码后设置新密码。"}
+                  ? "未注册用户先接收学校邮箱验证码，再设置密码完成注册。"
+                  : "忘记密码时，用学校邮箱接收验证码后设置新密码。"}
             </p>
           </div>
 
           {mode === "login" ? (
             <form onSubmit={passwordLogin} className="grid gap-4">
-              <Field label={desktopMode ? "本机账号邮箱" : "学校邮箱"} labelCopyKey={desktopMode ? undefined : "login.email.label"}>
-                <CopyTarget copyKey="login.email.placeholder"><input className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} placeholder={shownEmailPlaceholder} /></CopyTarget>
+              <Field label="学校邮箱" labelCopyKey="login.email.label">
+                <CopyTarget copyKey="login.email.placeholder"><input className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} placeholder={emailPlaceholder} /></CopyTarget>
               </Field>
               <Field label="密码" labelCopyKey="login.password.label">
                 <CopyTarget copyKey="login.password.placeholder"><input className={inputClass} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={passwordPlaceholder} /></CopyTarget>
@@ -492,12 +472,12 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
           ) : (
             <div className="grid gap-6">
               <form onSubmit={sendCode} className="grid gap-4">
-                <Field label={desktopMode ? "本机账号邮箱" : "学校邮箱"} labelCopyKey={desktopMode ? undefined : "login.email.label"}>
-                  <CopyTarget copyKey="login.email.placeholder"><input className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} placeholder={shownEmailPlaceholder} /></CopyTarget>
+                <Field label="学校邮箱" labelCopyKey="login.email.label">
+                  <CopyTarget copyKey="login.email.placeholder"><input className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} placeholder={emailPlaceholder} /></CopyTarget>
                 </Field>
                 <button type="submit" disabled={isSendingCode} className="focus-ring inline-flex w-fit items-center gap-2 rounded-lg bg-ink px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
                   <Send size={16} aria-hidden />
-                  {isSendingCode ? "发送中..." : desktopMode ? "生成本机验证码" : "发送验证码"}
+                  {isSendingCode ? "发送中..." : "发送验证码"}
                 </button>
                 <InlineFeedback message={message} tone="success" />
                 <InlineFeedback message={error} tone="error" />
@@ -521,10 +501,10 @@ export function LoginPage({ initialMode = "register" }: { initialMode?: LoginMod
         </Card>
 
         <Card>
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-coral">{desktopMode ? "Local Workspace" : "Test Notice"}</p>
-          <h2 className="mt-2 text-xl font-semibold text-ink">{desktopMode ? "本机数据说明" : "测试用户说明"}</h2>
-          <p className="mt-3 text-sm leading-6 text-ink/64">{desktopMode ? "TEAMAKING Desktop 的账号、课程、作品和导入数据默认保存在本机工作区。备份和导入入口位于顶部状态栏。" : "这个版本用于正式域名上的功能测试。测试账号、资料、作品上传和重复登录会暂时保留，方便继续验证流程。"}</p>
-          <p className="mt-3 text-sm leading-6 text-ink/64">{desktopMode ? "桌面版不复用网站生产账号，也不会自动同步生产数据库。" : "这些数据仍属于测试环境数据，不作为正式上线后的长期生产数据承诺。"}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-coral">Test Notice</p>
+          <h2 className="mt-2 text-xl font-semibold text-ink">测试用户说明</h2>
+          <p className="mt-3 text-sm leading-6 text-ink/64">这个版本用于正式域名上的功能测试。测试账号、资料、作品上传和重复登录会暂时保留，方便继续验证流程。</p>
+          <p className="mt-3 text-sm leading-6 text-ink/64">这些数据仍属于测试环境数据，不作为正式上线后的长期生产数据承诺。</p>
         </Card>
       </div>
     </PageShell>

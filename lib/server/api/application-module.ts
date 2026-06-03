@@ -6,7 +6,6 @@ import { ensureSystemIsActive, persistErrorEvent } from "@/lib/server/services/s
 import { handleAdmin, handleDemoAdmin } from "@/lib/server/api/admin-resources-module";
 import { handleAuth, handleDemo, handleMobileAuth, handleOnboarding } from "@/lib/server/api/auth-module";
 import { handleAnnouncements, handleContent, handleSupportTickets } from "@/lib/server/api/content-module";
-import { handleDesktop } from "@/lib/server/api/desktop-module";
 import { handleSiteCopy } from "@/lib/server/api/site-copy-module";
 import { handleBoards, handleCourseCommentReplies, handleCourses } from "@/lib/server/api/courses-module";
 import { handleContactInfo, handleProfile, handleUploads } from "@/lib/server/api/profile-module";
@@ -17,7 +16,6 @@ const applicationApiModuleRegistry = createApiModuleRegistry([
   { name: "auth", matches: (context) => context.path[0] === "auth", handler: (context) => handleAuth(context.method, context.path, context.request) },
   { name: "mobile/auth", matches: (context) => context.path[0] === "mobile" && context.path[1] === "auth", handler: (context) => handleMobileAuth(context.method, context.path, context.request) },
   { name: "demo", matches: (context) => context.path[0] === "demo", handler: (context) => handleDemo(context.method, context.path, context.request) },
-  { name: "desktop", matches: (context) => context.path[0] === "desktop", handler: (context) => handleDesktop(context.method, context.path, context.request) },
   { name: "onboarding", matches: (context) => context.path[0] === "onboarding", handler: (context) => handleOnboarding(context.method, context.path, context.request) },
   { name: "profile", matches: (context) => context.path[0] === "profile", handler: (context) => handleProfile(context.method, context.path, context.request) },
   { name: "contact-info/me", matches: (context) => context.path[0] === "contact-info" && context.path[1] === "me", handler: (context) => handleContactInfo(context.method, context.request) },

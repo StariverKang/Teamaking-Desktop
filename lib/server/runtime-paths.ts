@@ -3,7 +3,7 @@ import path from "node:path";
 import { ApiError } from "@/lib/http";
 
 export function isDesktopRuntime() {
-  return process.env.TEAMAKING_RUNTIME === "desktop" || process.env.AUTH_MODE === "local";
+  return process.env.TEAMAKING_RUNTIME === "desktop";
 }
 
 export function applicationRoot() {

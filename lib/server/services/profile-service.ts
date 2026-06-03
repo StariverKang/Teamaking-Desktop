@@ -4,7 +4,7 @@ import path from "node:path";
 import { ApiError, optionalString } from "@/lib/http";
 
 import { fileExtensionOf, portfolioTypeOptions, previewKindForFile } from "@/lib/profile-assets";
-import { applicationRoot, resolveStorageKey, storageKeyRoot, uploadsRoot } from "@/lib/server/runtime-paths";
+import { applicationRoot } from "@/lib/server/runtime-paths";
 
 export function jsonObject(value: unknown, fallback: Record<string, unknown> = {}): any {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : fallback;
@@ -63,13 +63,6 @@ export async function resumeBufferFromUrl(resumeUrl: string) {
     const publicRoot = path.resolve(applicationRoot(), "public", "uploads");
     const absolutePath = path.resolve(applicationRoot(), "public", `.${normalized}`);
     if (!absolutePath.startsWith(`${publicRoot}${path.sep}`)) throw new ApiError(403, "简历文件路径不允许重新解析。");
-    return readFile(absolutePath);
-  }
-
-  if (resumeUrl.startsWith("/api/desktop/files/")) {
-    const encodedKey = resumeUrl.split("/api/desktop/files/")[1]?.split(/[?#]/)[0] ?? "";
-    const storageKey = Buffer.from(encodedKey, "base64url").toString("utf8");
-    const absolutePath = resolveStorageKey(storageKey, [uploadsRoot()], storageKeyRoot());
     return readFile(absolutePath);
   }
 

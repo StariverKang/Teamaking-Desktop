@@ -9,7 +9,6 @@ import { hashPassword } from "@/lib/password";import { defaultContactVisibility 
 import { getActiveAppVersionId } from "@/lib/app-version";
 import { toJson } from "@/lib/server/services/system-service";
 import { emailDomain, userInclude } from "@/lib/server/services/user-service";
-import { isDesktopRuntime } from "@/lib/server/runtime-paths";
 
 export async function upsertVerifiedUser(input: {
   email: string;
@@ -81,25 +80,7 @@ export async function supportedSchoolDomainForEmail(email: string) {
     where: { domain, status: "active", school: { appVersionId } },
     include: { school: true }
   });
-  if (existing || !isDesktopRuntime()) return existing;
-
-  const school = await prisma.school.upsert({
-    where: { appVersionId_shortName: { appVersionId, shortName: "LOCAL" } },
-    update: { name: "Local Workspace", status: "active" },
-    create: {
-      appVersionId,
-      name: "Local Workspace",
-      shortName: "LOCAL",
-      status: "active"
-    }
-  });
-
-  return prisma.schoolEmailDomain.upsert({
-    where: { schoolId_domain: { schoolId: school.id, domain } },
-    update: { status: "active" },
-    create: { schoolId: school.id, domain, status: "active" },
-    include: { school: true }
-  });
+  return existing;
 }
 
 export function generateVerificationCode() {
